@@ -1,0 +1,19 @@
+[application]
+
+[web.app]
+
+# HTML title tag content
+title = "rust-viewer"
+
+[web.resource]
+
+# Additional CSS style files (tailwind.css is linked from main.rs via `asset!`)
+style = []
+
+# Additional JavaScript files
+script = []
+
+[web.resource.dev]
+
+# serve: [dev-server] only
+script = []

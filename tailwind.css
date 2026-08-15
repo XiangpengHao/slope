@@ -1,0 +1,10 @@
+/* Tailwind input file.
+ *
+ * `dx serve` autodetects this file at the crate root and runs the tailwindcss
+ * watcher for us, compiling it to `assets/tailwind.css`. Never edit that
+ * output file by hand.
+ */
+@import "tailwindcss";
+
+/* Tailwind's automatic content detection skips .rs files, so point it at src/ */
+@source "./src/**/*.rs";
