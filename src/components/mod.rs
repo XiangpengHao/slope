@@ -1,4 +1,5 @@
-//! Shared components, reusable across views.
+mod icons;
+mod titleblock;
 
-mod echo;
-pub use echo::Echo;
+pub use icons::{IconClear, IconFind, IconFit, IconMinus, IconPlus};
+pub use titleblock::TitleBlock;

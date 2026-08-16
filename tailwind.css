@@ -8,3 +8,198 @@
 
 /* Tailwind's automatic content detection skips .rs files, so point it at src/ */
 @source "./src/**/*.rs";
+
+@theme {
+  /* THE BOARD.
+   *
+   * The workspace is a bare two-layer board: solder mask over substrate, gold
+   * pads, etched copper. The mask owns the ground — this is a committed
+   * palette, not a neutral canvas with accents dropped on it. A developer
+   * reads this beside an editor, often at night, and a pad has to lift off
+   * its ground the way gold lifts off green. */
+  --color-mask: #0a1e14;
+  --color-mask-deep: #06140d;
+  --color-mask-raised: #10291b;
+  /* The drill/pad lattice the board is laid out on. */
+  --color-substrate: #163a26;
+  --color-edge: #1e4530;
+
+  /* Silkscreen. Secondary legend is tinted from the mask's own hue — a neutral
+   * gray on a green ground reads as dirt, not as quiet. */
+  --color-legend: #e4e7de;
+  --color-legend-soft: #8ca396;
+
+  /* Copper at rest. Every trace is drawn — all 1173 of them — because the
+   * density IS the board. Fading most of them to noise is how the last
+   * version made 68% of the real dependency relationships unreadable. */
+  --color-copper: #2a6647;
+
+  /* Gold pad. Every crate is the same object; only the wiring differs. */
+  --color-pad: #d9a93c;
+  --color-pad-lit: #f0c860;
+  --color-drill: #05100a;
+
+  /* Direction is the one variable worth the strongest channel.
+   * Gold enters from the left: what depends on this.
+   * Blue leaves to the right: what this depends on.
+   * Gold against blue also survives red-green colour blindness, which the
+   * twelve-hue palette this replaced did not. */
+  --color-incoming: #f0c24a;
+  --color-outgoing: #5ab0e8;
+
+  /* Fab note: this crate name resolves at more than one version. Lifted off
+   * its own field to clear 4.5:1 — the flag rides on small text (a badge and a
+   * chip), and the first pass at #e2643c sat at 4.20:1. */
+  --color-flag: #f0805a;
+  --color-flag-field: #4a1c0e;
+
+  /* Archivo carries a width axis, so the silkscreen legend and the UI furniture
+   * are one family at two widths rather than two families. JetBrains Mono is
+   * the code register — versions, paths, designators — and it is the face the
+   * reader already has open in the editor they alt-tabbed from. */
+  --font-legend: "Archivo", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+}
+
+/* Light is not a theme switch bolted on. A bare board is dark; the same board
+ * as a fabrication drawing is black line on white paper, which is what the
+ * world looks like before it is manufactured. Same roles, restated in the
+ * document register. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --color-mask: #f4f2ea;
+    --color-mask-deep: #e7e4d8;
+    --color-mask-raised: #fbfaf4;
+    --color-substrate: #d5d2c2;
+    --color-edge: #b9b7a8;
+    --color-legend: #12180f;
+    --color-legend-soft: #4e5a4c;
+    /* Copper has to carry the same weight on paper that it does on the board.
+     * A pale trace turns the drawing's density into haze, which is the one
+     * thing this design cannot afford to lose in translation. */
+    --color-copper: #5d7259;
+    --color-pad: #8a6a18;
+    --color-pad-lit: #6d5310;
+    --color-drill: #f4f2ea;
+    --color-incoming: #8a6a18;
+    --color-outgoing: #1e5f92;
+    --color-flag: #a8341a;
+    --color-flag-field: #f0d8ce;
+  }
+}
+
+@layer base {
+  html {
+    background-color: var(--color-mask);
+  }
+
+  body {
+    background-color: var(--color-mask);
+    color: var(--color-legend);
+    font-family: var(--font-legend);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Silkscreen legend: narrow, capitalised, tracked open. This is the board's
+   * labelling voice, set by Archivo's width axis rather than by squashing.
+   * 75% is `condensed`, which is the one form the canvas font shorthand also
+   * honours — so the board's own lettering and the chrome's are the same width. */
+  .silkscreen {
+    font-stretch: 75%;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+  }
+
+  /* Versions, counts, and coordinates are quantities compared down a column. */
+  .tabular,
+  input[type="search"] {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* The parts we did not draw still belong to the board. */
+  ::selection {
+    background-color: var(--color-incoming);
+    color: var(--color-mask-deep);
+  }
+
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-track {
+    background: var(--color-mask-deep);
+  }
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-edge);
+    border: 2px solid var(--color-mask-deep);
+    border-radius: 999px;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-copper);
+  }
+  * {
+    scrollbar-color: var(--color-edge) var(--color-mask-deep);
+  }
+
+  /* A fiducial, not a browser default: focus lands as a registration mark. */
+  :focus-visible {
+    outline: 2px solid var(--color-pad-lit);
+    outline-offset: 2px;
+  }
+
+  input::placeholder {
+    color: var(--color-legend-soft);
+    opacity: 1;
+  }
+
+  input[type="search"]::-webkit-search-cancel-button {
+    appearance: none;
+  }
+}
+
+/* Continuity test on a bare board: the probe walks the net while cargo
+ * resolves. One authored moment, and it belongs to waiting. */
+@keyframes continuity {
+  from {
+    stroke-dashoffset: 232;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* A pad coming proud of the board under the pointer. */
+@keyframes seat {
+  from {
+    transform: translateY(2px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@layer components {
+  /* The board itself is drawn to a canvas, so there are no per-pad classes
+   * here. What lives here is the fabrication document the board sits inside. */
+
+  /* Every panel in the chrome is a drawing plate: a ruled edge, no rounding,
+   * no shadow. Boards do not have rounded corners; drawings do not have
+   * drop shadows. */
+  .plate {
+    background-color: var(--color-mask-deep);
+    border-color: var(--color-edge);
+  }
+
+  /* Silkscreen reference designator, the small type that names a part on the
+   * board. Used for section headings in the document chrome. */
+  .designator {
+    font-stretch: 75%;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    font-weight: 600;
+    font-size: 10px;
+    color: var(--color-legend-soft);
+  }
+}
