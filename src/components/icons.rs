@@ -3,6 +3,61 @@
 
 use dioxus::prelude::*;
 
+/// The product's mark: a node, a wire, a node. The whole tool in one glyph, and
+/// the same two shapes the pane draws — a filled card for something this
+/// workspace builds, an outlined one for something it pulls in.
+#[component]
+pub fn Mark() -> Element {
+    rsx! {
+        svg {
+            class: "h-[18px] w-[18px] shrink-0",
+            view_box: "0 0 18 18",
+            fill: "none",
+            "aria-hidden": "true",
+            rect {
+                x: "1",
+                y: "5.25",
+                width: "5.5",
+                height: "4",
+                rx: "1.25",
+                fill: "var(--color-ink)",
+            }
+            path {
+                d: "M6.5 7.25 C9 7.25 8 12.25 11 12.25",
+                stroke: "var(--color-outbound)",
+                stroke_width: "1.4",
+                stroke_linecap: "round",
+            }
+            rect {
+                x: "11",
+                y: "10.25",
+                width: "5.5",
+                height: "4",
+                rx: "1.25",
+                fill: "var(--color-surface)",
+                stroke: "var(--color-line-strong)",
+                stroke_width: "1.2",
+            }
+            rect {
+                x: "11",
+                y: "2.25",
+                width: "5.5",
+                height: "4",
+                rx: "1.25",
+                fill: "var(--color-surface)",
+                stroke: "var(--color-line-strong)",
+                stroke_width: "1.2",
+            }
+            path {
+                d: "M6.5 7.25 C9 7.25 8 4.25 11 4.25",
+                stroke: "var(--color-line-strong)",
+                stroke_width: "1.4",
+                stroke_linecap: "round",
+            }
+        }
+    }
+}
+
 #[component]
 pub fn IconFind(class: String) -> Element {
     rsx! {
@@ -17,78 +72,6 @@ pub fn IconFind(class: String) -> Element {
             "aria-hidden": "true",
             circle { cx: "7", cy: "7", r: "4.25" }
             path { d: "M10.2 10.2 L14 14" }
-        }
-    }
-}
-
-#[component]
-pub fn IconClear(class: String) -> Element {
-    rsx! {
-        svg {
-            class,
-            view_box: "0 0 16 16",
-            fill: "none",
-            stroke: "currentColor",
-            stroke_width: "1.5",
-            stroke_linecap: "round",
-            stroke_linejoin: "round",
-            "aria-hidden": "true",
-            path { d: "M4.5 4.5 L11.5 11.5" }
-            path { d: "M11.5 4.5 L4.5 11.5" }
-        }
-    }
-}
-
-#[component]
-pub fn IconPlus(class: String) -> Element {
-    rsx! {
-        svg {
-            class,
-            view_box: "0 0 16 16",
-            fill: "none",
-            stroke: "currentColor",
-            stroke_width: "1.5",
-            stroke_linecap: "round",
-            "aria-hidden": "true",
-            path { d: "M8 3.5 V12.5" }
-            path { d: "M3.5 8 H12.5" }
-        }
-    }
-}
-
-#[component]
-pub fn IconMinus(class: String) -> Element {
-    rsx! {
-        svg {
-            class,
-            view_box: "0 0 16 16",
-            fill: "none",
-            stroke: "currentColor",
-            stroke_width: "1.5",
-            stroke_linecap: "round",
-            "aria-hidden": "true",
-            path { d: "M3.5 8 H12.5" }
-        }
-    }
-}
-
-/// Fit the whole sheet: a frame drawn in from four corners.
-#[component]
-pub fn IconFit(class: String) -> Element {
-    rsx! {
-        svg {
-            class,
-            view_box: "0 0 16 16",
-            fill: "none",
-            stroke: "currentColor",
-            stroke_width: "1.5",
-            stroke_linecap: "round",
-            stroke_linejoin: "round",
-            "aria-hidden": "true",
-            path { d: "M3 6.25 V3 H6.25" }
-            path { d: "M12.75 3 H16 M9.75 3 H12.75 V6.25" }
-            path { d: "M13 9.75 V13 H9.75" }
-            path { d: "M6.25 13 H3 V9.75" }
         }
     }
 }

@@ -1,0 +1,530 @@
+/* dioxus-flow
+ *
+ * Everything the pane draws, written against `--flow-*` custom properties with
+ * defaults. Override any of them anywhere above the pane to theme it; nothing
+ * in here reads a colour, a face or a radius from anywhere else, so the crate
+ * drops into a project without bringing a design system with it.
+ *
+ * The defaults are a light, paper-white flow canvas: a dot lattice, white node
+ * cards with a hairline border, hue spent only on which way an edge runs.
+ */
+
+.flow-root {
+  --flow-canvas: var(--flow-canvas-color, #f3f5f9);
+  --flow-dot: var(--flow-dot-color, #cbd2dd);
+  --flow-surface: var(--flow-surface-color, #ffffff);
+  --flow-sunken: var(--flow-sunken-color, #f6f8fa);
+  --flow-line: var(--flow-line-color, #e4e8ee);
+  --flow-border: var(--flow-border-color, #7f8c9f);
+  --flow-border-hover: var(--flow-border-hover-color, #4b5666);
+  --flow-ink: var(--flow-ink-color, #14171d);
+  --flow-ink-muted: var(--flow-ink-muted-color, #5b6472);
+  --flow-ink-faint: var(--flow-ink-faint-color, #667085);
+  --flow-ink-invert: var(--flow-ink-invert-color, #f7f8fa);
+  --flow-ink-invert-muted: var(--flow-ink-invert-muted-color, #a8b0bd);
+  --flow-ink-raised: var(--flow-ink-raised-color, #2c313b);
+  --flow-ink-disabled: var(--flow-ink-disabled-color, #c4cad4);
+  --flow-wire: var(--flow-wire-color, #78859a);
+  --flow-wire-muted: var(--flow-wire-muted-color, #c3cbd6);
+  --flow-in: var(--flow-in-color, #bf3d10);
+  --flow-in-lit: var(--flow-in-lit-color, #e2551f);
+  --flow-out: var(--flow-out-color, #1d4ed8);
+  --flow-flag: var(--flow-flag-color, #b0201d);
+  --flow-flag-field: var(--flow-flag-field-color, #fdeceb);
+  --flow-chip-field: var(--flow-chip-field-color, #eef1f6);
+
+  --flow-radius: var(--flow-radius-node, 8px);
+  --flow-radius-plate: var(--flow-radius-panel, 10px);
+
+  /* How long a card takes to reach its new place after a re-tidy, and the whole
+   * settle including the wires fading back in. The wire keyframes hold until 55%
+   * of the total, so keep travel at roughly that share of it: the wires are meant
+   * to reappear as the cards arrive, not before. */
+  --flow-tidy-travel: var(--flow-tidy-duration, 260ms);
+  --flow-tidy-total: var(--flow-tidy-settle, 470ms);
+  --flow-font: var(
+    --flow-font-family,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif
+  );
+  --flow-mono: var(--flow-font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+
+  --flow-shadow-node: var(
+    --flow-shadow-rest,
+    0 1px 2px rgba(16, 24, 40, 0.07),
+    0 1px 1px rgba(16, 24, 40, 0.04)
+  );
+  --flow-shadow-lift: var(
+    --flow-shadow-hover,
+    0 3px 8px rgba(16, 24, 40, 0.1),
+    0 1px 2px rgba(16, 24, 40, 0.06)
+  );
+  --flow-shadow-held: var(
+    --flow-shadow-selected,
+    0 8px 20px rgba(16, 24, 40, 0.14),
+    0 2px 4px rgba(16, 24, 40, 0.08)
+  );
+  --flow-shadow-plate: var(
+    --flow-shadow-panel,
+    0 1px 2px rgba(16, 24, 40, 0.05),
+    0 10px 28px rgba(16, 24, 40, 0.07)
+  );
+
+  position: relative;
+  flex: 1 1 0%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  font-family: var(--flow-font);
+}
+
+/* THE PANE --------------------------------------------------------------- */
+
+.flow-pane {
+  background-color: var(--flow-canvas);
+  background-repeat: repeat;
+  touch-action: none;
+  cursor: grab;
+}
+.flow-pane--fill {
+  position: absolute;
+  inset: 0;
+}
+.flow-pane[data-panning="true"] {
+  cursor: grabbing;
+}
+.flow-pane--dots {
+  background-image: radial-gradient(circle, var(--flow-dot) 1px, transparent 1px);
+}
+.flow-pane--lines {
+  background-image:
+    linear-gradient(to right, var(--flow-dot) 1px, transparent 1px),
+    linear-gradient(to bottom, var(--flow-dot) 1px, transparent 1px);
+}
+
+/* A click that reaches this is a click that missed every node. */
+.flow-backdrop {
+  position: absolute;
+  inset: 0;
+}
+
+/* The one layer the camera transforms. Everything on the graph is a child of
+ * this, so pan and zoom are a single transform write rather than a re-layout of
+ * every node. */
+/* `will-change` earns its keep here and was measured, not assumed: taking it
+ * off cost panning half its frame rate on a 700-node graph (60 frames past 24ms
+ * against 31) because every pan frame re-rasterises instead of compositing a
+ * layer that is already drawn. */
+.flow-viewport {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+  will-change: transform;
+}
+
+.flow-wires {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+/* The wires are drawn where they have landed, and held back until the cards get
+ * there. Two identical animations under two names, because re-applying the same
+ * animation name does not restart it and every re-tidy has to start over. */
+[data-tidy="even"] .flow-wires {
+  animation: flow-wires-settle-even var(--flow-tidy-total) ease-out both;
+}
+[data-tidy="odd"] .flow-wires {
+  animation: flow-wires-settle-odd var(--flow-tidy-total) ease-out both;
+}
+
+/* A NODE ----------------------------------------------------------------- */
+
+/* The node and its ports travel together, and this is the only element the
+ * layout moves. Position is a transform rather than top/left so a placement
+ * change is composited rather than re-laid-out.
+ *
+ * It glides, but only on a re-tidy. A card that survives a fold is usually
+ * somewhere else afterwards, and teleporting it costs the reader their hold on
+ * which card was which. The wires cannot come along — a re-tidy changes how many
+ * segments a path has, and a path whose command count changes cannot be
+ * interpolated — so they are hidden for the length of the glide instead of being
+ * left hanging off nothing. See `flow-wires-settle`. */
+.flow-node-wrap {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+[data-tidy="even"] .flow-node-wrap,
+[data-tidy="odd"] .flow-node-wrap {
+  transition: transform var(--flow-tidy-travel) cubic-bezier(0.32, 0.08, 0.24, 1);
+}
+
+.flow-node {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+  text-align: left;
+  background-color: var(--flow-surface);
+  color: var(--flow-ink);
+  border: 1px solid var(--flow-border);
+  border-radius: var(--flow-radius);
+  box-shadow: var(--flow-shadow-node);
+  cursor: pointer;
+  user-select: none;
+  font: inherit;
+  transition:
+    box-shadow 120ms ease-out,
+    border-color 120ms ease-out;
+}
+.flow-node:hover {
+  border-color: var(--flow-border-hover);
+  box-shadow: var(--flow-shadow-lift);
+}
+.flow-node[data-filled="true"] {
+  background-color: var(--flow-ink);
+  border-color: var(--flow-ink);
+  color: var(--flow-ink-invert);
+}
+/* Holding a node lifts it and rings it clear of the pane. The gap in the host's
+ * own surface colour is what lets one ring read on both the paper node and the
+ * filled one. */
+.flow-node[data-held="true"] {
+  box-shadow:
+    0 0 0 2px var(--flow-surface),
+    0 0 0 4px var(--flow-ink),
+    var(--flow-shadow-held);
+}
+.flow-node[data-onroute="true"]:not([data-held="true"]) {
+  border-color: var(--flow-in);
+  box-shadow:
+    0 0 0 1px var(--flow-in),
+    var(--flow-shadow-lift);
+}
+.flow-node[data-fresh="true"] {
+  animation: flow-node-in 180ms ease-out both;
+}
+/* On a re-tidy the newcomers wait for the room to be made. Fading them up while
+ * the cards already on the pane are still sliding apart puts them on top of
+ * whatever has not moved out of the way yet. */
+[data-tidy="even"] .flow-node[data-fresh="true"],
+[data-tidy="odd"] .flow-node[data-fresh="true"] {
+  animation: flow-node-in 200ms ease-out var(--flow-tidy-travel) both;
+}
+
+.flow-node__body {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.flow-node__line {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+}
+.flow-node__title {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  line-height: 1.25;
+}
+.flow-node__sub {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--flow-mono);
+  font-size: 10.5px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  color: var(--flow-ink-faint);
+}
+.flow-node[data-filled="true"] .flow-node__sub {
+  color: var(--flow-ink-invert-muted);
+}
+
+.flow-chip {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background-color: var(--flow-chip-field);
+  color: var(--flow-ink-muted);
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+.flow-chip--flag {
+  background-color: var(--flow-flag-field);
+  color: var(--flow-flag);
+}
+.flow-node[data-filled="true"] .flow-chip {
+  background-color: var(--flow-ink-raised);
+  color: var(--flow-ink-invert);
+}
+
+/* A PORT ------------------------------------------------------------------
+ * A real control, not decoration: it is how the next hop opens, and its number
+ * is how many are behind it. Nothing is hidden by folding, only put away. */
+.flow-port {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  min-width: 18px;
+  padding: 0 4px;
+  border: 1px solid var(--flow-border);
+  border-radius: 999px;
+  background-color: var(--flow-surface);
+  color: var(--flow-ink-muted);
+  font-family: var(--flow-font);
+  font-size: 10px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color 100ms ease-out,
+    border-color 100ms ease-out,
+    color 100ms ease-out;
+}
+.flow-port:hover {
+  box-shadow: var(--flow-shadow-lift);
+}
+.flow-port[data-way="in"] {
+  top: 50%;
+  left: 0;
+  transform: translate(-50%, -50%);
+}
+.flow-port[data-way="out"] {
+  top: 50%;
+  right: 0;
+  transform: translate(50%, -50%);
+}
+.flow-root[data-direction="top-bottom"] .flow-port[data-way="in"] {
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+}
+.flow-root[data-direction="top-bottom"] .flow-port[data-way="out"] {
+  top: auto;
+  bottom: 0;
+  left: 50%;
+  right: auto;
+  transform: translate(-50%, 50%);
+}
+.flow-port[data-way="in"]:hover,
+.flow-port[data-way="in"][data-open="true"] {
+  border-color: var(--flow-in);
+  background-color: var(--flow-in);
+  color: var(--flow-ink-invert);
+}
+.flow-port[data-way="out"]:hover,
+.flow-port[data-way="out"][data-open="true"] {
+  border-color: var(--flow-out);
+  background-color: var(--flow-out);
+  color: var(--flow-ink-invert);
+}
+
+/* A WIRE ------------------------------------------------------------------
+ * A hairline at rest. Colour is spent only on the wires attached to the node
+ * being held, and the walking dash belongs to one thing: the route the reader
+ * asked to see. */
+.flow-edge {
+  fill: none;
+  stroke: var(--flow-wire);
+  stroke-width: 1.25;
+  transition:
+    stroke 140ms ease-out,
+    stroke-width 140ms ease-out;
+}
+.flow-edge[data-way="in"] {
+  stroke: var(--flow-in);
+  stroke-width: 1.75;
+}
+.flow-edge[data-way="out"] {
+  stroke: var(--flow-out);
+  stroke-width: 1.75;
+}
+.flow-edge[data-way="muted"] {
+  stroke: var(--flow-wire-muted);
+}
+.flow-edge[data-route="true"] {
+  stroke: var(--flow-in-lit);
+  stroke-width: 2.25;
+  stroke-dasharray: 6 5;
+  animation: flow-wire-walk 900ms linear infinite;
+}
+
+.flow-label {
+  fill: var(--flow-ink-muted);
+  font-family: var(--flow-font);
+  font-size: 10px;
+  font-weight: 600;
+  paint-order: stroke;
+  stroke: var(--flow-canvas);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  text-anchor: middle;
+  dominant-baseline: middle;
+}
+
+/* CHROME ------------------------------------------------------------------ */
+
+.flow-plate {
+  position: absolute;
+  background-color: var(--flow-surface);
+  border: 1px solid var(--flow-line);
+  border-radius: var(--flow-radius-plate);
+  box-shadow: var(--flow-shadow-plate);
+  overflow: hidden;
+}
+.flow-controls {
+  bottom: 16px;
+  left: 16px;
+  display: flex;
+}
+.flow-map {
+  bottom: 16px;
+  right: 16px;
+  padding: 4px;
+}
+.flow-map__canvas {
+  display: block;
+  cursor: pointer;
+}
+@media (max-width: 1023px) {
+  .flow-map {
+    display: none;
+  }
+}
+
+.flow-ctrl {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-right: 1px solid var(--flow-line);
+  background: transparent;
+  color: var(--flow-ink-muted);
+  cursor: pointer;
+}
+.flow-ctrl:hover:not(:disabled) {
+  background-color: var(--flow-sunken);
+  color: var(--flow-ink);
+}
+.flow-ctrl:disabled {
+  color: var(--flow-ink-disabled);
+  cursor: default;
+}
+.flow-ctrl--last {
+  border-right: 0;
+}
+.flow-ctrl--readout {
+  width: auto;
+  min-width: 52px;
+  padding: 0 4px;
+  font-family: var(--flow-font);
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.flow-icon {
+  width: 16px;
+  height: 16px;
+}
+
+/* The camera is the authored motion. These are the only other moving things: a
+ * node arriving, the walked route, and a re-tidy landing. */
+@keyframes flow-node-in {
+  from {
+    opacity: 0;
+    filter: blur(1.5px);
+  }
+  to {
+    opacity: 1;
+    filter: blur(0);
+  }
+}
+
+@keyframes flow-wire-walk {
+  to {
+    stroke-dashoffset: -22;
+  }
+}
+
+/* Out fast, back once the cards have landed. The hold is not a pause for its own
+ * sake — it is exactly as long as the cards take to travel, and the wires that
+ * fade back in are the ones belonging to where the cards now are. */
+@keyframes flow-wires-settle-even {
+  0% {
+    opacity: 0;
+  }
+  55% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+@keyframes flow-wires-settle-odd {
+  0% {
+    opacity: 0;
+  }
+  55% {
+    opacity: 0;
+  }
+  100% {
+    opacity: 1;
+  }
+}
+
+/* Someone who has asked their system for less motion is asking this pane too.
+ * The camera jumps rather than flying (in code), and nothing else moves — the
+ * cards take their new places at once and the wires are never hidden, which is
+ * the whole reason the wires were being hidden in the first place. */
+@media (prefers-reduced-motion: reduce) {
+  .flow-edge {
+    transition: none;
+  }
+  .flow-node[data-fresh="true"],
+  .flow-edge[data-route="true"] {
+    animation: none;
+  }
+  [data-tidy="even"] .flow-node-wrap,
+  [data-tidy="odd"] .flow-node-wrap {
+    transition: none;
+  }
+  [data-tidy="even"] .flow-wires,
+  [data-tidy="odd"] .flow-wires {
+    animation: none;
+  }
+}

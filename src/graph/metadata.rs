@@ -38,6 +38,20 @@ struct PackageMeta {
     id: String,
     name: String,
     version: String,
+    /// Where this package's `Cargo.toml` sits. The call lens needs it to know
+    /// which directories hold source it can read.
+    #[serde(default)]
+    manifest_path: String,
+    /// Where the crate says its own source lives. Absent for plenty of crates,
+    /// which is why the record only offers the link when there is one.
+    #[serde(default)]
+    repository: Option<String>,
+    /// Where cargo got it. `null` for a path dependency and a workspace member;
+    /// a `registry+…` string for anything resolved from a registry. This is what
+    /// says whether a crates.io page exists to link to, rather than guessing
+    /// from the name and getting a stranger's crate.
+    #[serde(default)]
+    source: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -70,10 +84,49 @@ pub struct Resolved {
     pub manifest_dir: String,
 }
 
-/// Run `cargo metadata` against the target workspace and reduce it to the
-/// packages a build actually pulls in.
-pub fn resolve() -> Result<Resolved, String> {
+/// One crate this workspace actually builds, and where its source sits. The
+/// call lens reads source, so unlike the dependency board it needs to know
+/// which directories on disk belong to the workspace.
+pub struct Member {
+    pub name: String,
+    /// The directory holding the crate's `Cargo.toml`.
+    pub dir: PathBuf,
+}
+
+/// The workspace's own crates, with their source directories.
+///
+/// A second `cargo metadata` run rather than a widened `Resolved`: the two
+/// lenses ask different questions of the same command, and threading the call
+/// lens's needs through the dependency board's type would couple them for no
+/// gain. Cargo caches the resolve, so the second run is cheap next to the
+/// indexing that follows it.
+pub fn members() -> Result<(String, PathBuf, Vec<Member>), String> {
     let dir = target();
+    let meta: Metadata = run(&dir)?;
+    let members: Vec<Member> = meta
+        .packages
+        .iter()
+        .filter(|pkg| meta.workspace_members.iter().any(|id| id == &pkg.id))
+        .filter_map(|pkg| {
+            let manifest = Path::new(&pkg.manifest_path);
+            manifest.parent().map(|dir| Member {
+                name: pkg.name.clone(),
+                dir: dir.to_path_buf(),
+            })
+        })
+        .collect();
+    if members.is_empty() {
+        return Err("cargo metadata reported no workspace members".to_string());
+    }
+    let workspace = Path::new(&meta.workspace_root)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| meta.workspace_root.clone());
+    Ok((workspace, PathBuf::from(&meta.workspace_root), members))
+}
+
+/// Shell out to `cargo metadata` for a workspace directory.
+fn run(dir: &Path) -> Result<Metadata, String> {
     let manifest = dir.join("Cargo.toml");
     if !manifest.exists() {
         return Err(format!(
@@ -98,8 +151,15 @@ pub fn resolve() -> Result<Resolved, String> {
         ));
     }
 
-    let meta: Metadata = serde_json::from_slice(&output.stdout)
-        .map_err(|e| format!("could not parse cargo metadata output: {e}"))?;
+    serde_json::from_slice(&output.stdout)
+        .map_err(|e| format!("could not parse cargo metadata output: {e}"))
+}
+
+/// Run `cargo metadata` against the target workspace and reduce it to the
+/// packages a build actually pulls in.
+pub fn resolve() -> Result<Resolved, String> {
+    let dir = target();
+    let meta: Metadata = run(&dir)?;
 
     let resolve = meta
         .resolve
@@ -180,6 +240,11 @@ fn build(
             version: pkg.version.clone(),
             deps: Vec::new(),
             is_root: roots.contains(&i),
+            repository: pkg.repository.clone().filter(|url| !url.trim().is_empty()),
+            registry: pkg
+                .source
+                .as_deref()
+                .is_some_and(|source| source.starts_with("registry+")),
         });
     }
     for (i, edge_list) in edges.iter().enumerate() {

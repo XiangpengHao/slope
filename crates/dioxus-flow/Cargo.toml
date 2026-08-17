@@ -1,0 +1,26 @@
+[package]
+name = "dioxus-flow"
+version = "0.1.0"
+edition = "2024"
+description = "Nodes and edges on a pannable, zoomable pane for Dioxus, with layered auto-layout."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/XiangpengHao/rust-viewer"
+keywords = ["dioxus", "graph", "flowchart", "layout", "dag"]
+categories = ["gui", "visualization"]
+
+[dependencies]
+dioxus = "0.7.10"
+# Gestures arrive as JSON over the eval channel, so the message shape derives.
+serde = { version = "1", features = ["derive"] }
+
+# The frame clock a camera flight runs on, and nothing else.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-sys = { version = "0.3", features = ["Performance", "Window"] }
+
+[dev-dependencies]
+dioxus = { version = "0.7.10", features = ["web"] }
+tracing = "0.1"
+
+[[example]]
+name = "showcase"
+required-features = []

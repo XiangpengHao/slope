@@ -1,46 +1,65 @@
+//! The frame both lenses hang in.
+//!
+//! The shell owns the workspace identity, the lens tabs, the finder and the
+//! keyboard — everything that is true whichever graph you are reading. A lens
+//! owns its pane and its record and nothing else, which is what lets a third
+//! lens mount here as a sibling rather than as a tab bolted onto one of these.
+
+
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{BoardLoad, load_board};
-use crate::components::TitleBlock;
+use crate::api::{GraphLoad, SheetLoad, load_graph, load_sheet};
+use crate::components::TopBar;
 use crate::graph::focus;
+use crate::views::{DepsState, SheetState};
 
-/// Shared board state. Lives on the shell so the finder, the record panel, and
-/// the canvas are the same state rather than three copies of it.
-#[derive(Clone, Copy)]
-pub struct BoardState {
-    /// The crate being held.
-    pub held: Signal<Option<usize>>,
-    /// Crate finder text.
-    pub query: Signal<String>,
-    /// Reachable dependents and dependencies of whatever is held. Computed once
-    /// where the record is built and shared, so the title block and the record
-    /// cannot end up quoting two different numbers for the same crate.
-    pub counts: Signal<Option<(usize, usize)>>,
-    /// Crates held this session, oldest first. For "why is this here" the walk
-    /// *is* the answer, so throwing it away on every click threw away the thing
-    /// the reader came for.
-    pub history: Signal<Vec<usize>>,
-}
+/// The resolved workspace, shared by everything under the shell.
+pub type GraphResource = Resource<Result<GraphLoad>>;
 
-/// The loaded board, shared by everything under the shell.
-pub type BoardResource = Resource<Result<BoardLoad>>;
+/// The extracted call sheet, or `None` until the reader opens the lens that
+/// needs it.
+pub type SheetResource = Resource<Option<Result<SheetLoad>>>;
 
-/// The lens frame. The dependency board is the first lens; later lenses mount
-/// here as siblings, which is why the workspace identity and the finder live on
-/// the shell rather than inside the board.
 #[component]
 pub fn Shell() -> Element {
-    let resource: BoardResource = use_resource(load_board);
+    let resource: GraphResource = use_resource(load_graph);
     use_context_provider(|| resource);
 
-    let state = BoardState {
+    let state = DepsState {
         held: use_signal(|| None),
         query: use_signal(String::new),
-        counts: use_signal(|| None),
+        folding: use_signal(Default::default),
         history: use_signal(Vec::new),
+        aim: use_signal(|| None),
     };
     use_context_provider(|| state);
+
+    // The call sheet costs an analyser process and ten seconds of indexing, so
+    // it is not fetched until the reader opens the lens that needs it. Loading
+    // the dependency view used to start that job and pull 581kB for it, for a
+    // question nobody had asked.
+    //
+    // Latched rather than tied to the route: once the reader has been to the
+    // call lens, leaving it does not throw the sheet away.
+    let mut asked = use_signal(|| false);
+    let sheet: SheetResource = use_resource(move || async move {
+        if !asked() {
+            return None;
+        }
+        Some(load_sheet().await)
+    });
+    use_context_provider(|| sheet);
+
+    let sheet_state = SheetState {
+        held: use_signal(|| None),
+        query: use_signal(String::new),
+        folding: use_signal(Default::default),
+        columns: use_signal(Default::default),
+        history: use_signal(Vec::new),
+        aim: use_signal(|| None),
+    };
+    use_context_provider(|| sheet_state);
 
     // Keep the trail. Re-holding something already at the end is not a step.
     use_effect(move || {
@@ -52,38 +71,61 @@ pub fn Shell() -> Element {
             history.write().push(id);
         }
     });
+    use_effect(move || {
+        let Some(id) = (sheet_state.held)() else {
+            return;
+        };
+        let mut history = sheet_state.history;
+        if history.peek().last() != Some(&id) {
+            history.write().push(id);
+        }
+    });
 
-    use_global_keys(state, resource);
+    // Which lens the keys are steering. Both lenses answer the same gestures —
+    // step left into what points at this, step right into what this points at —
+    // so there is one listener and it aims at whichever lens is mounted.
+    let on_calls = matches!(use_route::<Route>(), Route::Calls { .. });
+    let mut lens = use_signal(|| false);
+    use_effect(move || {
+        lens.set(on_calls);
+        if on_calls {
+            asked.set(true);
+        }
+    });
+
+    use_global_keys(state, resource, sheet_state, sheet, lens);
 
     rsx! {
-        div { class: "flex h-screen flex-col overflow-hidden bg-mask text-legend",
-            TitleBlock {}
-            main { class: "relative min-h-0 flex-1", Outlet::<Route> {} }
+        div { class: "flex h-screen flex-col overflow-hidden bg-canvas text-ink",
+            TopBar {}
+            main { class: "relative flex min-h-0 flex-1", Outlet::<Route> {} }
         }
     }
 }
 
-/// Which way a step travels along the board's law: left is what depends on the
-/// crate you hold, right is what it depends on.
+/// Which way a step travels along the law of the graph: left is what points at
+/// what you hold, right is what it points at.
 #[derive(Clone, Copy, PartialEq)]
 enum Step {
     Left,
     Right,
 }
 
-/// Keys move you through the board the way the board is arranged.
+/// Keys move you through the graph the way the graph is arranged.
 ///
-/// The listener has to sit on the document: the canvas is not focusable, so a
-/// handler on the app root never fires when focus is on `body`. It reports back
-/// through the eval channel rather than writing signals from the raw callback,
-/// because a write from outside the runtime is not a write at all — it fails
-/// silently, which is exactly how the first version of this looked correct and
-/// did nothing.
-fn use_global_keys(state: BoardState, resource: BoardResource) {
-    let mut held = state.held;
-    let mut query = state.query;
-    let mut history = state.history;
-
+/// The listener sits on the document: the pane is not focusable, so a handler on
+/// the app root never fires when focus is on `body`. It reports back through the
+/// eval channel rather than writing signals from the raw callback, because a
+/// write from outside the runtime is not a write at all — it fails silently,
+/// which is exactly how the first version of this looked correct and did
+/// nothing.
+fn use_global_keys(
+    mut state: DepsState,
+    resource: GraphResource,
+    mut sheet_state: SheetState,
+    sheet: SheetResource,
+    lens: Signal<bool>,
+) {
     use_future(move || async move {
         let mut channel = document::eval(
             r#"
@@ -94,7 +136,7 @@ fn use_global_keys(state: BoardState, resource: BoardResource) {
                     dioxus.send('clear');
                     return;
                 }
-                if (typing) return;
+                if (typing || event.metaKey || event.ctrlKey) return;
                 switch (event.key) {
                     case '/':
                         event.preventDefault();
@@ -119,20 +161,42 @@ fn use_global_keys(state: BoardState, resource: BoardResource) {
             "#,
         );
         while let Ok(message) = channel.recv::<String>().await {
+            let on_calls = lens();
+
             match message.as_str() {
                 "clear" => {
-                    held.set(None);
-                    query.set(String::new());
+                    if on_calls {
+                        sheet_state.held.set(None);
+                        sheet_state.query.set(String::new());
+                    } else {
+                        state.held.set(None);
+                        state.query.set(String::new());
+                    }
                 }
                 "back" => {
                     // Retrace the walk. The step you leave is dropped, so
-                    // pressing back twice goes back two crates rather than
+                    // pressing back twice goes back two steps rather than
                     // oscillating between the last two.
-                    let mut trail = history.write();
-                    trail.pop();
-                    let previous = trail.last().copied();
-                    drop(trail);
-                    held.set(previous);
+                    let mut history = if on_calls {
+                        sheet_state.history
+                    } else {
+                        state.history
+                    };
+                    let previous = {
+                        let mut trail = history.write();
+                        trail.pop();
+                        trail.last().copied()
+                    };
+                    match (on_calls, previous) {
+                        (true, previous) => sheet_state.held.set(previous),
+                        (false, Some(id)) => {
+                            let loaded = resource.read();
+                            if let Some(Ok(GraphLoad::Ready(workspace))) = loaded.as_ref() {
+                                state.select(workspace.as_ref(), id);
+                            }
+                        }
+                        (false, None) => state.held.set(None),
+                    }
                 }
                 "left" | "right" => {
                     let step = if message == "left" {
@@ -140,30 +204,57 @@ fn use_global_keys(state: BoardState, resource: BoardResource) {
                     } else {
                         Step::Right
                     };
-                    let next = {
+                    if on_calls {
+                        let next = {
+                            let loaded = sheet.read();
+                            let Some(Some(Ok(SheetLoad::Ready(sheet)))) = loaded.as_ref() else {
+                                continue;
+                            };
+                            match sheet_state.held.peek().as_ref() {
+                                // Nothing held yet: an arrow starts you where
+                                // the program does, which is the only place a
+                                // walk through a call graph can begin.
+                                None => sheet.entries.first().copied(),
+                                Some(&id) => {
+                                    let (callers, callees) = crate::call::reach::immediate(sheet, id);
+                                    match step {
+                                        Step::Left => callers.first().copied(),
+                                        Step::Right => callees.first().copied(),
+                                    }
+                                }
+                            }
+                        };
+                        if let Some(next) = next {
+                            let loaded = sheet.read();
+                            if let Some(Some(Ok(SheetLoad::Ready(sheet)))) = loaded.as_ref() {
+                                sheet_state.select(sheet.as_ref(), next);
+                            }
+                        }
+                    } else {
                         let loaded = resource.read();
-                        let Some(Ok(BoardLoad::Ready(board))) = loaded.as_ref() else {
+                        let Some(Ok(GraphLoad::Ready(workspace))) = loaded.as_ref() else {
                             continue;
                         };
-                        match held.peek().as_ref() {
-                            // Nothing held yet: an arrow key starts you on the
+                        let next = match state.held.peek().as_ref() {
+                            // Nothing held yet: an arrow key starts you on a
                             // crate this workspace actually builds, which is the
                             // only place a walk through it can start.
-                            None => board.pads.iter().find(|p| p.is_root).map(|p| p.id),
+                            None => workspace.members().next().map(|member| member.id),
                             Some(&id) => {
-                                let (dependents, dependencies) = focus::immediate(board, id);
                                 // Busiest first, so a step lands somewhere worth
                                 // landing rather than on whichever crate happened
                                 // to be resolved first.
+                                let (dependents, dependencies) =
+                                    focus::immediate(workspace.as_ref(), id);
                                 match step {
                                     Step::Left => dependents.first().copied(),
                                     Step::Right => dependencies.first().copied(),
                                 }
                             }
+                        };
+                        if let Some(next) = next {
+                            state.select(workspace.as_ref(), next);
                         }
-                    };
-                    if let Some(next) = next {
-                        held.set(Some(next));
                     }
                 }
                 _ => {}

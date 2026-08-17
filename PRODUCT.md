@@ -59,8 +59,10 @@ has the authority to change.
 - Three jobs carry equal weight and all three are in scope: tracing why a crate
   is present (reverse-dependency chains), auditing weight and risk (duplicate
   versions, tree size, bloat), and exploring/navigating the graph.
-- Source-level analysis covers **workspace crates only**. Dependencies appear as
-  graph nodes and metadata; their internals stay opaque.
+- Source-level analysis reads **one hop past the workspace boundary**: the call
+  lens opens dependency sources on purpose, which reverses the workspace-only
+  constraint this file originally recorded. Crates past the extraction budget are
+  named and counted rather than opened.
 - Stack is fixed by the existing codebase: Rust (edition 2024), Dioxus 0.7
   fullstack with the router, Tailwind CSS v4, wasm client. `dx serve` drives the
   build and the Tailwind watcher. Nix flake provides the toolchain.
@@ -69,25 +71,32 @@ has the authority to change.
 
 **Open — do not resolve by assumption**
 
-- The engine producing semantic data for the later lenses is undecided
-  (rust-analyzer/rustc internals vs. syn-based parsing vs. something else). The
-  dependency view is expected to ship on Cargo metadata without settling this.
-- The later lenses themselves — function flow analysis, trait relationships, and
-  any others — are committed in direction but unspecified in behavior.
+- The engine question is settled for the call lens only: rust-analyzer over LSP.
+  Whether later lenses use the same engine is undecided.
+- The later lenses beyond calls — trait relationships, and any others — are
+  committed in direction but unspecified in behavior.
 - Whether more than one workspace can be open at a time is not established.
 
 ## Brand Commitments
 
-Name: **rust-viewer**. No other identity, voice, or asset commitments have been
-established.
+Name: **rust-viewer**. No voice or asset commitments have been established.
+
+**Standing visual preference (set by the user, 2026-08-16).** The interface is a
+node-and-edge flow canvas in the React Flow idiom — a dot-lattice pane, cards
+with side ports, bezier wires, bottom-left view controls, a minimap — executed as
+the category standard played straight rather than as a costume over another
+world. The craft bar the user named is React Flow's own site and examples plus
+tldraw/Figma-class canvas feel. One rendition, light. This is a standing
+preference, not a per-surface decision: later lenses inherit it.
 
 ## Evidence on Hand
 
 - `spec/spec.md` — the current feature spec.
 - `AGENTS.md` — build and repo conventions.
-- `assets/favicon.ico` — from the Dioxus scaffold; not a chosen mark.
-- The current UI is the unmodified Dioxus starter (an `Echo` server-function
-  demo). It is scaffold, not incumbent design, and carries no product truth.
+- `assets/favicon.ico` — from the Dioxus scaffold; not a chosen mark. The
+  product's own mark (a node, a wire, a node) is drawn in `src/components/icons.rs`
+  and has not been rendered to a favicon.
+- `DESIGN.md` — the visual system, recorded from the built world.
 
 No real user data, benchmarks, testimonials, customers, pricing, or deployment
 story exists. Future work must not fabricate any of these.

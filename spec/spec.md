@@ -20,188 +20,293 @@ is no picker and no upload flow.
 
 ## The idea
 
-The workspace is drawn as a bare two-layer board. Every crate is an identical
-gold pad on a lattice; every dependency is a length of routed copper between two
-pads. Nothing about a crate — how many things need it, how deep it sits, whether
-you wrote it — changes the pad, because what a crate *is* lives entirely in the
-copper running into and out of it.
+The workspace is a **flow chart of the build**, opened three hops deep: the
+crates this workspace builds, what they pulled in, and what that pulled in, laid
+out as one DAG from the first frame. Cards are crates, wires are dependencies,
+and every card carries two numbered ports — how many crates depend on it, how
+many it depends on — which are also the controls that fold a side away or open it
+again.
 
-Three rules hold the whole design up:
+Three hops rather than all of them, because past there a build is transitive
+scenery rather than a shape anyone came to read, and because a large workspace
+resolves to thousands of cards that all have to be mounted. On a 700-crate build
+the rim cuts the pane from 700 cards to 479 and the drawing from 10,405 elements
+to 7,929.
 
-1. **One continuous space.** Zoom is the only navigation verb. There is no
-   overview mode and no focus mode to cut between; there is one board, read at
-   three distances.
-2. **Uniform objects.** Every pad is the same object. All meaning is in the
-   wiring and the arrangement.
-3. **The camera moves and the world does not.** Layout is computed once,
-   server-side. Holding a crate flies the camera and changes which copper is lit.
-   It never re-seats a pad. A world that rebuilds itself under you is a world you
-   cannot learn.
+Three rules hold it up:
+
+1. **Left points at right.** A card's column is its longest-path distance from
+   the workspace, so everything a crate depends on is strictly to its right and
+   everything that depends on it strictly to its left, at every zoom, without
+   exception. Which side a port sits on, which way an arrow key travels and
+   which hue an edge takes are all downstream of that.
+2. **The graph is what you opened.** Nothing past the rim is lost, only folded:
+   every card is *opened* rather than merely present, at every depth, so folding
+   a port takes away whatever was only reachable through it and opening one at
+   the rim brings the next hop in. The count is on the port either way.
+3. **Selection changes ink, never the cast** — and never the camera. Holding a
+   crate relights the wires and fills the record; it does not add, remove or move
+   a card, and it does not take the ground with it. The reader aimed at that card
+   in that spot. Naming one is the other case: from the finder, a row in the
+   record or an arrow key there is no telling whether it is even on screen, so
+   the camera goes, and a crate that is not on the pane at all arrives with the
+   chain that put it in the build.
+
+Opening or folding re-tidies the whole pane, and that is drawn rather than
+jumped: the cards glide to their new places over 260ms while the wire layer is
+held back, then the wires fade in where the cards landed. The wires cannot travel
+with them — a re-tidy changes how many segments a path has, and a path whose
+command count changes cannot be interpolated — so hiding them for the length of
+the glide is what stops them hanging off nothing.
 
 ## Backend
 
 `cargo metadata --format-version 1` does the resolving, so feature unification
 and platform resolution are cargo's answer rather than ours. Dev-dependencies
 are dropped: they are in nobody's build, and they are what puts cycles in an
-otherwise acyclic graph. Whatever the workspace no longer reaches after that is
-pruned.
+otherwise acyclic graph. Whatever the workspace no longer reaches is pruned.
 
-Layout runs server-side, once; the client receives finished coordinates and
-computes none of its own. `src/graph/layout.rs`:
+`src/graph/build.rs` ranks by longest path from the workspace members and
+inverts every dependency list into a dependents list. That is the whole payload:
+**no coordinates cross the wire**. Where a card sits depends on what the reader
+has opened, and that is the client's question.
 
-1. **Rank** by longest path from the workspace members. This is the law of the
-   board: everything a crate depends on has a strictly greater column, so
-   dependencies are always to the right and dependents always to the left, at
-   every zoom, without exception.
-2. **Layer**, inserting routing channels for traces that span more than one
-   column so copper never cuts through a pad column.
-3. **Reduce crossings** with barycentre sweeps.
-4. **Relax** the coordinates toward each node's neighbours so a trace that could
-   be straight is straight, then **seat everything on the lattice**: pads land on
-   exact multiples of a 36-unit pitch and never share a row, channels on a 2-unit
-   sub-pitch. Every column is centred, otherwise the relaxation bends the board
-   into a wedge.
-5. **Route** every dependency — all of them — as a polyline of horizontal,
-   vertical, and 45-degree segments. A right angle in copper is an etchant trap
-   on a real board, and the chamfer is also what keeps a run traceable by eye.
+A shortest-path rank would put `serde` one column out because something depends
+on it directly, even where twenty other routes reach it four hops later. Longest
+path is what makes a column a real depth.
 
-On this workspace that is 376 packages, 346 crates, 1174 traces, 22 columns, 46
-pads in the widest column, and a board 7250 × 4876 units — landscape, which is
-what the channel pitch is tuned to hold.
+On this workspace: 376 packages, 346 distinct crates, 1175 dependencies, 22
+columns, 46 crates in the widest one, 26 names resolving at more than one
+version.
 
-## Frontend
+## The flow framework
 
-A board, drawn to a `<canvas>` (`src/views/canvas.rs`). Both directions are first
-class, and direction is the one variable that earns a hue:
+`crates/dioxus-flow/` is the surface both lenses draw on — a **separate crate**,
+not a module of this app, because a graph pane is not a thing about Rust
+workspaces. It knows nothing about crates, functions or cargo: a lens hands it
+nodes with a column each and the wires between them, and it owns the camera, the
+layout, the geometry, the ports, the controls and the map. It carries its own
+stylesheet, written against `--flow-*` custom properties, and this product
+supplies one block mapping its palette onto them.
 
-- **Gold** copper runs into the held pad: what depends on it. It always enters
-  from the left.
-- **Blue** copper runs out of it: what it depends on. It always leaves to the
-  right.
-- **Etched copper** is every other dependency, always drawn. Density is the
-  material a backplane is made of; the previous design drew one edge per crate at
-  weight and the other ~800 at 18% alpha, which meant most of the real dependency
-  relationships in the workspace were rendered as noise.
+Its own options — node size, column pitch, left-to-right or top-to-bottom,
+bezier/straight/stepped wires, dot/line/blank ground, edge labels, and drawing a
+node's contents yourself — are exercised by `cargo run --example showcase`
+rather than by this app, which uses the defaults.
 
-Everything else about a crate is said in silkscreen beside its pad rather than by
-changing the pad: a component outline for a crate this workspace builds, a coral
-flag for a name that resolves at more than one version.
+- **`camera`** — a translation and a magnification written straight into one
+  CSS transform. Magnification is held as an *exponent* of 1.2, so a wheel notch
+  adds exactly ±1.0 and a notch out and back returns to the same pixels, while a
+  pinch still lands anywhere between notches. Flights interpolate position
+  linearly and magnification geometrically.
+- **`layout`** — the layered pipeline, a plain function over plain data with no
+  Dioxus and no DOM in it, re-run every time the reader opens or
+  folds a card, which is what keeps the drawing a readable DAG rather than a
+  first arrangement that degrades. Three stages, each because the one before it
+  is not enough:
+  - **Lanes.** A wire spanning more than one column gets a waypoint in every
+    column it crosses. Without them a long wire is drawn straight over whatever
+    cards are in the way and no amount of reordering helps, because the wire is
+    not *in* those columns for anything to move aside from.
+  - **Ordering.** Median sweeps, then a transpose pass that swaps adjacent pairs
+    while that removes crossings. Sweeps alone plateau immediately on a freshly
+    opened fan — every child of one card has the same median, so a sweep has no
+    opinion about their order at all.
+  - **Coordinates.** Every cell asks to sit level with the median of what it is
+    attached to, and the column grants those requests in rank order: lanes
+    outrank every card, and among cards the busiest wins. That priority is the
+    difference between a long wire drawn as a straight run and the same wire
+    drawn as a sweep across the whole picture.
+  Columns are compacted onto a pitch, so a graph occupying ranks 0, 4 and 9
+  draws as three adjacent columns. The previous frame seeds the ordering, so a
+  re-tidy moves what the topology forces and not what it does not — measured:
+  seeding never costs the drawing crossings against laying the same graph out
+  cold.
 
-**Zoom is level of detail**, not scale. Three tiers, and each shows something the
-others do not: *Board* names only what the workspace routes through; *Component*
-resolves pads and fills in the legend; *Pad* draws drill holes and the substrate
-lattice the parts are seated on. Pad radius is capped against the on-screen
-lattice gap, because holding a marker at full size while the board shrinks is
-what packs a dense column into a solid bar of gold.
-
-A **depth ruler** across the top numbers the columns and names what they count,
-so hop distance is a literal scale rather than something inferred from x
-position — the encoding that collapses when a layout is squeezed.
+  What it costs, on release builds: 4.4ms for 377 cards and 1179 wires, 28ms for
+  700 cards and 2643 wires. The larger figure is paid for 24,000 lane waypoints
+  rather than for 700 cards, since a wire crossing eight columns is ordered in
+  every one of them. Three decisions carry that: crossings are counted by
+  inversion count over a Fenwick tree, `O(E log E)` rather than the textbook
+  `O(E²)`; ordering stops as soon as two rounds fail to improve, which costs
+  under a tenth of a percent in crossings and halves the wait; and the pane
+  caches its drawing against the graph's signature, because the pipeline is
+  deliberately *not* idempotent — it seeds each run from the rows the last one
+  produced — so an ungated second evaluation both doubled the work and produced a
+  different arrangement.
+- **`geometry`** — a wire leaves and arrives horizontally, always. Two points
+  is a cubic with control distance half the horizontal gap, falling back to a
+  square-root bulge when it runs backwards, which keeps a recursive call legible
+  as a loop instead of a line through both cards. More points is a wire the
+  layout routed, drawn as a chain of cubics with shared tangents so the run has
+  no corner in it.
+- **`fold`** — which nodes are on the pane, given the whole graph and what the
+  reader has opened. A `Folding` holds intent — the seeds and which ports are
+  open — and derives the rest by walking, never storing a set of visible ids: a
+  flat set cannot answer *what does folding this take away*, since nothing in it
+  records which nodes were reachable only through the one you folded. `Links` is
+  a trait so a host's own structure is walked in place; this product implements
+  it on `Workspace` rather than copying 700 crates into fresh vectors per render.
+- **`pane`** — the DOM shape every flow canvas converged on: absolutely
+  positioned cards inside a single transformed layer, so pan and zoom write
+  **one** transform string rather than touching a hundred nodes, and the dot
+  lattice is a background image on the pane itself.
 
 ## Navigation
 
-Every gesture zooms or pans about the point you are aiming at, never about the
-viewport centre — centre-anchored zoom throws away whatever you were looking at.
+Every gesture zooms or pans about the point being aimed at, never the viewport
+centre — centre-anchored zoom throws away whatever you were looking at.
 
-- **Pinch** (trackpad or touchscreen) zooms, continuously.
-- **Wheel** zooms one notch at a time.
-- **Two-finger scroll** and **drag** pan.
+- **Wheel** zooms one notch. **Pinch** zooms continuously. **Two-finger scroll**
+  and **drag** pan.
+- A trackpad pinch reaches the page as a wheel event with `ctrlKey` set, which is
+  the browser's own page-zoom binding; the listener is attached natively with
+  `passive: false` so it can `preventDefault()`. It reports back through the eval
+  channel, because a signal write from outside the runtime fails silently.
+- A drag past 4px swallows the click it would otherwise end with, so panning
+  across the graph never selects whatever you let go over.
+- `←`/`↑` steps to what depends on the held crate, `→`/`↓` to what it depends on,
+  both busiest first. `Backspace` retraces, `/` jumps to the finder, `Escape`
+  lets go.
 
-A trackpad pinch reaches the page as a wheel event with `ctrlKey` set, which is
-the same signal the browser binds its own page zoom to; the listener is attached
-natively to the canvas with `passive: false` so it can `preventDefault()`, or
-pinching scales the whole browser page instead of the board. Wheel notches are
-told apart from a trackpad's continuous scroll by delta mode and by the
-characteristic large, purely-vertical, quantised jump a wheel produces.
+The arrangement lands on one frame rather than gliding to it. Cards used to
+slide to their new places over 260ms, but a re-tidy changes how many segments a
+wire has and a path whose command count changes cannot be transitioned — so the
+wires snapped while the cards moved, and measurement put them up to 133 units off
+their own cards for about a fifth of a second. The camera flight carries the
+motion instead, and a card that has just arrived fades up.
 
-Zoom is held as a float, so a pinch can land between notches; a notch still adds
-exactly ±1.0, which is exact in binary floating point, so wheel zoom stays
-perfectly reversible — verified by driving the real browser and confirming the
-canvas returns to an identical pixel signature.
-
-Drag travel past 4px means the gesture was a pan and the pad under it is not
-held. A second finger cancels a drag and becomes a pinch. Clicking bare mask
-lets go.
-
-Holding a crate **flies the camera** to it — the only authored motion in the app,
-on a 560ms exponential ease-out, position interpolating linearly and magnification
-geometrically. The flight frames the crate's own attachments (the 80th percentile
-of the distances to its direct dependents and dependencies) rather than a fixed
-magnification: landing on the pad with 25 of its 27 dependents outside the frame
-is a camera move that arrives nowhere.
-
-`←`/`↑` steps to what depends on the held crate, `→`/`↓` to what it depends on,
-both taking the busiest first. `Backspace` retraces the walk, `/` jumps to the
-finder, `Escape` lets go. The record panel's lists are the precise path when the
-busiest is not the one you want.
+The camera follows the graph while it is still arriving and stops the moment the
+reader touches it. A move frames what was revealed and then pulls the card the
+reader acted on back into view: centring on the card alone hid the answer it had
+just asked for, and centring on the bounds alone pushed the question off the
+edge. A chain that arrives gets the one move allowed to shrink until both of its
+ends are on screen.
 
 ## The record
 
-`src/views/record.rs` docks a panel that states the answer in words, because
-`cargo tree -i` answers the same question in 400ms of copyable text and a picture
-that has to be traced by eye has not answered it at all.
+`src/views/inspector.rs` states the answer in words, because `cargo tree -i`
+answers the same question in 400ms of copyable text and a picture that has to be
+traced by eye has not answered it at all.
 
-Every record carries the same fields in the same order — learn one and you can
-read all 346: what it is (name, version, reference designator), why it is here
-(the chain from a workspace member, each step clickable), what depends on it, and
-what it depends on, each list with versions, dependent counts, and duplicate
-badges.
+Every record carries the same fields in the same order: what it is, why it is
+here (the chain from a workspace member, each step clickable, and a **Draw this
+route** button that puts the whole chain on the pane as a lit, walking wire),
+what depends on it, what it depends on. Long lists fold to seven with the rest
+one click away, so both directions stay on one screen.
 
 Counts are reported in buckets that partition their headline exactly: "64 · 27
 directly · 37 further out". Totals come from the reachability closure, never from
 hop levels — levels are longest-path, so a crate that is both an immediate
 dependent *and* reachable by a longer route would land in two buckets at once.
-That is how an earlier build reported 41 dependents and then listed 23 + 23.
 
-When nothing is held the panel is the board's key: what the marks mean and how to
-move. The tool invents a small vocabulary and now documents all of it.
+## The call lens
 
-## Renderer
+The second lens, at `/calls`, on the same framework.
 
-Canvas costs three things SVG gave away, and each is paid for explicitly:
-hit-testing is a quadtree over pad positions (`src/graph/quadtree.rs`), keyboard
-access is a real focusable list of every crate beside the canvas, and animation is
-a frame loop — which is also what lets panning and zooming skip the virtual DOM
-entirely. Not WebGL: the bottleneck was element count and diffing, not raster.
+**The engine** is rust-analyzer over LSP (`src/call/lsp.rs`). "What does this
+call" needs type inference: `x.len()` is `slice::len` or `Vec::len` or
+`HashMap::len` depending on what `x` is, and a syntax tree cannot tell you which.
+Extraction asks for the whole workspace at once and caches for the life of the
+server process; on this workspace that is ~867 functions and ~1950 calls in
+about sixteen seconds.
 
-Traces are culled by their own routed bounding box rather than by their two pads,
-since a routed trace detours through channels outside its endpoints.
+**Why it is a picture again.** It was one, then it was not: a whole-system call
+graph has 240 workspace functions and 225 edges between them — average internal
+degree below one — and drawing all of it spent every pixel on structure that
+carries almost no information. A *focused subgraph* is a different object. One
+function, its callers left and its callees right, opened a hop at a time, is
+exactly the two-hop diagram the earlier reviews judged the one picture that could
+earn its place. The aggregate answers stay in the record beside it.
+
+A call graph has no global rank to borrow — it can contain cycles — so depth is
+assigned when a function first arrives and never revised, which is what stops a
+cycle walking a card back and forth across the pane.
+
+**What the record answers.** Where to start, in three separately named buckets
+(`main`, public API, no static caller), because collapsing them made a program
+with one `main` report 85 places execution starts. What every route crosses:
+immediate dominators over the call graph, which is inevitability rather than
+popularity — `Vec::push` has enormous fan-in and dominates nothing, because there
+is always another way round. For a held function, the chain of chokepoints above
+it, drawn on the pane the same way the dependency lens draws the chain that put a
+crate in the build: not *a* route but everything *every* route must cross.
+
+**The honest limit, on the page.** A call edge exists only where one function
+names another. Trait objects, function pointers, macro-invoked code and framework
+callbacks leave no static edge, and the panel says in as many words that the
+functions which appear to be called by nothing are a statement about the
+analysis, not about the code.
 
 ## Shell
 
-`src/views/shell.rs` is the lens frame, not the board's chrome. Dependencies is
-the first lens. Later lenses mount as siblings; they are not advertised in the
-title block until they exist, because a permanently disabled tab spends
-credibility on first run for nothing.
+`src/views/shell.rs` is the lens frame: workspace identity, the lens tabs, the
+finder and the keyboard. Later lenses mount here as siblings. Unbuilt lenses are
+not advertised, because a permanently disabled tab spends credibility on first
+run for nothing.
 
-## Theme
-
-Two renditions, and neither is a switch bolted onto the other. Dark is the bare
-board. Light is the same board as a **fabrication drawing** — black line on white
-paper, which is what the world looks like before it is manufactured. Canvas
-colours are read from the same CSS custom properties as the chrome at draw time,
-and the frame loop compares the resolved palette every frame, because a system
-theme change marks nothing dirty and the board would otherwise sit in board ink
-under drawing-paper chrome.
+On a phone the record docks under the pane instead of beside it, and the finder
+collapses to its own icon and takes the bar when focused rather than squeezing
+the workspace's name to nothing.
 
 ## Tests
 
-Tests build the board for whichever workspace they run in — a real graph, not a
-fixture. `src/graph/layout.rs` asserts every edge points forward, every pad is
-seated on the lattice and in its rank's column, no two pads in a column share a
-row, no column drifts from centre, every trace segment sits at 0/45/90 degrees,
-and — the rule the previous design broke — that **every declared dependency is
-routed**. `src/graph/focus.rs` asserts direction agrees with where a pad sits,
-levels are real hop counts, depth bounds what is lit without changing what is
-counted, direct and further-out partition the total exactly, the "why it's here"
-path is a genuine chain starting at a workspace member, and the direct lists match
-the crate itself. `src/graph/quadtree.rs` is checked against a linear scan over a
-deliberately clustered point set.
+Tests build the real graph for whichever workspace they run in, not a fixture.
+
+- `crates/dioxus-flow/src/camera.rs` — a notch out and back is exactly reversible, zoom holds
+  the anchored point still, a clamped zoom does not drift the world, framing
+  stops shrinking at the floor and left-anchors when it overflows, and a flight
+  interpolates magnification geometrically rather than arithmetically.
+- `crates/dioxus-flow/src/layout.rs` — every edge runs left to right, empty columns are
+  compacted away, cards in a column never overlap, the same graph places
+  identically twice, a chain is drawn straight, a card sits level with the middle
+  of its children, a deliberately tangled ordering comes out with **zero**
+  crossings rather than merely fewer, a wire spanning several columns gets a lane
+  in each and that lane clears the cards it passes, a long wire comes out
+  straight rather than wandering, and re-tidying from the previous frame is never
+  worse than laying the same graph out cold.
+- `crates/dioxus-flow/src/geometry.rs` — a curve touches both handles, leaves and arrives
+  horizontally, a backwards wire bulges around itself, and a routed wire is one
+  smooth run that actually passes through the lanes it was given.
+- `src/graph/build.rs` — ranks move forward along every dependency, dependents
+  invert dependencies exactly, every member of a duplicate group is flagged, and
+  rank is the longest route rather than the shortest.
+- `src/graph/focus.rs` — direction agrees with which column a crate is in, direct
+  and further-out partition the total, the why-path is a real chain starting at a
+  workspace member, and the direct lists match the crate itself.
+- `crates/dioxus-flow/src/fold.rs` — inverting the edges neither invents nor
+  loses one, depth is the shortest route, folding takes away exactly what was
+  only reachable through what you folded, folding then opening returns the same
+  pane **for every node**, a cycle does not hang the walk, and a stale id is
+  empty rather than a panic.
+- `src/views/deps.rs` — the first reading is three hops deep, the rim opens to
+  bring the next hop in, nothing is on the
+  pane that was not opened, **holding a crate never changes what is on the pane**,
+  edges take their hue from which way they run, every edge joins two cards that
+  are on the pane, a port always carries the whole count, and a crate off the pane
+  arrives with its route lit end to end.
+- `src/views/calls.rs` — a column is assigned once and kept, callers sit left and
+  callees right, nothing but functions reaches the pane, the chain every route
+  crosses is lit end to end, holding a function never changes the cast, and a
+  function reached two ways is still one card.
+- `src/call/` — the extraction's own suite, including
+  `a_chokepoint_really_is_unavoidable`, which re-runs reachability with each
+  claimed chokepoint deleted, and `dominance_disagrees_with_popularity`, which
+  asserts the most-called function does *not* dominate what reaches it.
 
 ## Not built
 
-The semantic engine behind the later lenses is undecided; nothing here assumes
-one. Analysis stays inside workspace crates. See `PRODUCT.md`.
+Incoming call hierarchy is not queried — callers are derived by inverting the
+outgoing edges, which is exact for everything the extraction reached but cannot
+see callers in crates it never opened. Cards are not draggable: the verb is
+expand and fold, not arrange.
 
-The visual system is recorded in `DESIGN.md`; the surface's strategy lives in
-`.impeccable/surfaces/src-views-canvas-rs.md`.
+Opening on the whole build is not free, and nothing here virtualises the pane. A
+700-crate workspace mounts 10,405 elements; served locally it draws about 470ms
+after navigation, but that first frame is one long task of roughly a second, so
+the tab is unresponsive rather than blank while it happens. The waiting wire
+covers the server resolving the workspace, not this. Culling what is off-camera
+is the obvious next move and is not made.
+
+The visual system is recorded in `DESIGN.md`; the surfaces' strategies live in
+`.impeccable/surfaces/`.

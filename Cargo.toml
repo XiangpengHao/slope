@@ -1,3 +1,6 @@
+[workspace]
+members = ["crates/dioxus-flow"]
+
 [package]
 name = "rust-viewer"
 version = "0.1.0"
@@ -5,6 +8,9 @@ edition = "2024"
 
 [dependencies]
 dioxus = { version = "0.7.10", features = ["router", "fullstack"] }
+# The pane, the camera and the layered auto-layout. Extracted so a second
+# project can draw a graph without carrying this one's vocabulary.
+dioxus-flow = { path = "crates/dioxus-flow" }
 # Map data crosses the server-function boundary, so the graph types derive both.
 serde = { version = "1", features = ["derive"] }
 
@@ -17,6 +23,9 @@ serde_json = "1"
 # is pinned to the version the flake provides. Bump both together.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = "=0.2.126"
+# Canvas dash patterns take a JS array, and there is no web-sys shape for one.
+# Already in the tree under web-sys, so this adds a name rather than a build.
+js-sys = "0.3"
 # The sheet draws to a canvas rather than to DOM nodes, so it talks to the
 # browser directly: a context to paint into, a frame clock to animate on, and
 # device pixel ratio so the ink is not soft on a scaled display.

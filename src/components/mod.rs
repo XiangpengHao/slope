@@ -1,5 +1,5 @@
 mod icons;
-mod titleblock;
+mod topbar;
 
-pub use icons::{IconClear, IconFind, IconFit, IconMinus, IconPlus};
-pub use titleblock::TitleBlock;
+pub use icons::{IconFind, Mark};
+pub use topbar::TopBar;
