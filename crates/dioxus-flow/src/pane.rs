@@ -136,8 +136,12 @@ impl FlowHandle {
 #[derive(Default)]
 struct Previously {
     rows: HashMap<usize, f32>,
+    /// Where each card settled under free placement, which is that
+    /// arrangement's equivalent of `rows`: the seed that keeps a drawn graph
+    /// still while one more card joins it.
+    spots: HashMap<usize, (f32, f32)>,
     ids: HashSet<usize>,
-    inputs: (Vec<Slot>, Vec<(usize, usize)>, Style),
+    inputs: Pending,
     /// Which of the two settle animations the last drawing used, alternated on
     /// each new one so the browser restarts it — re-applying an animation name
     /// that is already set does nothing.
@@ -154,6 +158,15 @@ struct Previously {
     shape: Option<u64>,
     last: Option<Drawn>,
 }
+
+/// One wire as the layout hands it over: its two ends, and the points it runs
+/// through. Every arrangement produces these, and the render turns them into
+/// path data.
+type Run = (usize, usize, Vec<(f32, f32)>);
+
+/// The graph the next placement will be computed from: which cards, in which
+/// columns, joined to which, drawn how, and — for a radial walk — around what.
+type Pending = (Vec<Slot>, Vec<(usize, usize)>, Style, Option<usize>);
 
 /// Everything the layout decided, ready to render: where each card sits, which
 /// of them are new, the path and label anchor for each wire, and whether this
@@ -202,7 +215,12 @@ impl Tidy {
 }
 
 /// A cheap stand-in for "is this the same graph, drawn the same way".
-fn signature(slots: &[Slot], pairs: &[(usize, usize)], style: &Style) -> u64 {
+fn signature(
+    slots: &[Slot],
+    pairs: &[(usize, usize)],
+    style: &Style,
+    root: Option<usize>,
+) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     slots.len().hash(&mut hasher);
@@ -214,6 +232,7 @@ fn signature(slots: &[Slot], pairs: &[(usize, usize)], style: &Style) -> u64 {
     for pair in pairs {
         pair.hash(&mut hasher);
     }
+    root.hash(&mut hasher);
     // Style is all floats and plain enums; its bits are what matter.
     format!("{style:?}").hash(&mut hasher);
     hasher.finish()
@@ -427,8 +446,8 @@ pub fn Flow(
     // The memo keys on the graph's *shape* and the style, and on nothing else.
     // An edge's state is deliberately absent: it changes on every selection, and
     // a selection must never cost a placement.
-    let shape = signature(&slots, &pairs, &style);
-    history.borrow_mut().inputs = (slots, pairs, style);
+    let shape = signature(&slots, &pairs, &style, graph.root);
+    history.borrow_mut().inputs = (slots, pairs, style, graph.root);
 
     let geometry = {
         let history = history.clone();
@@ -440,22 +459,136 @@ pub fn Flow(
             {
                 return done;
             }
-            let (slots, pairs, style) = std::mem::take(&mut cell.inputs);
+            let (slots, pairs, style, centre) = std::mem::take(&mut cell.inputs);
             let metrics = style.metrics();
-            let drawn = layout::layered(&slots, &pairs, &cell.rows, &metrics);
-            cell.inputs = (slots, pairs, style);
-            let places: Vec<Placement> = drawn
-                .places
-                .iter()
-                .map(|place| {
-                    let (x, y) = style.place(place.along, place.across);
-                    Placement {
-                        id: place.id,
-                        along: x,
-                        across: y,
+            // Two arrangements, one contract: both hand back where every card
+            // goes in pane space, and the points each wire runs through.
+            let (places, wires) = match style.arrangement {
+                crate::Arrangement::Columns => {
+                    let drawn = layout::layered(&slots, &pairs, &cell.rows, &metrics);
+                    let places: Vec<Placement> = drawn
+                        .places
+                        .iter()
+                        .map(|place| {
+                            let (x, y) = style.place(place.along, place.across);
+                            Placement {
+                                id: place.id,
+                                along: x,
+                                across: y,
+                            }
+                        })
+                        .collect();
+                    cell.rows = drawn
+                        .places
+                        .iter()
+                        .map(|place| (place.id, place.across + metrics.across / 2.0))
+                        .collect();
+                    let wires: Vec<Run> = drawn
+                        .wires
+                        .iter()
+                        .map(|wire| {
+                            (
+                                wire.from,
+                                wire.to,
+                                wire.points
+                                    .iter()
+                                    .map(|&(along, across)| style.place(along, across))
+                                    .collect(),
+                            )
+                        })
+                        .collect();
+                    (places, wires)
+                }
+                crate::Arrangement::Radial => {
+                    let (w, h) = style.node;
+                    let here: HashSet<usize> = slots.iter().map(|slot| slot.id).collect();
+                    // The lens decides what is on the pane; the walk from the
+                    // centre through those cards decides where each one sits.
+                    let mut out: HashMap<usize, Vec<usize>> = HashMap::new();
+                    for &(from, to) in &pairs {
+                        if here.contains(&from) && here.contains(&to) {
+                            out.entry(from).or_default().push(to);
+                        }
                     }
-                })
-                .collect();
+                    let root = centre.or_else(|| slots.first().map(|slot| slot.id));
+                    let spots = match root {
+                        Some(root) if here.contains(&root) => {
+                            let tree = crate::radial::spanning(
+                                root,
+                                &|_| true,
+                                &|id| out.get(&id).cloned().unwrap_or_default(),
+                            );
+                            crate::radial::radial(
+                                &tree,
+                                &crate::Ring {
+                                    node: (w, h),
+                                    gap: style.gap,
+                                    step: style.column_pitch,
+                                },
+                            )
+                        }
+                        _ => Vec::new(),
+                    };
+                    let places: Vec<Placement> = spots
+                        .iter()
+                        .map(|spot| Placement {
+                            id: spot.id,
+                            along: spot.x,
+                            across: spot.y,
+                        })
+                        .collect();
+                    let middles: HashMap<usize, (f32, f32)> = spots
+                        .iter()
+                        .map(|spot| (spot.id, (spot.x + w / 2.0, spot.y + h / 2.0)))
+                        .collect();
+                    let wires = pairs
+                        .iter()
+                        .filter_map(|&(from, to)| {
+                            let (&a, &b) = (middles.get(&from)?, middles.get(&to)?);
+                            Some((from, to, vec![a, b]))
+                        })
+                        .collect();
+                    (places, wires)
+                }
+                crate::Arrangement::Free => {
+                    let ids: Vec<usize> = slots.iter().map(|slot| slot.id).collect();
+                    let depth: HashMap<usize, i32> =
+                        slots.iter().map(|slot| (slot.id, slot.column)).collect();
+                    let (w, h) = style.node;
+                    let air = crate::Air {
+                        width: w,
+                        height: h,
+                        spread: style.spread,
+                        gap: (style.gap, style.gap * 0.7),
+                    };
+                    let spots = crate::force::place(&ids, &pairs, &depth, &cell.spots, &air);
+                    cell.spots = spots.iter().map(|spot| (spot.id, (spot.x, spot.y))).collect();
+                    let places: Vec<Placement> = spots
+                        .iter()
+                        .map(|spot| Placement {
+                            id: spot.id,
+                            along: spot.x,
+                            across: spot.y,
+                        })
+                        .collect();
+                    // A wire runs centre to centre and the cards paint over it.
+                    // With no lanes to thread there is nothing else to say, and
+                    // the card being opaque is what ends the line cleanly.
+                    let middles: HashMap<usize, (f32, f32)> = spots
+                        .iter()
+                        .map(|spot| (spot.id, (spot.x + w / 2.0, spot.y + h / 2.0)))
+                        .collect();
+                    let wires = pairs
+                        .iter()
+                        .filter_map(|&(from, to)| {
+                            let (&a, &b) = (middles.get(&from)?, middles.get(&to)?);
+                            Some((from, to, vec![a, b]))
+                        })
+                        .collect();
+                    (places, wires)
+                }
+            };
+            cell.inputs = (slots, pairs, style, centre);
             let arrived: HashSet<usize> = places
                 .iter()
                 .map(|place| place.id)
@@ -470,34 +603,37 @@ pub fn Flow(
                 cell.parity = !cell.parity;
                 if cell.parity { Tidy::Even } else { Tidy::Odd }
             };
-            // The seed is the card's centre, which is what the next layout's
-            // ordering and relaxation both work in.
-            cell.rows = drawn
-                .places
-                .iter()
-                .map(|place| (place.id, place.across + metrics.across / 2.0))
-                .collect();
             cell.ids = places.iter().map(|place| place.id).collect();
             drop(cell);
 
-            // Each wire is drawn through the lane the layout opened for it, so
-            // a run that crosses a column goes round the cards there rather
-            // than over them.
+            // In columns each wire is drawn through the lane the layout opened
+            // for it, so a run that crosses a column goes round the cards there
+            // rather than over them. Free placement has no lanes and no axis to
+            // curve against, so its two points are drawn as the straight line
+            // they are.
             let axis = style.axis();
-            let curves: HashMap<(usize, usize), (String, (f32, f32))> = drawn
-                .wires
-                .iter()
-                .map(|wire| {
-                    let points: Vec<(f32, f32)> = wire
-                        .points
-                        .iter()
-                        .map(|&(along, across)| style.place(along, across))
-                        .collect();
+            let straight = matches!(
+                style.arrangement,
+                crate::Arrangement::Free | crate::Arrangement::Radial
+            );
+            let curves: HashMap<(usize, usize), (String, (f32, f32))> = wires
+                .into_iter()
+                .map(|(from, to, points)| {
                     let middle = geometry::midpoint(&points);
-                    (
-                        (wire.from, wire.to),
-                        (geometry::wire(&points, style.shape, axis), middle),
-                    )
+                    let path = if straight {
+                        points
+                            .iter()
+                            .enumerate()
+                            .map(|(at, (x, y))| {
+                                let step = if at == 0 { 'M' } else { 'L' };
+                                format!("{step}{x:.1},{y:.1}")
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                    } else {
+                        geometry::wire(&points, style.shape, axis)
+                    };
+                    ((from, to), (path, middle))
                 })
                 .collect();
 
@@ -701,9 +837,17 @@ pub fn Flow(
             )
     });
 
+    // Under `Wires::OnHold` a wire is only drawn when it answers a question the
+    // reader asked: `Rest` means nothing is held and `Muted` means something is,
+    // but not this. Both are the "no question about me" states, and drawing
+    // either is what turns a few thousand edges into a texture.
+    let hold_only = style.wires == crate::Wires::OnHold;
     let mut wired: Vec<(&super::Edge, &String, (f32, f32))> = graph
         .edges
         .iter()
+        .filter(|edge| {
+            !hold_only || !matches!(edge.state, EdgeState::Rest | EdgeState::Muted)
+        })
         .filter_map(|edge| {
             curves
                 .get(&(edge.from, edge.to))

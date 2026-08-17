@@ -13,6 +13,7 @@
 //!             Node::new(1, 1, Card::new("parse")),
 //!         ],
 //!         edges: vec![Edge::new(0, 1)],
+//!         ..Default::default()
 //!     };
 //!     rsx! {
 //!         document::Stylesheet { href: dioxus_flow::STYLESHEET }
@@ -62,17 +63,21 @@ use dioxus::prelude::*;
 
 mod camera;
 mod fold;
+pub mod force;
 mod geometry;
 pub mod layout;
 mod nest;
 mod pane;
+pub mod radial;
 mod rank;
 
 pub use camera::{Bounds, Camera, Flight};
 pub use fold::{Adjacency, Folding, Links, depths};
+pub use force::{Air, Spot};
 pub use geometry::{Axis, Shape};
 pub use layout::{Metrics, Placement, Slot, Wire, layered};
 pub use nest::{Bundle, Forest, Lift, Nest, Tree};
+pub use radial::{Ring, Shoot};
 pub use pane::{Flow, FlowHandle, use_flow};
 pub use rank::rank;
 
@@ -125,11 +130,22 @@ pub struct Style {
     pub lane_gap: f32,
     /// Air where a node and a lane are neighbours.
     pub node_lane_gap: f32,
+    /// Whether a long edge claims a lane in every column it crosses. See
+    /// [`Metrics::lanes`]. Turn it off when wires are not drawn at rest: the
+    /// room a lane reserves is only worth reserving for a wire that is there.
+    pub lanes: bool,
     pub direction: Direction,
     pub background: Background,
     pub shape: Shape,
     /// Screen pixels of air left around a framed graph.
     pub padding: f32,
+    /// How nodes are placed. See [`Arrangement`].
+    pub arrangement: Arrangement,
+    /// Ideal distance between two joined nodes under [`Arrangement::Free`], as a
+    /// multiple of node width. Ignored in columns.
+    pub spread: f32,
+    /// When edges are drawn. See [`Wires`].
+    pub wires: Wires,
 }
 
 impl Default for Style {
@@ -140,12 +156,49 @@ impl Default for Style {
             gap: 20.0,
             lane_gap: 7.0,
             node_lane_gap: 12.0,
+            lanes: true,
             direction: Direction::default(),
             background: Background::default(),
             shape: Shape::default(),
             padding: 72.0,
+            arrangement: Arrangement::default(),
+            spread: 4.5,
+            wires: Wires::default(),
         }
     }
+}
+
+/// How the pane decides where a node goes.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Arrangement {
+    /// Layered: the host gives every node a column and the layout only solves
+    /// the other axis. The column means something and the drawing keeps saying
+    /// it, at the cost of putting a node's neighbours columns away.
+    #[default]
+    Columns,
+    /// Free: no columns, position from attraction alone. Nothing about a
+    /// position means anything except "near what it is joined to", which is the
+    /// arrangement to pick when wires are hidden at rest and a selection has to
+    /// light up neighbours the reader can actually see.
+    Free,
+    /// Radial: one node at the centre and what it reaches fanned around it, ring
+    /// by ring. The arrangement for a graph that is walked rather than surveyed —
+    /// the reader opens one card at a time and the drawing grows outward from
+    /// where they were already looking. See [`radial`] and [`Graph::root`].
+    Radial,
+}
+
+/// When the pane draws its edges.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Wires {
+    /// Always. Every edge is on the pane whether anything is held or not.
+    #[default]
+    Always,
+    /// Only the ones attached to what is held. A graph with a few thousand edges
+    /// is a texture when it draws them all, and the texture is worth nothing:
+    /// no reader traces one wire out of two thousand. Holding a node is what
+    /// asks the question, so that is when the answer is drawn.
+    OnHold,
 }
 
 impl Style {
@@ -163,6 +216,7 @@ impl Style {
             gap: self.gap,
             lane_gap: self.lane_gap,
             node_lane_gap: self.node_lane_gap,
+            lanes: self.lanes,
         }
     }
 
@@ -468,4 +522,8 @@ impl Edge {
 pub struct Graph {
     pub nodes: Vec<Node>,
     pub edges: Vec<Edge>,
+    /// The node at the centre, under [`Arrangement::Radial`]. Ignored by every
+    /// other arrangement, and a drawing with no centre draws nothing radially —
+    /// the walk has to start somewhere and only the lens knows where.
+    pub root: Option<usize>,
 }

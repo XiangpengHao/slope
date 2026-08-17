@@ -1,26 +1,39 @@
 //! The dependency lens.
 //!
-//! A workspace resolves to hundreds of crates and thousands of edges. This opens
-//! on **three hops of it**, laid out as one DAG: the crates this workspace
-//! builds, what they pulled in, and what that pulled in. Making the reader
-//! assemble that by clicking hid the answer behind the interface; drawing all
-//! six or eight hops of it produced a texture rather than a flow chart, and cost
-//! a second of frozen tab to do it.
+//! A workspace resolves to hundreds of crates and thousands of edges, and this
+//! lens draws none of that. It draws a **walk**: one crate at the centre, what
+//! it depends on fanned around it, and nothing else until the reader clicks. A
+//! click opens that crate the same way, so the drawing grows outward from where
+//! they were already looking.
 //!
-//! Nothing past the rim is lost — it is folded. Every card is *opened* rather
-//! than merely present, at every depth, so folding a port takes away whatever
-//! was only reachable through it and opening one at the rim brings the next hop
-//! in. Ports always carry the count of what is folded behind them.
+//! Everything else here follows from that.
 //!
-//! Selection never changes what is on the pane, and clicking a card never moves
-//! the camera: the reader aimed at that card in that spot, and sliding the
-//! ground out from under the click takes away what they aimed with. Holding
-//! relights the edges and fills the record, and that is all.
+//! **No levels.** A column used to say how deep a crate sits in the build, which
+//! is a fact about the whole workspace rather than about the question being
+//! asked. On a walk the only distance that means anything is how many opens it
+//! took to get here, and that is what the drawing shows.
 //!
-//! Naming a crate is the other case. From the finder, a row in the record or an
-//! arrow key there is no telling whether the crate is even on screen, so the
-//! camera does go — and one that is not on the pane at all arrives with the
-//! chain that put it in the build, drawn as a lit route.
+//! **The shape is the same at every size.** Each opened card fans its own
+//! dependencies around itself, in a cone facing away from where it was reached
+//! from, so a branch is a smaller copy of the whole. The reader can see which
+//! card a cluster belongs to because the cluster is arranged around it.
+//!
+//! **Only the walk's own edges are drawn at rest.** A crate the walk reached
+//! another way is still joined to the ones on the pane, and after three opens
+//! there are 591 of those against the 120 the walk is built from. Drawn together
+//! they are a web across the picture that hides the shape the walk just made, so
+//! they wait until a crate is held — which is the moment the reader has asked
+//! about one crate rather than about the walk.
+//!
+//! Ports count what is attached, in each direction. With most edges undrawn that
+//! number is the only way to tell a busy crate from a quiet one before opening
+//! it, and it is what says the walk has more to give.
+//!
+//! Clicking a card on the pane never moves the camera: the reader aimed at that
+//! card in that spot, and sliding the ground out from under the click takes away
+//! what they aimed with. Naming a crate is the other case — from the finder or
+//! the record there is no telling where it is, so that starts a fresh walk from
+//! it and the camera goes.
 
 use std::collections::HashSet;
 
@@ -28,8 +41,7 @@ use dioxus::prelude::*;
 
 use crate::api::GraphLoad;
 use dioxus_flow::{
-    Badge, Card, Edge, EdgeState, Flow, Folding, Graph as Scene, Node, NodeState, Port, Way,
-    use_flow,
+    Badge, Card, Edge, EdgeState, Flow, Graph as Scene, Node, NodeState, Port, Way, use_flow,
 };
 use crate::graph::{Workspace, focus};
 use crate::views::inspector::{Inspector, Record};
@@ -42,9 +54,12 @@ pub struct DepsState {
     /// The crate being held.
     pub held: Signal<Option<usize>>,
     pub query: Signal<String>,
-    /// What is open and what is folded. The pane derives everything on it from
-    /// this and the workspace; nothing here stores a list of visible crates.
-    pub folding: Signal<Folding>,
+    /// The crate at the centre. The walk starts here and everything on the pane
+    /// was reached from it.
+    pub root: Signal<Option<usize>>,
+    /// The crates whose dependencies have been opened. The centre is opened the
+    /// moment it becomes the centre, so the first frame is never a lone card.
+    pub opened: Signal<HashSet<usize>>,
     /// Crates held this session, oldest first. For "why is this here" the walk
     /// *is* the answer, so throwing it away on every click threw away the thing
     /// the reader came for.
@@ -78,56 +93,85 @@ impl DepsState {
     }
 
     /// Ask for a crate **by name**, from anywhere that is not the pane itself.
-    /// One already on the pane is framed where it stands; one that is not
-    /// arrives with the chain from a workspace member that put it there.
-    pub fn select(&mut self, workspace: &Workspace, id: usize) {
-        let on_pane = (self.folding)().visible(workspace).contains(&id);
-        if on_pane {
-            self.aim.set(Some(Aim::Neighbourhood(id)));
-        } else {
-            self.route_to(workspace, id);
-        }
-        self.held.set(Some(id));
+    /// Every crate is on the pane, so this is always a camera move; the only
+    /// question is whether the chain that explains the crate is worth framing
+    /// with it, and [`reveal`](Self::reveal) is where that is decided.
+    pub fn select(&mut self, _workspace: &Workspace, id: usize) {
+        self.recentre(id);
     }
 
-    /// Hold a crate the reader **pointed at** on the pane. The camera stays
-    /// where it is: they aimed at that card at that spot, and sliding it out
-    /// from under the cursor is the one motion nobody asked for.
+    /// Hold a crate the reader **pointed at** on the pane, and open it.
+    ///
+    /// One click, both verbs. The reader who clicks a card on a walk means
+    /// "this one" — they want to read it *and* see where it goes, and asking
+    /// them to say so twice would make every step of the walk two clicks. The
+    /// camera stays where it is: they aimed at that card at that spot, and
+    /// sliding it out from under the cursor is the one motion nobody asked for.
     pub fn hold(&mut self, id: usize) {
         self.held.set(Some(id));
+        self.opened.write().insert(id);
     }
 
-    /// Put the chain from a workspace member to this crate on the pane.
-    pub fn route_to(&mut self, workspace: &Workspace, id: usize) {
-        let mut seeds: Vec<usize> = workspace.members().map(|member| member.id).collect();
-        for step in focus::shortest_path_from_root(workspace, id) {
-            if !seeds.contains(&step) {
-                seeds.push(step);
-            }
-        }
-        if !seeds.contains(&id) {
-            seeds.push(id);
-        }
-        self.folding.write().set_seeds(seeds);
+    /// Start a new walk from this crate: it becomes the centre, opened, and
+    /// everything the last walk had opened is let go.
+    pub fn recentre(&mut self, id: usize) {
+        self.root.set(Some(id));
+        self.opened.set(HashSet::from([id]));
+        self.held.set(Some(id));
+        self.aim.set(Some(Aim::Neighbourhood(id)));
+    }
+
+    /// Frame the chain from a workspace member to this crate.
+    pub fn route_to(&mut self, _workspace: &Workspace, id: usize) {
         self.aim.set(Some(Aim::Route(id)));
         self.held.set(Some(id));
     }
-
-    /// Fold or open one side of a crate.
-    pub fn toggle(&mut self, id: usize, way: Way) {
-        self.folding.write().toggle(id, way);
-    }
 }
 
-/// How many hops past the workspace the first reading opens.
+/// The walk: every crate reached from the centre through crates the reader has
+/// opened, and the crate each one was first reached through.
 ///
-/// Three is where the shape of a build stops being informative and starts being
-/// upholstery: the crates you chose, what they pulled in, and what that pulled
-/// in. Past there it is transitive scenery — still reachable through the ports,
-/// which carry the count, but not what anyone opened the lens to see. It is also
-/// what keeps the pane responsive, since a large workspace resolves to thousands
-/// of cards and every one of them is a mounted element.
-pub const OPEN_DEPTH: usize = 3;
+/// This replaces asking the workspace what is on the pane. Nothing is on the
+/// pane that the reader did not open their way to, so the drawing is exactly as
+/// large as the question they have asked so far — which is the only thing that
+/// has ever kept a 718-crate graph readable.
+fn walk(workspace: &Workspace, root: usize, opened: &HashSet<usize>) -> Vec<dioxus_flow::Shoot> {
+    dioxus_flow::radial::spanning(
+        root,
+        &|id| opened.contains(&id),
+        &|id| {
+            workspace
+                .crates
+                .get(id)
+                .map(|entry| entry.deps.clone())
+                .unwrap_or_default()
+        },
+    )
+}
+
+/// How the dependency pane is drawn: the centre, and the walk fanned around it.
+///
+/// No levels. A level said how far a crate sits from the workspace, which is a
+/// fact about the whole build and not about the question the reader is asking;
+/// on a walk the only distance that matters is how many opens it took to get
+/// here from the crate they started at, and that is the ring a card sits on.
+///
+/// Wires are always drawn. Hiding them was the right answer while the pane held
+/// all 718 crates and the mesh between them was a texture; here the wires *are*
+/// the drawing, and there are only ever as many as the reader has opened.
+fn pane_style() -> dioxus_flow::Style {
+    dioxus_flow::Style {
+        arrangement: dioxus_flow::Arrangement::Radial,
+        // Wires are drawn. Hiding them was the answer while the pane held all
+        // 718 crates and the mesh between them was a texture; on a walk the
+        // wires *are* the picture. Which wires reach the pane at all is decided
+        // in `scene`: the walk's own always, the rest when a card is held.
+        wires: dioxus_flow::Wires::Always,
+        column_pitch: 300.0,
+        gap: 28.0,
+        ..Default::default()
+    }
+}
 
 /// The workspace, read as a graph the pane can walk.
 ///
@@ -183,11 +227,18 @@ pub fn frame_around(
 /// The cards and wires for one reading of the graph.
 pub fn scene(
     workspace: &Workspace,
-    on_pane: &[usize],
+    tree: &[dioxus_flow::Shoot],
     held: Option<usize>,
-    folding: &Folding,
+    root: Option<usize>,
 ) -> Scene {
+    let on_pane: Vec<usize> = tree.iter().map(|shoot| shoot.id).collect();
     let here: HashSet<usize> = on_pane.iter().copied().collect();
+    // The edges the walk itself is made of: how each card got here. These are
+    // the drawing's skeleton and are always shown.
+    let spine: HashSet<(usize, usize)> = tree
+        .iter()
+        .filter_map(|shoot| Some((shoot.parent?, shoot.id)))
+        .collect();
 
     // The chain that put the held crate in the build, drawn as a route.
     let route: Vec<usize> = held
@@ -220,13 +271,18 @@ pub fn scene(
                     }
                     card
                 },
+                // Every crate is on the pane, so a port no longer says "there is
+                // more behind me" — nothing is behind it. What it says now is how
+                // busy this crate is in each direction, which is the one thing a
+                // reader cannot see for themselves when no wire is drawn until
+                // something is held. Never lit: a count is not a state.
                 inbound: (!entry.dependents.is_empty()).then_some(Port {
                     count: entry.dependents.len(),
-                    open: folding.is_open(id, Way::In),
+                    open: false,
                 }),
                 outbound: (!entry.deps.is_empty()).then_some(Port {
                     count: entry.deps.len(),
-                    open: folding.is_open(id, Way::Out),
+                    open: false,
                 }),
                 // A crate holds no crates. Containment is the call lens's axis,
                 // not this one's.
@@ -246,9 +302,21 @@ pub fn scene(
     // opened through: the mesh inside a neighbourhood is most of what the
     // neighbourhood says.
     let mut edges: Vec<Edge> = Vec::new();
-    for &id in on_pane {
+    for &id in &on_pane {
         for &dep in &workspace.crates[id].deps {
             if !here.contains(&dep) {
+                continue;
+            }
+            // A crate the walk reached another way is still joined to this one,
+            // and saying so is the point of drawing a graph rather than a tree.
+            // But there are five of those for every one the walk is built from —
+            // 591 against 120 after three opens — and drawn at rest they are a
+            // web across the circle that hides the shape the walk just made. So
+            // they wait until a card is held, which is when the reader has asked
+            // about a particular crate rather than about the walk.
+            let on_spine = spine.contains(&(id, dep));
+            let touches_held = held == Some(id) || held == Some(dep);
+            if !on_spine && !touches_held {
                 continue;
             }
             let state = match held {
@@ -269,7 +337,7 @@ pub fn scene(
         }
     }
 
-    Scene { nodes, edges }
+    Scene { nodes, edges, root }
 }
 
 #[component]
@@ -291,38 +359,34 @@ pub fn Deps() -> Element {
         matches!(loaded.as_ref(), Some(Ok(GraphLoad::Ready(_))))
     };
 
-    // Open on the build three hops deep, laid out as one DAG. The reader folds
-    // and opens from there rather than assembling the picture a click at a time.
-    //
-    // Every card is *opened* rather than merely present, at every depth: fold
-    // any port and what was only reachable through it goes away, open one at the
-    // rim and the next hop arrives. The rim is not a wall, and the ports there
-    // carry the count of what is still folded behind them.
+    // The walk has to start somewhere. The first workspace member is the crate
+    // the reader almost certainly came to ask about — it is the thing they
+    // build — and starting on a bare pane with a finder would make the lens
+    // answer nothing until it was interrogated.
     use_effect(move || {
         let loaded = resource.read();
         let Some(Ok(GraphLoad::Ready(workspace))) = loaded.as_ref() else {
             return;
         };
-        if !state.folding.peek().seeds().is_empty() {
+        if state.root.peek().is_some() {
             return;
         }
-        let seeds: Vec<usize> = workspace.members().map(|member| member.id).collect();
-        state.folding.set(Folding::to_depth(
-            workspace.as_ref(),
-            seeds,
-            OPEN_DEPTH,
-            Way::Out,
-        ));
+        if let Some(first) = workspace.members().map(|member| member.id).next() {
+            state.recentre(first);
+        }
     });
 
     let (scene_now, record) = {
         let loaded = resource.read();
         match loaded.as_ref() {
             Some(Ok(GraphLoad::Ready(workspace))) => {
-                let folding = (state.folding)();
-                let on_pane = folding.visible(workspace.as_ref());
+                let root = (state.root)();
+                let opened = (state.opened)();
+                let tree = root
+                    .map(|root| walk(workspace.as_ref(), root, &opened))
+                    .unwrap_or_default();
                 let held = (state.held)();
-                let scene = scene(workspace, &on_pane, held, &folding);
+                let scene = scene(workspace, &tree, held, root);
                 let record = held.map(|id| {
                     let view = focus::reach(workspace, id);
                     Record::build(workspace, &view, id)
@@ -345,7 +409,12 @@ pub fn Deps() -> Element {
             return;
         };
         state.aim.set(None);
-        let on_pane = (state.folding)().visible(workspace.as_ref());
+        let on_pane: Vec<usize> = (state.root)()
+            .map(|root| walk(workspace.as_ref(), root, &(state.opened)()))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|shoot| shoot.id)
+            .collect();
         match aim {
             // The chain is the answer to the question that summoned the crate,
             // so it is framed end to end rather than just its destination.
@@ -395,12 +464,7 @@ pub fn Deps() -> Element {
                     flow,
                     graph: scene_now,
                     on_select: select,
-                    // Opening a port re-tidies the pane under the reader's
-                    // cursor. The camera stays out of it: the cards glide to
-                    // their new places and the newcomers fade in among them,
-                    // which shows what changed without also moving the frame the
-                    // reader was reading it in.
-                    on_port: move |(id, way): (usize, Way)| state.toggle(id, way),
+                    style: pane_style(),
                     on_clear: move |_| state.held.set(None),
                 }
 
@@ -492,6 +556,7 @@ fn Failure(message: String) -> Element {
     }
 }
 
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -506,174 +571,180 @@ mod tests {
         workspace.members().map(|member| member.id).collect()
     }
 
-    /// The opening reading, as the lens actually builds it.
-    fn opening(workspace: &Workspace) -> Folding {
-        Folding::to_depth(workspace, members(workspace), OPEN_DEPTH, Way::Out)
+    /// Where the lens starts: one crate, opened, and what it depends on. Not the
+    /// workspace, not three hops of it — one crate and its own dependencies.
+    #[test]
+    fn the_first_frame_is_one_crate_and_what_it_depends_on() {
+        let workspace = real();
+        let root = members(&workspace)[0];
+        let tree = walk(&workspace, root, &HashSet::from([root]));
+
+        let on_pane: HashSet<usize> = tree.iter().map(|shoot| shoot.id).collect();
+        let expected: HashSet<usize> = std::iter::once(root)
+            .chain(workspace.crates[root].deps.iter().copied())
+            .collect();
+        assert_eq!(on_pane, expected);
+        assert_eq!(tree[0].id, root, "the centre comes first");
+        assert_eq!(tree[0].parent, None, "the centre was reached from nothing");
     }
 
-    /// The opening view: three hops of the build, in one DAG. Everything within
-    /// the rim is there from the first frame, and nothing past it is.
+    /// An unopened crate keeps its dependencies to itself. This is the whole
+    /// budget: the pane costs what the reader has asked for and nothing else.
     #[test]
-    fn the_first_reading_is_three_hops_deep() {
+    fn an_unopened_crate_brings_nothing_with_it() {
         let workspace = real();
-        let depth = dioxus_flow::depths(&workspace, &members(&workspace), Way::Out);
-        let on_pane = opening(&workspace).visible(&workspace);
+        let root = members(&workspace)[0];
+        let alone = walk(&workspace, root, &HashSet::new());
+        assert_eq!(alone.len(), 1, "nothing is opened, so nothing else is drawn");
+    }
 
-        for &id in &on_pane {
+    /// Opening a crate adds its dependencies and leaves the rest of the walk
+    /// where it was.
+    #[test]
+    fn opening_a_crate_adds_exactly_what_it_depends_on() {
+        let workspace = real();
+        let root = members(&workspace)[0];
+        let first = HashSet::from([root]);
+        let before: HashSet<usize> = walk(&workspace, root, &first)
+            .iter()
+            .map(|shoot| shoot.id)
+            .collect();
+
+        // Open whichever dependency carries the most of its own.
+        let Some(&next) = workspace.crates[root]
+            .deps
+            .iter()
+            .max_by_key(|&&dep| workspace.crates[dep].deps.len())
+        else {
+            return;
+        };
+        let mut opened = first.clone();
+        opened.insert(next);
+        let after: HashSet<usize> = walk(&workspace, root, &opened)
+            .iter()
+            .map(|shoot| shoot.id)
+            .collect();
+
+        assert!(before.is_subset(&after), "opening took something away");
+        for &dep in &workspace.crates[next].deps {
             assert!(
-                depth[&id] <= OPEN_DEPTH,
-                "{} is {} hops out and should still be folded away",
-                workspace.crates[id].name,
-                depth[&id]
+                after.contains(&dep),
+                "{} was not brought in by opening {}",
+                workspace.crates[dep].name,
+                workspace.crates[next].name
             );
         }
-        for (&id, &hops) in &depth {
-            if hops <= OPEN_DEPTH {
-                assert!(
-                    on_pane.contains(&id),
-                    "{} is only {hops} hops out and belongs on the opening pane",
-                    workspace.crates[id].name
-                );
-            }
+    }
+
+    /// Every card was reached from the centre through crates the reader opened.
+    /// Nothing is on the pane that the walk did not put there.
+    #[test]
+    fn every_card_was_reached_through_something_opened() {
+        let workspace = real();
+        let root = members(&workspace)[0];
+        let mut opened = HashSet::from([root]);
+        opened.extend(workspace.crates[root].deps.iter().take(3).copied());
+        let tree = walk(&workspace, root, &opened);
+
+        for shoot in &tree {
+            let Some(parent) = shoot.parent else {
+                assert_eq!(shoot.id, root);
+                continue;
+            };
+            assert!(
+                opened.contains(&parent),
+                "{} was reached through {}, which is not open",
+                workspace.crates[shoot.id].name,
+                workspace.crates[parent].name
+            );
+            assert!(
+                workspace.crates[parent].deps.contains(&shoot.id),
+                "{} is not actually a dependency of {}",
+                workspace.crates[shoot.id].name,
+                workspace.crates[parent].name
+            );
         }
     }
 
-    /// The rim is a fold, not a wall: opening a port there brings the next hop
-    /// in, exactly as opening one anywhere else does.
+    /// At rest the drawing is the walk and only the walk: one wire per card,
+    /// less the centre. The crates that are joined some other way are still
+    /// joined, and they wait until something is held.
     #[test]
-    fn opening_a_port_at_the_rim_brings_the_next_hop_in() {
+    fn at_rest_only_the_walks_own_wires_are_drawn() {
         let workspace = real();
-        let depth = dioxus_flow::depths(&workspace, &members(&workspace), Way::Out);
-        let mut folding = opening(&workspace);
-        let before = folding.visible(&workspace);
+        let root = members(&workspace)[0];
+        let mut opened = HashSet::from([root]);
+        opened.extend(workspace.crates[root].deps.iter().take(3).copied());
+        let tree = walk(&workspace, root, &opened);
 
-        // A crate sitting on the rim with something still folded behind it.
-        let Some(&rim) = before
+        let drawn = scene(&workspace, &tree, None, Some(root));
+        assert_eq!(
+            drawn.edges.len(),
+            tree.len() - 1,
+            "at rest there should be exactly one wire per card but the centre"
+        );
+        assert_eq!(drawn.root, Some(root));
+        for edge in &drawn.edges {
+            assert_eq!(edge.state, EdgeState::Rest);
+        }
+    }
+
+    /// Holding a crate brings in the edges the walk did not draw — the ones that
+    /// join it to cards it did not arrive through.
+    #[test]
+    fn holding_a_crate_brings_in_the_wires_the_walk_left_out() {
+        let workspace = real();
+        let root = members(&workspace)[0];
+        let mut opened = HashSet::from([root]);
+        opened.extend(workspace.crates[root].deps.iter().take(4).copied());
+        let tree = walk(&workspace, root, &opened);
+        let on_pane: HashSet<usize> = tree.iter().map(|shoot| shoot.id).collect();
+
+        let cold = scene(&workspace, &tree, None, Some(root));
+        // A card with edges to cards it did not arrive through.
+        let spine: HashSet<(usize, usize)> = tree
             .iter()
-            .filter(|&&id| depth[&id] == OPEN_DEPTH && !workspace.crates[id].deps.is_empty())
-            .max_by_key(|&&id| workspace.crates[id].deps.len())
-        else {
-            return; // A workspace shallower than the rim has nothing to prove.
+            .filter_map(|shoot| Some((shoot.parent?, shoot.id)))
+            .collect();
+        let Some(&busy) = on_pane.iter().max_by_key(|&&id| {
+            workspace.crates[id]
+                .deps
+                .iter()
+                .filter(|&&dep| on_pane.contains(&dep) && !spine.contains(&(id, dep)))
+                .count()
+        }) else {
+            return;
         };
-
-        folding.open(rim, Way::Out);
-        let after = folding.visible(&workspace);
+        let warm = scene(&workspace, &tree, Some(busy), Some(root));
         assert!(
-            after.len() > before.len(),
-            "opening {} should have brought its {} dependencies in",
-            workspace.crates[rim].name,
-            workspace.crates[rim].deps.len()
+            warm.edges.len() >= cold.edges.len(),
+            "holding took wires away"
         );
-        for &dep in &workspace.crates[rim].deps {
-            assert!(after.contains(&dep), "a dependency of the opened crate is missing");
-        }
-    }
-
-    /// The depth this lens opens to is measured in shortest hops, which is what
-    /// makes "three levels of dependency" mean what a reader expects. The walk
-    /// itself belongs to the flow crate and is tested there; this pins the
-    /// meaning against a real workspace.
-    #[test]
-    fn depth_is_the_shortest_route_from_the_workspace() {
-        let workspace = real();
-        let seeds = members(&workspace);
-        let depth = dioxus_flow::depths(&workspace, &seeds, Way::Out);
-        for &seed in &seeds {
-            assert_eq!(depth[&seed], 0, "a workspace member is its own starting point");
-            for &dep in &workspace.crates[seed].deps {
-                // At most one, not exactly one: a workspace member can depend on
-                // another workspace member, and that one is still a starting
-                // point rather than a hop out.
+        for edge in &warm.edges {
+            if !spine.contains(&(edge.from, edge.to)) {
                 assert!(
-                    depth[&dep] <= 1,
-                    "{} is a direct dependency of {} but is recorded {} hops out",
-                    workspace.crates[dep].name,
-                    workspace.crates[seed].name,
-                    depth[&dep]
+                    edge.from == busy || edge.to == busy,
+                    "a wire was drawn that neither the walk nor the selection asked for"
                 );
             }
         }
     }
 
-    /// Every card is opened rather than merely present, at every depth: fold one
-    /// port and what was only reachable through it goes away.
-    #[test]
-    fn a_card_at_any_depth_is_opened_rather_than_merely_present() {
-        let workspace = real();
-        let mut folding = opening(&workspace);
-        let whole = folding.visible(&workspace);
-
-        // Fold the busiest crate the workspace builds against.
-        let seeds = members(&workspace);
-        let busiest = *seeds
-            .iter()
-            .flat_map(|&id| workspace.crates[id].deps.iter())
-            .max_by_key(|&&dep| workspace.crates[dep].deps.len())
-            .expect("a workspace member depends on something");
-        folding.fold(busiest, Way::Out);
-        let folded = folding.visible(&workspace);
-        assert!(
-            folded.len() < whole.len(),
-            "folding {} took nothing away",
-            workspace.crates[busiest].name
-        );
-        assert!(folded.contains(&busiest), "the card folded is still on the pane");
-    }
-
-    /// Every card on the pane is reachable from a seed through open ports. A
-    /// card nobody opened is a card nobody can fold.
-    #[test]
-    fn nothing_is_on_the_pane_that_was_not_opened() {
-        let workspace = real();
-        let seeds = members(&workspace);
-        let folding = opening(&workspace);
-        let on_pane = folding.visible(&workspace);
-        for &id in &on_pane {
-            let opened = seeds.contains(&id)
-                || workspace.crates[id]
-                    .dependents
-                    .iter()
-                    .any(|owner| folding.is_open(*owner, Way::Out));
-            assert!(opened, "{} is on the pane but nothing opened it", workspace.crates[id].name);
-        }
-    }
-
-    /// Holding a crate changes ink, never the cast: the same cards are on the
-    /// pane before and after, in the same columns.
-    #[test]
-    fn holding_a_crate_never_changes_what_is_on_the_pane() {
-        let workspace = real();
-        let folding = opening(&workspace);
-        let on_pane = folding.visible(&workspace);
-        let held = *on_pane.last().unwrap();
-
-        let cold = scene(&workspace, &on_pane, None, &folding);
-        let warm = scene(&workspace, &on_pane, Some(held), &folding);
-        assert_eq!(cold.nodes.len(), warm.nodes.len());
-        for (before, after) in cold.nodes.iter().zip(warm.nodes.iter()) {
-            assert_eq!(before.id, after.id);
-            assert_eq!(before.column, after.column);
-        }
-        assert_eq!(cold.edges.len(), warm.edges.len());
-    }
-
-    /// Direction is the one variable that earns a hue, and it has to agree with
-    /// which side of the held crate the edge is on.
+    /// Direction still earns the only hue in the system, and it has to agree
+    /// with which side of the held crate the edge runs.
     #[test]
     fn edges_take_their_hue_from_which_way_they_run() {
         let workspace = real();
-        let folding = opening(&workspace);
-        let on_pane = folding.visible(&workspace);
-        let held = *on_pane
-            .iter()
-            .find(|&&id| !workspace.crates[id].is_root)
-            .expect("the pane holds more than the workspace itself");
-        let drawn = scene(&workspace, &on_pane, Some(held), &folding);
+        let root = members(&workspace)[0];
+        let mut opened = HashSet::from([root]);
+        opened.extend(workspace.crates[root].deps.iter().take(3).copied());
+        let tree = walk(&workspace, root, &opened);
+        let held = tree[1].id;
+        let drawn = scene(&workspace, &tree, Some(held), Some(root));
 
         let route = focus::shortest_path_from_root(&workspace, held);
         let steps: HashSet<(usize, usize)> =
             route.windows(2).map(|pair| (pair[0], pair[1])).collect();
-
         for edge in &drawn.edges {
             match edge.state {
                 EdgeState::Incoming => assert_eq!(edge.to, held),
@@ -685,28 +756,27 @@ mod tests {
         }
     }
 
-    /// Every edge on the pane joins two cards that are actually on it. An edge
-    /// to a card that is not there is a line into empty space.
+    /// Every wire joins two cards that are actually on the pane.
     #[test]
     fn every_edge_joins_two_cards_that_are_on_the_pane() {
         let workspace = real();
-        let folding = opening(&workspace);
-        let on_pane = folding.visible(&workspace);
-        let drawn = scene(&workspace, &on_pane, None, &folding);
+        let root = members(&workspace)[0];
+        let tree = walk(&workspace, root, &HashSet::from([root]));
+        let drawn = scene(&workspace, &tree, None, Some(root));
         let ids: HashSet<usize> = drawn.nodes.iter().map(|node| node.id).collect();
         for edge in &drawn.edges {
             assert!(ids.contains(&edge.from) && ids.contains(&edge.to));
         }
     }
 
-    /// A port's number is the whole count, open or folded — nothing is hidden by
-    /// folding, only put away.
+    /// A port counts what is attached and never lights up. With most wires
+    /// undrawn it is the only thing that says a crate has more behind it.
     #[test]
-    fn a_port_always_carries_the_whole_count() {
+    fn a_port_counts_what_is_attached_and_is_never_lit() {
         let workspace = real();
-        let folding = opening(&workspace);
-        let on_pane = folding.visible(&workspace);
-        let drawn = scene(&workspace, &on_pane, None, &folding);
+        let root = members(&workspace)[0];
+        let tree = walk(&workspace, root, &HashSet::from([root]));
+        let drawn = scene(&workspace, &tree, None, Some(root));
         for node in &drawn.nodes {
             let entry = &workspace.crates[node.id];
             assert_eq!(
@@ -717,49 +787,30 @@ mod tests {
                 node.outbound.map(|port| port.count).unwrap_or(0),
                 entry.deps.len()
             );
-            // Only where there is a port to say it. A crate with no
-            // dependencies has nothing to open, whatever the fold state says
-            // about a side that was never going to draw anything.
-            if let Some(port) = node.outbound {
-                assert_eq!(port.open, folding.is_open(node.id, Way::Out));
+            for port in [node.inbound, node.outbound].into_iter().flatten() {
+                assert!(!port.open, "a port has nothing to open");
             }
         }
     }
 
-    /// Asking for a crate that is not on the pane brings the chain that put it
-    /// in the build with it, and every step of that chain is drawn as a route.
+    /// Depth is still measured in shortest hops. Nothing draws columns any more,
+    /// but the route and the record both lean on it.
     #[test]
-    fn a_crate_off_the_pane_arrives_with_its_route() {
+    fn depth_is_the_shortest_route_from_the_workspace() {
         let workspace = real();
-        let deep = workspace
-            .crates
-            .iter()
-            .max_by_key(|entry| entry.rank)
-            .expect("this workspace has a deepest crate");
-
-        let mut seeds: Vec<usize> = members(&workspace);
-        for step in focus::shortest_path_from_root(&workspace, deep.id) {
-            if !seeds.contains(&step) {
-                seeds.push(step);
+        let seeds = members(&workspace);
+        let depth = dioxus_flow::depths(&workspace, &seeds, Way::Out);
+        for &seed in &seeds {
+            assert_eq!(depth[&seed], 0, "a workspace member is its own starting point");
+            for &dep in &workspace.crates[seed].deps {
+                assert!(
+                    depth[&dep] <= 1,
+                    "{} is a direct dependency of {} but is recorded {} hops out",
+                    workspace.crates[dep].name,
+                    workspace.crates[seed].name,
+                    depth[&dep]
+                );
             }
         }
-        let folding = Folding::new(seeds);
-        let on_pane = folding.visible(&workspace);
-        assert!(on_pane.contains(&deep.id));
-
-        let drawn = scene(&workspace, &on_pane, Some(deep.id), &folding);
-        let route = focus::shortest_path_from_root(&workspace, deep.id);
-        let lit = drawn
-            .edges
-            .iter()
-            .filter(|edge| edge.state == EdgeState::Route)
-            .count();
-        assert_eq!(
-            lit,
-            route.len() - 1,
-            "the route to {} is {} hops but {lit} of them are lit",
-            deep.name,
-            route.len() - 1
-        );
     }
 }

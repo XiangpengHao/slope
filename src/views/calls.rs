@@ -63,10 +63,21 @@ const ROWS: usize = 12;
 /// Cards here carry a kind word, a count and sometimes a trait name, which is
 /// more than a crate name and a version needed. The extra 18 pixels of height is
 /// the difference between three facts fitting and the subtitle being clipped.
+///
+/// Wires are drawn only for what is held, the same reading the dependency lens
+/// takes. This lens already refuses the whole graph — a unit opens into its
+/// children, so what is on the pane is one level of detail rather than all 8,259
+/// functions — but at 82 units it still drew 518 wires between them, and that
+/// mesh is a texture nobody traces. Holding a card is what asks the question.
+///
+/// Lanes go with them: the room a lane holds open in every column a wire crosses
+/// is only worth holding open for a wire that is on the pane.
 fn style() -> Style {
     Style {
         node: (208.0, 58.0),
         column_pitch: 300.0,
+        lanes: false,
+        wires: dioxus_flow::Wires::OnHold,
         ..Style::default()
     }
 }
@@ -282,7 +293,12 @@ pub fn scene(
         })
         .collect();
 
-    Scene { nodes, edges }
+    Scene {
+        nodes,
+        edges,
+        // The call lens drills rather than walks; it has no centre.
+        root: None,
+    }
 }
 
 /// What a card says. Every kind fills the same three slots, so a reader who has

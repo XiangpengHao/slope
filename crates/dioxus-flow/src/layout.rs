@@ -60,6 +60,23 @@ pub struct Metrics {
     pub lane_gap: f32,
     /// Air where a node and a lane are neighbours.
     pub node_lane_gap: f32,
+    /// Whether an edge crossing a column claims a lane there.
+    ///
+    /// Lanes exist so a long wire routes *between* the cards of the columns it
+    /// crosses rather than over them, and they are the right trade whenever
+    /// every wire is drawn. They are not free: on a 718-crate workspace 2,732
+    /// wires opened 25,528 lanes, and the tallest column went from the 3,788
+    /// units its 56 cards need to 8,492 — more than half the height of the pane
+    /// spent on room for wires.
+    ///
+    /// Turn them off when wires are not drawn at rest. Nothing is being routed
+    /// around anything, so the columns simply pack, and a wire that is summoned
+    /// by a selection passes behind whatever card is in its way — which reads
+    /// cleanly, because a card is opaque and paints over the wire layer.
+    ///
+    /// Edges still shape the drawing either way: they order each column and pull
+    /// each card level with its neighbours. Only the reserved room goes.
+    pub lanes: bool,
 }
 
 impl Default for Metrics {
@@ -71,6 +88,7 @@ impl Default for Metrics {
             gap: 20.0,
             lane_gap: 7.0,
             node_lane_gap: 12.0,
+            lanes: true,
         }
     }
 }
@@ -212,21 +230,26 @@ pub fn layered(
             continue;
         }
         let mut chain = vec![a];
-        let step: i32 = if end > start { 1 } else { -1 };
-        let mut column = start as i32 + step;
-        while column != end as i32 {
-            let lane = cells.len();
-            cells.push(Cell {
-                column: column as usize,
-                card: None,
-                order: 0.0,
-                y: 0.0,
-                left: Vec::new(),
-                right: Vec::new(),
-            });
-            chain.push(lane);
-            column += step;
+        if metrics.lanes {
+            let step: i32 = if end > start { 1 } else { -1 };
+            let mut column = start as i32 + step;
+            while column != end as i32 {
+                let lane = cells.len();
+                cells.push(Cell {
+                    column: column as usize,
+                    card: None,
+                    order: 0.0,
+                    y: 0.0,
+                    left: Vec::new(),
+                    right: Vec::new(),
+                });
+                chain.push(lane);
+                column += step;
+            }
         }
+        // Without lanes the two cards are joined straight to each other, so they
+        // still pull on each other's order and height — the column just does not
+        // set anything aside for the wire between them.
         chain.push(b);
         for pair in chain.windows(2) {
             let (earlier, later) = if cells[pair[0]].column < cells[pair[1]].column {

@@ -30,7 +30,8 @@ pub fn Shell() -> Element {
     let state = DepsState {
         held: use_signal(|| None),
         query: use_signal(String::new),
-        folding: use_signal(Default::default),
+        root: use_signal(|| None),
+        opened: use_signal(Default::default),
         history: use_signal(Vec::new),
         aim: use_signal(|| None),
     };

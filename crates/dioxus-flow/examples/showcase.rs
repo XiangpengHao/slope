@@ -93,6 +93,8 @@ fn App() -> Element {
                 edge
             })
             .collect(),
+        // Columns, not a walk: this example has no centre.
+        root: None,
     };
 
     rsx! {
