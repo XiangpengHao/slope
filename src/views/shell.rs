@@ -12,7 +12,8 @@ use crate::Route;
 use crate::api::{GraphLoad, SheetLoad, load_graph, load_sheet};
 use crate::components::TopBar;
 use crate::graph::focus;
-use crate::views::{DepsState, SheetState};
+use crate::views::{DepsState, SheetState, calls};
+use dioxus_flow::Way;
 
 /// The resolved workspace, shared by everything under the shell.
 pub type GraphResource = Resource<Result<GraphLoad>>;
@@ -54,8 +55,7 @@ pub fn Shell() -> Element {
     let sheet_state = SheetState {
         held: use_signal(|| None),
         query: use_signal(String::new),
-        folding: use_signal(Default::default),
-        columns: use_signal(Default::default),
+        nest: use_signal(Default::default),
         history: use_signal(Vec::new),
         aim: use_signal(|| None),
     };
@@ -210,24 +210,23 @@ fn use_global_keys(
                             let Some(Some(Ok(SheetLoad::Ready(sheet)))) = loaded.as_ref() else {
                                 continue;
                             };
-                            match sheet_state.held.peek().as_ref() {
-                                // Nothing held yet: an arrow starts you where
-                                // the program does, which is the only place a
-                                // walk through a call graph can begin.
-                                None => sheet.entries.first().copied(),
-                                Some(&id) => {
-                                    let (callers, callees) = crate::call::reach::immediate(sheet, id);
-                                    match step {
-                                        Step::Left => callers.first().copied(),
-                                        Step::Right => callees.first().copied(),
-                                    }
-                                }
-                            }
+                            // Along the calls, at whatever level of detail the
+                            // reader has opened to — the same meaning on a crate
+                            // as on a function.
+                            calls::step(
+                                sheet.as_ref(),
+                                &(sheet_state.nest)(),
+                                sheet_state.held.peek().as_ref().copied(),
+                                match step {
+                                    Step::Left => Way::In,
+                                    Step::Right => Way::Out,
+                                },
+                            )
                         };
                         if let Some(next) = next {
                             let loaded = sheet.read();
                             if let Some(Some(Ok(SheetLoad::Ready(sheet)))) = loaded.as_ref() {
-                                sheet_state.select(sheet.as_ref(), next);
+                                sheet_state.reveal(sheet.as_ref(), next);
                             }
                         }
                     } else {

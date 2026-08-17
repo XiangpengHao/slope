@@ -9,3 +9,5 @@ Don't edit this file.
 Iterate ./spec as we add new features, change behavior, etc.
 
 browser is avaliable through nix packages.
+
+use simple tech english

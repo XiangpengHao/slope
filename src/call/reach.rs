@@ -1,66 +1,99 @@
 //! Reachability: what runs, from where, through what.
 //!
-//! This is the module the whole lens turns on, and it exists because of a
-//! measurement. This workspace has 240 functions of its own and 225 calls
-//! between them — average degree below one, maximum fan-in six, six hops deep.
-//! There is no mesh to draw. Drawing one spent the entire screen rendering
-//! structure that carried almost no information.
+//! The pane says what calls what. This says the things a picture cannot:
 //!
-//! What the data *does* carry is routes. A call graph is entered at a few known
-//! places and fans out, and the useful questions are all about that fan:
-//!
-//! - **Where does it start?** `main`, and whatever a framework calls.
-//! - **What does each start reach?** The size of a beginning is what makes it
-//!   worth reading first.
 //! - **What must every route cross?** Not the most-called function — the ones
 //!   that *dominate*: functions no route to a region can avoid. That set is the
 //!   architecture, and it is computed here rather than asserted by a human.
-//! - **How do I get from a start to this?** A path, written the way a stack
-//!   trace is written, because that is the one representation of a call chain
-//!   every developer already reads fluently.
+//! - **How much does this touch, and how much touches it?** Both closures, and
+//!   the overlap between them, because a call graph has cycles and the two
+//!   numbers genuinely count some functions twice.
+//! - **How does execution get here?** One route, written the way a stack trace
+//!   is written, because that is the one representation of a call chain every
+//!   developer already reads fluently.
+//!
+//! Where each of these runs is not a detail. Dominance is a question about the
+//! whole graph, the same for every reader, and on a workspace of eight thousand
+//! functions it is seconds of arithmetic — so it runs **once, on the server**,
+//! and rides along on the [`Sheet`]. Everything else is asked about one function,
+//! when a reader selects it, and costs a walk or two.
+//!
+//! The first version of this module drew no such line: it filled a table of
+//! reach counts for every function up front, which is `V·(V+E)`, and then walked
+//! from each of 476 entry points separately to fill a column nothing read. In a
+//! browser, on a real workspace, that is not slow — it is a hang.
 //!
 //! Nothing here returns a coordinate, and nothing here draws.
 
 use std::collections::VecDeque;
+
+use serde::{Deserialize, Serialize};
 
 use super::{Origin, Sheet, UnitKind};
 
 /// A route from an entry point to a target, nearest first.
 pub type Path = Vec<usize>;
 
-/// What the analysis found about one function.
+/// What the analysis found about one function, asked for one function at a time.
+///
+/// These used to be computed for every function up front, and on a workspace of
+/// a few hundred that was fine. It is not fine at eight thousand: reachability
+/// per node is two walks of the whole graph, so the table costs `V·(V+E)` to
+/// fill and the reader looks at one row of it. Now the row is computed when it
+/// is asked for — two walks, once, for the function actually on screen.
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct Standing {
     /// Functions this one can reach, itself excluded.
     pub reaches: usize,
     /// Functions that can reach it.
     pub reached_by: usize,
-    /// How many functions this one *dominates*: every route from an entry point
-    /// to any of them passes through here. This is the chokepoint weight, and
-    /// it is what separates an architectural boundary from a popular utility.
+    /// Functions that reach it *and* are reached by it: the cycle it takes part
+    /// in.
+    ///
+    /// The dependency board never has to say this, because a dependency graph is
+    /// acyclic and its two closures are disjoint. A call graph's are not, so "12
+    /// callers" and "3 callees" can genuinely count the same function twice.
+    /// Naming the overlap is the difference between two honest numbers and two
+    /// that look like they should add up.
+    pub both_ways: usize,
+}
+
+/// What every route to a function must cross, over the whole call graph.
+///
+/// Dominance is the one answer here that cannot be narrowed to what is on
+/// screen: whether there is a way round a function is a question about the
+/// entire graph, so it is computed once, where the whole graph is — on the
+/// server, during extraction — and carried on the [`Sheet`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Reach {
+    /// Immediate dominator of each unit, where one exists.
+    idom: Vec<Option<usize>>,
+    /// How many functions each one dominates: every route from an entry point to
+    /// any of them passes through here. This is the chokepoint weight, and it is
+    /// what separates an architectural boundary from a popular utility.
     ///
     /// `Vec::len` has enormous fan-in and dominates nothing, because there is
     /// always another way round. A dispatcher has modest fan-in and dominates
     /// half the program, because there is not.
-    pub dominates: usize,
-    /// How many of the sheet's entry points reach it.
-    pub entries: usize,
-}
-
-/// The whole reachability answer for a sheet, computed once.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Reach {
-    pub standing: Vec<Standing>,
-    /// Immediate dominator of each function, where one exists.
-    idom: Vec<Option<usize>>,
-    /// Functions no entry point reaches. Dead, or reached only through a
-    /// mechanism the analyser cannot see.
+    dominates: Vec<u32>,
+    /// Functions in this workspace no entry point reaches. Dead, or reached only
+    /// through a mechanism the analyser cannot see.
     pub unreached: Vec<usize>,
 }
 
 impl Reach {
-    pub fn of(&self, id: usize) -> Standing {
-        self.standing.get(id).copied().unwrap_or_default()
+    /// Nothing known — what an empty sheet answers.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn none() -> Self {
+        Self {
+            idom: Vec::new(),
+            dominates: Vec::new(),
+            unreached: Vec::new(),
+        }
+    }
+
+    pub fn dominates(&self, id: usize) -> usize {
+        self.dominates.get(id).copied().unwrap_or(0) as usize
     }
 
     /// The chain of chokepoints above a function: every unit that every route
@@ -82,20 +115,6 @@ impl Reach {
         chain
     }
 
-    /// Functions that can reach this one *and* be reached by it: the cycle it
-    /// takes part in.
-    ///
-    /// The dependency board never has to say this, because a dependency graph
-    /// is acyclic and its two closures are disjoint. A call graph's are not, so
-    /// "12 callers" and "3 callees" can genuinely count the same function
-    /// twice. Naming the overlap is the difference between two honest numbers
-    /// and two that look like they should add up.
-    pub fn both_ways(&self, sheet: &Sheet, id: usize) -> usize {
-        let up = collect(sheet, id, Direction::Callers);
-        let down = collect(sheet, id, Direction::Calls);
-        up.intersection(&down).count()
-    }
-
     /// The functions worth reading first: the ones that dominate the most.
     pub fn chokepoints(&self, sheet: &Sheet, want: usize) -> Vec<usize> {
         let mut ranked: Vec<usize> = sheet
@@ -104,13 +123,33 @@ impl Reach {
             .filter(|u| {
                 u.kind == UnitKind::Function
                     && u.origin == Origin::Workspace
-                    && self.of(u.id).dominates > 0
+                    && self.dominates(u.id) > 0
             })
             .map(|u| u.id)
             .collect();
         ranked.sort_by_key(|&id| {
             (
-                std::cmp::Reverse(self.of(id).dominates),
+                std::cmp::Reverse(self.dominates(id)),
+                sheet.units[id].flow,
+                sheet.units[id].qualified.clone(),
+            )
+        });
+        ranked.truncate(want);
+        ranked
+    }
+
+    /// The chokepoints inside one container, ranked. What a crate or a file
+    /// answers to "where do I start reading in here".
+    pub fn chokepoints_under(&self, sheet: &Sheet, root: usize, want: usize) -> Vec<usize> {
+        let mut ranked: Vec<usize> = descendants(sheet, root)
+            .into_iter()
+            .filter(|&id| {
+                sheet.units[id].kind == UnitKind::Function && self.dominates(id) > 0
+            })
+            .collect();
+        ranked.sort_by_key(|&id| {
+            (
+                std::cmp::Reverse(self.dominates(id)),
                 sheet.units[id].flow,
                 sheet.units[id].qualified.clone(),
             )
@@ -120,49 +159,74 @@ impl Reach {
     }
 }
 
-/// Compute reach, dominance, and what nothing reaches.
+/// How much one function reaches, is reached by, and shares with itself round a
+/// cycle. Three walks of the graph, for one function, when a reader asks.
+pub fn standing(sheet: &Sheet, id: usize) -> Standing {
+    if sheet.units.get(id).map(|unit| unit.kind) != Some(UnitKind::Function) {
+        return Standing::default();
+    }
+    let down = collect(sheet, id, Direction::Calls);
+    let up = collect(sheet, id, Direction::Callers);
+    Standing {
+        reaches: down.len(),
+        reached_by: up.len(),
+        both_ways: up.intersection(&down).count(),
+    }
+}
+
+/// Every unit at or under a container, itself included.
+pub fn descendants(sheet: &Sheet, root: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    let mut stack = vec![root];
+    let mut guard = sheet.units.len() + 1;
+    while let Some(id) = stack.pop() {
+        let Some(unit) = sheet.units.get(id) else {
+            continue;
+        };
+        out.push(id);
+        stack.extend(unit.children.iter().copied());
+        guard = match guard.checked_sub(1) {
+            Some(left) => left,
+            None => break,
+        };
+    }
+    out
+}
+
+/// Compute dominance over the whole call graph, and what nothing reaches.
+///
+/// Server-side only, and not compiled into the client at all. That is the point
+/// of the split: the answer is the same for every reader, it costs a dominator
+/// computation over tens of thousands of edges, and the browser is the worst
+/// machine in the system to spend that on.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn analyse(sheet: &Sheet) -> Reach {
     let count = sheet.units.len();
     let entries = &sheet.entries;
 
-    // --- Forward reach from each entry, and the union.
-    let mut reached_from_any = vec![false; count];
-    let mut entry_hits = vec![0usize; count];
+    // One walk from all the beginnings at once. The old shape walked from each
+    // beginning separately to count how many reach a given function; nothing
+    // ever asked for that number, and on a workspace with 476 ways in it was 476
+    // walks of the whole graph for an answer nobody read.
+    let mut reached = vec![false; count];
+    let mut queue: VecDeque<usize> = VecDeque::new();
     for &entry in entries {
-        let mut seen = vec![false; count];
-        let mut queue = VecDeque::from([entry]);
-        seen[entry] = true;
-        while let Some(id) = queue.pop_front() {
-            reached_from_any[id] = true;
-            for &next in &sheet.units[id].calls {
-                if !seen[next] {
-                    seen[next] = true;
-                    queue.push_back(next);
-                }
-            }
-        }
-        for (id, &hit) in seen.iter().enumerate() {
-            if hit {
-                entry_hits[id] += 1;
-            }
+        if entry < count && !reached[entry] {
+            reached[entry] = true;
+            queue.push_back(entry);
         }
     }
-
-    // --- How much each function reaches, and is reached by. Computed per
-    // function rather than by transitive closure of the whole graph: at 900
-    // nodes a closure is 810k bits, and two breadth-first walks are cheaper to
-    // write correctly than a bitset that has to stay in step with folding.
-    let mut standing = vec![Standing::default(); count];
-    for unit in &sheet.units {
-        if unit.kind != UnitKind::Function {
-            continue;
+    while let Some(id) = queue.pop_front() {
+        for &next in &sheet.units[id].calls {
+            if !reached[next] {
+                reached[next] = true;
+                queue.push_back(next);
+            }
         }
-        standing[unit.id].reaches = walk(sheet, unit.id, Direction::Calls);
-        standing[unit.id].reached_by = walk(sheet, unit.id, Direction::Callers);
-        standing[unit.id].entries = entry_hits[unit.id];
     }
 
     let idom = dominators(sheet, entries, count);
+    let mut dominates = vec![0u32; count];
     for (id, &parent) in idom.iter().enumerate() {
         // Every function is dominated by its whole idom chain, so walking each
         // node's chain and crediting it upward gives the subtree size.
@@ -172,7 +236,7 @@ pub fn analyse(sheet: &Sheet) -> Reach {
         let mut here = id;
         let mut guard = 0;
         while let Some(next) = idom[here] {
-            standing[next].dominates += 1;
+            dominates[next] += 1;
             here = next;
             guard += 1;
             if guard > 4096 {
@@ -185,14 +249,14 @@ pub fn analyse(sheet: &Sheet) -> Reach {
         .units
         .iter()
         .filter(|u| {
-            u.kind == UnitKind::Function && u.origin == Origin::Workspace && !reached_from_any[u.id]
+            u.kind == UnitKind::Function && u.origin == Origin::Workspace && !reached[u.id]
         })
         .map(|u| u.id)
         .collect();
 
     Reach {
-        standing,
         idom,
+        dominates,
         unreached,
     }
 }
@@ -201,10 +265,6 @@ pub fn analyse(sheet: &Sheet) -> Reach {
 enum Direction {
     Calls,
     Callers,
-}
-
-fn walk(sheet: &Sheet, from: usize, direction: Direction) -> usize {
-    collect(sheet, from, direction).len()
 }
 
 /// Everything reachable from `from` in one direction, excluding itself.
@@ -266,6 +326,7 @@ pub fn immediate(sheet: &Sheet, id: usize) -> (Vec<usize>, Vec<usize>) {
 /// pass through before reaching it. That is far stronger than "many things
 /// call this": fan-in counts popularity, dominance counts *inevitability*, and
 /// only one of those is architecture.
+#[cfg(not(target_arch = "wasm32"))]
 fn dominators(sheet: &Sheet, entries: &[usize], count: usize) -> Vec<Option<usize>> {
     if entries.is_empty() {
         return vec![None; count];
@@ -359,6 +420,7 @@ fn dominators(sheet: &Sheet, entries: &[usize], count: usize) -> Vec<Option<usiz
 /// Walk two fingers up the dominator tree until they meet. Postorder numbers
 /// increase toward the root, so the lower-numbered finger is the deeper one and
 /// is the one that climbs.
+#[cfg(not(target_arch = "wasm32"))]
 fn intersect(a: usize, b: usize, idom: &[Option<usize>], number: &[usize]) -> usize {
     let (mut x, mut y) = (a, b);
     let mut guard = 0;
@@ -389,60 +451,57 @@ fn intersect(a: usize, b: usize, idom: &[Option<usize>], number: &[usize]) -> us
     x
 }
 
-/// Enumerate routes from an entry point down to a target, shortest first.
+/// The shortest route from a beginning down to a function, written the way a
+/// stack trace is written — because that is the representation of a call chain
+/// every developer already reads without being taught.
 ///
-/// Written the way a stack trace is written, because that is the representation
-/// of a call chain every developer already reads without being taught. Bounded:
-/// a leaf utility is reachable thousands of ways and listing all of them
-/// answers nothing, so the count is reported and the listing is capped.
-pub fn paths_to(sheet: &Sheet, target: usize, want: usize) -> (Vec<Path>, usize) {
-    if sheet.units[target].kind != UnitKind::Function {
-        return (Vec::new(), 0);
+/// One route, not all of them. Enumerating routes is what the first version did,
+/// and it is exponential in the worst case and merely ruinous in the ordinary
+/// one: a leaf utility in a real workspace is reachable by hundreds of thousands
+/// of distinct chains, all of them saying the same thing. This is a breadth-first
+/// walk backwards keeping one parent pointer each, so it costs one pass over the
+/// graph and stops at the first beginning it meets — which, being breadth-first,
+/// is the nearest one.
+///
+/// The *guaranteed* answer is [`Reach::spine_to`]; this is the concrete one, for
+/// where there is nothing above a function that every route must cross.
+pub fn route_to(sheet: &Sheet, target: usize) -> Option<Path> {
+    if sheet.units.get(target).map(|unit| unit.kind) != Some(UnitKind::Function) {
+        return None;
     }
-    // Breadth-first backwards from the target, keeping whole routes. Backwards
-    // because the target is one node and the beginnings are many.
-    let mut found: Vec<Path> = Vec::new();
-    let mut total = 0usize;
-    let mut queue: VecDeque<Path> = VecDeque::from([vec![target]]);
-    let mut guard = 0usize;
-
-    while let Some(route) = queue.pop_front() {
-        guard += 1;
-        if guard > 200_000 {
-            break;
-        }
-        let head = *route.last().unwrap();
-        if sheet.units[head].root.is_root() {
-            total += 1;
-            if found.len() < want {
-                let mut ordered = route.clone();
-                ordered.reverse();
-                found.push(ordered);
-            }
-            continue;
-        }
-        if route.len() > 24 {
-            continue;
-        }
-        for &caller in &sheet.units[head].callers {
-            // A route never revisits a function: a cycle adds length, not
-            // information, and a reader following a chain that loops learns
-            // nothing except that the tool is lost.
-            if route.contains(&caller) {
+    if sheet.units[target].root.is_root() {
+        return Some(vec![target]);
+    }
+    let mut came_from: Vec<usize> = vec![usize::MAX; sheet.units.len()];
+    let mut queue = VecDeque::from([target]);
+    came_from[target] = target;
+    while let Some(id) = queue.pop_front() {
+        for &caller in &sheet.units[id].callers {
+            if came_from[caller] != usize::MAX {
                 continue;
             }
-            let mut next = route.clone();
-            next.push(caller);
-            queue.push_back(next);
+            came_from[caller] = id;
+            if sheet.units[caller].root.is_root() {
+                // Walk the pointers back down, which puts the route in the
+                // order it runs in.
+                let mut route = vec![caller];
+                let mut here = caller;
+                while here != target {
+                    here = came_from[here];
+                    route.push(here);
+                }
+                return Some(route);
+            }
+            queue.push_back(caller);
         }
     }
-    (found, total)
+    None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::call::{Call, Root, Unit};
+    use crate::call::{Root, Unit};
 
     fn function(id: usize, name: &str) -> Unit {
         Unit {
@@ -487,16 +546,9 @@ mod tests {
             workspace: "w".into(),
             manifest_dir: "/w".into(),
             units,
-            calls: edges
-                .iter()
-                .map(|&(from, to)| Call {
-                    from,
-                    to,
-                    through_trait: None,
-                })
-                .collect(),
-            roots: Vec::new(),
+            roots: (0..names.len()).collect(),
             entries: entries.to_vec(),
+            reach: Reach::none(),
             function_count: names.len(),
             call_count: edges.len(),
             tests_excluded: 0,
@@ -536,11 +588,11 @@ mod tests {
         let reach = analyse(&s);
 
         assert!(
-            reach.of(3).dominates >= 1,
+            reach.dominates(3) >= 1,
             "gate is on every route to deep, so it dominates it"
         );
         assert_eq!(
-            reach.of(5).dominates,
+            reach.dominates(5),
             0,
             "util is called by three things and dominates nothing — popularity is not architecture"
         );
@@ -563,18 +615,34 @@ mod tests {
     #[test]
     fn reach_counts_both_directions() {
         let s = sheet(&["main", "a", "b"], &[(0, 1), (1, 2)], &[0]);
-        let reach = analyse(&s);
-        assert_eq!(reach.of(0).reaches, 2);
-        assert_eq!(reach.of(2).reached_by, 2);
-        assert_eq!(reach.of(0).reached_by, 0);
+        assert_eq!(standing(&s, 0).reaches, 2);
+        assert_eq!(standing(&s, 2).reached_by, 2);
+        assert_eq!(standing(&s, 0).reached_by, 0);
     }
 
+    /// A call graph's two closures overlap wherever there is a cycle, so the
+    /// overlap is counted rather than left to make two honest numbers look like
+    /// they should add up.
     #[test]
-    fn every_entry_that_reaches_a_function_is_counted() {
-        let s = sheet(&["one", "two", "shared"], &[(0, 2), (1, 2)], &[0, 1]);
-        let reach = analyse(&s);
-        assert_eq!(reach.of(2).entries, 2, "both beginnings reach it");
-        assert_eq!(reach.of(0).entries, 1, "an entry reaches itself and no other");
+    fn what_is_counted_on_both_sides_is_named() {
+        //  main → a ⇄ b
+        let s = sheet(&["main", "a", "b"], &[(0, 1), (1, 2), (2, 1)], &[0]);
+        let a = standing(&s, 1);
+        assert_eq!(a.reaches, 1, "a reaches b");
+        assert_eq!(a.reached_by, 2, "main and b reach a");
+        assert_eq!(a.both_ways, 1, "and b is on both lists");
+        assert_eq!(standing(&s, 0).both_ways, 0, "nothing reaches main");
+    }
+
+    /// Only functions have a standing. Asking about a crate is not an error, it
+    /// is a question with no answer, and it comes back as zero rather than as a
+    /// number a reader would believe.
+    #[test]
+    fn a_container_has_no_standing() {
+        let mut s = sheet(&["main", "a"], &[(0, 1)], &[0]);
+        s.units[1].kind = UnitKind::Crate;
+        assert_eq!(standing(&s, 1), Standing::default());
+        assert_eq!(standing(&s, 99), Standing::default(), "and neither has a stale id");
     }
 
     #[test]
@@ -584,55 +652,55 @@ mod tests {
         assert_eq!(reach.unreached, vec![2]);
     }
 
-    /// Paths read like a stack trace: entry point first, target last.
+    /// A route reads like a stack trace: entry point first, target last.
     #[test]
-    fn paths_run_from_the_beginning_to_the_target() {
+    fn a_route_runs_from_the_beginning_to_the_target() {
         let s = sheet(
             &["main", "a", "b", "target"],
             &[(0, 1), (0, 2), (1, 3), (2, 3)],
             &[0],
         );
-        let (paths, total) = paths_to(&s, 3, 10);
-        assert_eq!(total, 2, "there are two ways in");
-        assert_eq!(paths.len(), 2);
-        for path in &paths {
-            assert_eq!(path[0], 0, "a path starts at a beginning");
-            assert_eq!(*path.last().unwrap(), 3, "and ends at what was asked for");
+        let route = route_to(&s, 3).expect("there are two ways in; one of them will do");
+        assert_eq!(route[0], 0, "a route starts at a beginning");
+        assert_eq!(*route.last().unwrap(), 3, "and ends at what was asked for");
+        for pair in route.windows(2) {
+            assert!(s.units[pair[0]].calls.contains(&pair[1]), "and every step is a real call");
         }
     }
 
+    /// Breadth-first backwards, so the route that comes back is the shortest one
+    /// — the answer to "how does execution get here" rather than a tour.
     #[test]
-    fn a_cycle_does_not_make_infinite_paths() {
+    fn the_route_is_the_shortest_one() {
+        //  main → short → target, and main → a → b → c → target
+        let s = sheet(
+            &["main", "short", "a", "b", "c", "target"],
+            &[(0, 1), (1, 5), (0, 2), (2, 3), (3, 4), (4, 5)],
+            &[0],
+        );
+        assert_eq!(route_to(&s, 5), Some(vec![0, 1, 5]));
+    }
+
+    #[test]
+    fn a_cycle_does_not_hang_the_walk() {
         let s = sheet(
             &["main", "a", "b", "target"],
             &[(0, 1), (1, 2), (2, 1), (2, 3)],
             &[0],
         );
-        let (paths, total) = paths_to(&s, 3, 10);
-        assert_eq!(total, 1, "the loop adds length, not routes");
-        assert_eq!(paths[0], vec![0, 1, 2, 3]);
+        assert_eq!(route_to(&s, 3), Some(vec![0, 1, 2, 3]));
     }
 
     #[test]
-    fn paths_are_capped_but_the_total_is_still_honest() {
-        // A target reachable many ways: ten independent entries into one node.
-        let mut names: Vec<String> = (0..10).map(|i| format!("entry{i}")).collect();
-        names.push("target".into());
-        let borrowed: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
-        let edges: Vec<(usize, usize)> = (0..10).map(|i| (i, 10)).collect();
-        let entries: Vec<usize> = (0..10).collect();
-        let s = sheet(&borrowed, &edges, &entries);
-        let (paths, total) = paths_to(&s, 10, 3);
-        assert_eq!(paths.len(), 3, "the listing is capped");
-        assert_eq!(total, 10, "the count is not");
+    fn a_beginning_is_its_own_route() {
+        let s = sheet(&["main", "a"], &[(0, 1)], &[0]);
+        assert_eq!(route_to(&s, 0), Some(vec![0]));
     }
 
     #[test]
-    fn a_function_nothing_reaches_has_no_paths() {
+    fn a_function_nothing_reaches_has_no_route() {
         let s = sheet(&["main", "orphan"], &[], &[0]);
-        let (paths, total) = paths_to(&s, 1, 10);
-        assert!(paths.is_empty());
-        assert_eq!(total, 0);
+        assert_eq!(route_to(&s, 1), None);
     }
 
     /// Chokepoints come back in the order a reader should read them.

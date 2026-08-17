@@ -52,14 +52,19 @@ pub mod reach;
 /// What a unit is. These are the natural seams a Rust workspace already has —
 /// not categories invented for the drawing — which is why they can carry the
 /// whole navigation model.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+///
+/// The order is the containment order: a crate holds files, a file holds types
+/// and traits and impls, those hold functions. Only the last one calls.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum UnitKind {
     /// A crate: one compilation unit.
     Crate,
     /// A file, which in Rust is a module.
     Module,
-    /// A `struct` or `enum` together with nothing — the type's own declaration.
-    Type,
+    /// A `struct`, and the methods written on it.
+    Struct,
+    /// An `enum`, and the methods written on it.
+    Enum,
     /// A `trait` declaration.
     Trait,
     /// An `impl` block. Carries a trait name when it is a trait impl, which is
@@ -67,6 +72,39 @@ pub enum UnitKind {
     Impl,
     /// A function, method, or associated function. The only unit that calls.
     Function,
+}
+
+impl UnitKind {
+    /// What to call one of these in a sentence.
+    pub fn noun(self) -> &'static str {
+        match self {
+            UnitKind::Crate => "crate",
+            UnitKind::Module => "file",
+            UnitKind::Struct => "struct",
+            UnitKind::Enum => "enum",
+            UnitKind::Trait => "trait",
+            UnitKind::Impl => "impl",
+            UnitKind::Function => "function",
+        }
+    }
+
+    /// Does anything live inside one of these?
+    ///
+    /// A property of the kind rather than of the unit: a file with nothing in it
+    /// is still the sort of thing that holds code, and a function with a nested
+    /// helper in it is still not.
+    pub fn holds(self) -> bool {
+        self != UnitKind::Function
+    }
+
+    /// A type together with everything written on it — what a reader means by
+    /// "the struct", as opposed to the bare declaration a parser sees.
+    ///
+    /// Only the extractor asks, and the extractor does not ship to the browser.
+    #[cfg_attr(target_arch = "wasm32", allow(dead_code))]
+    pub fn is_type(self) -> bool {
+        matches!(self, UnitKind::Struct | UnitKind::Enum)
+    }
 }
 
 /// How execution gets into a function without being called from inside this
@@ -178,21 +216,6 @@ pub struct Unit {
     pub function_count: usize,
 }
 
-impl Unit {
-}
-
-/// One call, routed. From a function to a function, always — a container never
-/// calls anything, it only contains things that do.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Call {
-    pub from: usize,
-    pub to: usize,
-    /// Set when the call goes through a trait method rather than to an
-    /// inherent one. Drawn dashed, because a call through a trait is a call to
-    /// whichever impl is selected — naming one body would be a lie.
-    pub through_trait: Option<String>,
-}
-
 /// A dependency crate the extraction named but did not open, and why.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Unopened {
@@ -202,17 +225,28 @@ pub struct Unopened {
 }
 
 /// Everything the client needs to draw the sheet.
+///
+/// Every call is here exactly once, on both of the units it joins — and *not* a
+/// third time as a list of pairs. That list is a fifth of the payload and can be
+/// rebuilt in a single pass over the units, so it is rebuilt.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Sheet {
     pub workspace: String,
     pub manifest_dir: String,
     pub units: Vec<Unit>,
-    pub calls: Vec<Call>,
     /// Top-level units, in drawing order. Crates.
     pub roots: Vec<usize>,
     /// Every function execution can enter from outside, ordered `main` first,
     /// then by how much each one reaches. The answer to "where do I start".
     pub entries: Vec<usize>,
+    /// What every route to a function must cross, worked out once on the machine
+    /// that has the whole graph in front of it.
+    ///
+    /// Dominance is a property of the entire call graph, so it cannot be
+    /// narrowed to what is on screen and cannot be recomputed per frame — on a
+    /// graph this size that is seconds of arithmetic, and the browser is the
+    /// worst place in the system to spend them.
+    pub reach: reach::Reach,
     // --- What the title block reports. Counted here so the chrome and the
     // sheet can never quote two different numbers for the same drawing.
     pub function_count: usize,
@@ -229,7 +263,43 @@ pub struct Sheet {
     pub took_ms: u64,
 }
 
-impl Sheet {}
+impl Sheet {
+    /// Every call, as a pair. Rebuilt from the units rather than carried, for
+    /// the reason on [`Sheet`] itself.
+    pub fn pairs(&self) -> Vec<(usize, usize)> {
+        let mut out = Vec::with_capacity(self.call_count);
+        for unit in &self.units {
+            for &callee in &unit.calls {
+                out.push((unit.id, callee));
+            }
+        }
+        out
+    }
+}
+
+/// The unit tree, lent to the pane rather than copied into it. This is what lets
+/// the lens draw the call graph at a level of detail: fold a crate and every
+/// call inside it is one wire, open it and the wires re-aim at its files.
+impl dioxus_flow::Tree for Sheet {
+    fn len(&self) -> usize {
+        self.units.len()
+    }
+
+    fn roots(&self) -> &[usize] {
+        &self.roots
+    }
+
+    fn children(&self, id: usize) -> &[usize] {
+        self.units
+            .get(id)
+            .map(|unit| unit.children.as_slice())
+            .unwrap_or(&[])
+    }
+
+    fn parent(&self, id: usize) -> Option<usize> {
+        self.units.get(id).and_then(|unit| unit.parent)
+    }
+}
 
 /// The sheet is built for whichever workspace the tests run in, which is this
 /// one — a real call graph out of a real analyser, not a fixture. A fixture
@@ -238,6 +308,7 @@ impl Sheet {}
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
     use std::sync::OnceLock;
 
     /// Indexing costs about fifteen seconds, so every test shares one sheet.
@@ -246,9 +317,10 @@ mod tests {
         SHEET.get_or_init(|| extract::build().expect("rust-analyzer should read this workspace"))
     }
 
+    /// Dominance is carried on the sheet now, worked out once during
+    /// extraction. Re-running it here would test a second copy of the answer.
     fn analysis() -> &'static reach::Reach {
-        static REACH: OnceLock<reach::Reach> = OnceLock::new();
-        REACH.get_or_init(|| reach::analyse(real_sheet()))
+        &real_sheet().reach
     }
 
     fn find<'a>(sheet: &'a Sheet, kind: UnitKind, name: &str) -> Option<&'a Unit> {
@@ -369,9 +441,9 @@ mod tests {
                 assert!(unit.calls.is_empty() && unit.callers.is_empty());
             }
         }
-        for call in &sheet.calls {
-            assert_eq!(sheet.units[call.from].kind, UnitKind::Function);
-            assert_eq!(sheet.units[call.to].kind, UnitKind::Function);
+        for (from, to) in sheet.pairs() {
+            assert_eq!(sheet.units[from].kind, UnitKind::Function);
+            assert_eq!(sheet.units[to].kind, UnitKind::Function);
         }
     }
 
@@ -401,23 +473,29 @@ mod tests {
 
     /// Every edge is recorded from both ends, or a caller list and a callee
     /// list would disagree about the same call.
+    ///
+    /// Both ends is also the *only* place an edge is recorded now: the list of
+    /// pairs the sheet used to carry as well was a fifth of the payload saying
+    /// what the units already said, so it is rebuilt from them instead. This is
+    /// what checks the rebuild is faithful.
     #[test]
     fn every_call_is_recorded_from_both_ends() {
         let sheet = real_sheet();
-        assert_eq!(sheet.calls.len(), sheet.call_count);
+        let pairs = sheet.pairs();
+        assert_eq!(pairs.len(), sheet.call_count);
         assert!(sheet.call_count > 0, "this workspace calls its own functions");
-        for call in &sheet.calls {
+        for (from, to) in pairs {
             assert!(
-                sheet.units[call.from].calls.contains(&call.to),
+                sheet.units[from].calls.contains(&to),
                 "{} does not list {} as a callee",
-                sheet.units[call.from].qualified,
-                sheet.units[call.to].qualified
+                sheet.units[from].qualified,
+                sheet.units[to].qualified
             );
             assert!(
-                sheet.units[call.to].callers.contains(&call.from),
+                sheet.units[to].callers.contains(&from),
                 "{} does not list {} as a caller",
-                sheet.units[call.to].qualified,
-                sheet.units[call.from].qualified
+                sheet.units[to].qualified,
+                sheet.units[from].qualified
             );
         }
     }
@@ -428,17 +506,17 @@ mod tests {
     #[test]
     fn calls_that_leave_the_workspace_land_somewhere_named() {
         let sheet = real_sheet();
-        let leaving: Vec<&Call> = sheet
-            .calls
-            .iter()
-            .filter(|c| {
-                sheet.units[c.from].origin == Origin::Workspace
-                    && sheet.units[c.to].origin != Origin::Workspace
+        let leaving: Vec<(usize, usize)> = sheet
+            .pairs()
+            .into_iter()
+            .filter(|&(from, to)| {
+                sheet.units[from].origin == Origin::Workspace
+                    && sheet.units[to].origin != Origin::Workspace
             })
             .collect();
         assert!(!leaving.is_empty(), "this workspace calls its dependencies");
-        for call in leaving {
-            let target = &sheet.units[call.to];
+        for (_, to) in leaving {
+            let target = &sheet.units[to];
             assert!(!target.name.is_empty());
             assert!(!target.crate_name.is_empty());
             assert!(!target.file.is_empty());
@@ -453,11 +531,67 @@ mod tests {
     fn dependency_interiors_are_unnested_at_least_one_hop() {
         let sheet = real_sheet();
         let inner = sheet
-            .calls
-            .iter()
-            .filter(|c| sheet.units[c.from].origin == Origin::Dependency)
+            .pairs()
+            .into_iter()
+            .filter(|&(from, _)| sheet.units[from].origin == Origin::Dependency)
             .count();
         assert!(inner > 0, "a dependency function this workspace calls has callees of its own");
+    }
+
+    // ------------------------------------------------- the level of detail
+
+    /// The lens draws the graph at whichever level of the tree the reader has
+    /// opened to, so the tree has to be lendable as one, and lifting a call onto
+    /// it has to be exact: hiding detail moves an edge, it never loses one.
+    #[test]
+    fn every_call_survives_being_drawn_at_any_level_of_detail() {
+        use dioxus_flow::{Nest, Tree};
+
+        let sheet = real_sheet();
+        let pairs = sheet.pairs();
+        assert_eq!(Tree::roots(sheet).len(), sheet.roots.len());
+
+        for depth in 0..5 {
+            let nest = Nest::to_depth(sheet, depth);
+            let cards = nest.frontier(sheet);
+            let wires = nest.lift(sheet).bundle(&pairs);
+            let carried: usize = wires.iter().map(|wire| wire.weight).sum();
+            assert_eq!(
+                carried,
+                pairs.len(),
+                "at depth {depth} the drawing carries {carried} of {} calls",
+                pairs.len()
+            );
+            assert!(!cards.is_empty(), "some card is drawn at depth {depth}");
+            for wire in &wires {
+                assert!(
+                    cards.contains(&wire.from) && cards.contains(&wire.to),
+                    "a wire at depth {depth} lands on a card that is not drawn"
+                );
+            }
+        }
+    }
+
+    /// Folded all the way, the whole program is its crates — and that is the
+    /// first thing a reader sees, so it has to be a picture rather than a mesh.
+    #[test]
+    fn the_folded_sheet_is_one_card_per_crate() {
+        use dioxus_flow::Nest;
+
+        let sheet = real_sheet();
+        let cards = Nest::new().frontier(sheet);
+        assert_eq!(cards, sheet.roots, "every root, in the order the sheet gives");
+        assert!(
+            cards.iter().all(|&id| sheet.units[id].kind == UnitKind::Crate),
+            "the top of the tree is crates"
+        );
+        let wires = Nest::new().lift(sheet).bundle(&sheet.pairs());
+        let drawn = wires.iter().filter(|wire| wire.from != wire.to).count();
+        assert!(
+            drawn < sheet.call_count,
+            "gathering {} calls onto {drawn} wires is the whole point",
+            sheet.call_count
+        );
     }
 
     // ------------------------------------------------------------ beginnings
@@ -607,7 +741,7 @@ mod tests {
             .max_by_key(|u| u.callers.len())
             .expect("some function is the most called");
         assert!(
-            analysis.of(popular.id).dominates < analysis.of(popular.id).reached_by,
+            analysis.dominates(popular.id) < reach::standing(sheet, popular.id).reached_by,
             "{} is the most-called function here; if it also dominated everything \
              that reaches it, fan-in would be a good enough proxy and this whole \
              computation would be unnecessary",
@@ -616,62 +750,45 @@ mod tests {
     }
 
     /// Every route the lens prints is a real chain of calls, starts at a real
-    /// beginning, and ends where the reader asked.
+    /// beginning, ends where the reader asked, and never doubles back — checked
+    /// against the real graph, cycles and all.
+    ///
+    /// And the other half of the same claim: anything a beginning reaches *has*
+    /// a route to print. A lens that says "reached by 12" and then shows no way
+    /// in has contradicted itself on screen.
     #[test]
     fn every_printed_route_is_a_real_chain() {
         let sheet = real_sheet();
+        let unreached: HashSet<usize> = analysis().unreached.iter().copied().collect();
         let mut checked = 0;
         for unit in sheet.units.iter().filter(|u| mine(u)) {
-            let (routes, total) = reach::paths_to(sheet, unit.id, 4);
-            assert!(routes.len() <= total, "more routes listed than counted");
-            for route in &routes {
-                assert!(
-                    sheet.units[route[0]].root.is_root(),
-                    "a route starts where execution does"
-                );
-                assert_eq!(*route.last().unwrap(), unit.id, "and ends where asked");
-                for pair in route.windows(2) {
-                    assert!(
-                        sheet.units[pair[0]].calls.contains(&pair[1]),
-                        "{} does not actually call {}",
-                        sheet.units[pair[0]].qualified,
-                        sheet.units[pair[1]].qualified
-                    );
-                }
-                let mut seen = route.clone();
-                seen.sort_unstable();
-                seen.dedup();
-                assert_eq!(seen.len(), route.len(), "a route never revisits a function");
-            }
-            checked += 1;
-            if checked >= 60 {
-                break;
-            }
-        }
-        assert!(checked > 0);
-    }
-
-    /// Anything reachable from a beginning has at least one route to print. A
-    /// lens that says "reached by 12" and then lists no route has contradicted
-    /// itself on screen.
-    #[test]
-    fn anything_reachable_has_a_route_to_show() {
-        let sheet = real_sheet();
-        let analysis = analysis();
-        let mut checked = 0;
-        for unit in sheet.units.iter().filter(|u| mine(u)) {
-            if analysis.of(unit.id).entries == 0 {
+            let route = reach::route_to(sheet, unit.id);
+            if unreached.contains(&unit.id) {
+                assert!(route.is_none(), "{} is unreached but a route was found", unit.qualified);
                 continue;
             }
-            let (routes, total) = reach::paths_to(sheet, unit.id, 1);
+            let route = route.unwrap_or_else(|| {
+                panic!("a beginning reaches {} but no route to it can be shown", unit.qualified)
+            });
             assert!(
-                total > 0 && !routes.is_empty(),
-                "{} is reachable from {} beginnings but the lens can show no route",
-                unit.qualified,
-                analysis.of(unit.id).entries
+                sheet.units[route[0]].root.is_root(),
+                "a route starts where execution does"
             );
+            assert_eq!(*route.last().unwrap(), unit.id, "and ends where asked");
+            for pair in route.windows(2) {
+                assert!(
+                    sheet.units[pair[0]].calls.contains(&pair[1]),
+                    "{} does not actually call {}",
+                    sheet.units[pair[0]].qualified,
+                    sheet.units[pair[1]].qualified
+                );
+            }
+            let mut seen = route.clone();
+            seen.sort_unstable();
+            seen.dedup();
+            assert_eq!(seen.len(), route.len(), "a route never revisits a function");
             checked += 1;
-            if checked >= 60 {
+            if checked >= 200 {
                 break;
             }
         }
@@ -680,15 +797,18 @@ mod tests {
 
     #[test]
     fn the_lens_reports_what_it_found() {
+        use dioxus_flow::Nest;
+
         let sheet = real_sheet();
         let analysis = analysis();
         let by_kind = |kind: UnitKind| sheet.units.iter().filter(|u| u.kind == kind).count();
         let by_root = |root: Root| sheet.units.iter().filter(|u| u.root == root).count();
         println!(
-            "\nunits: {} crates, {} files, {} types, {} traits, {} impls, {} functions",
+            "\nunits: {} crates, {} files, {} structs, {} enums, {} traits, {} impls, {} functions",
             by_kind(UnitKind::Crate),
             by_kind(UnitKind::Module),
-            by_kind(UnitKind::Type),
+            by_kind(UnitKind::Struct),
+            by_kind(UnitKind::Enum),
             by_kind(UnitKind::Trait),
             by_kind(UnitKind::Impl),
             by_kind(UnitKind::Function),
@@ -705,11 +825,22 @@ mod tests {
             analysis.unreached.len(),
             sheet.took_ms,
         );
+        let pairs = sheet.pairs();
+        println!("what the pane draws, level by level:");
+        for depth in 0..4 {
+            let nest = Nest::to_depth(sheet, depth);
+            let wires = nest.lift(sheet).bundle(&pairs);
+            println!(
+                "   depth {depth}: {:>5} cards, {:>5} wires",
+                nest.frontier(sheet).len(),
+                wires.iter().filter(|wire| wire.from != wire.to).count(),
+            );
+        }
         println!("what every route crosses:");
         for id in analysis.chokepoints(sheet, 8) {
             println!(
                 "   stands over {:>4}   {}",
-                analysis.of(id).dominates,
+                analysis.dominates(id),
                 sheet.units[id].qualified
             );
         }
@@ -717,7 +848,7 @@ mod tests {
         for &id in sheet.entries.iter().take(6) {
             println!(
                 "   reaches {:>4}   {}  [{}]",
-                analysis.of(id).reaches,
+                reach::standing(sheet, id).reaches,
                 sheet.units[id].qualified,
                 sheet.units[id].root.noun(),
             );

@@ -164,6 +164,79 @@ impl Links for Build {
 
 `Adjacency` is the owned implementation, for when you have nothing to lend.
 
+## Levels of detail
+
+Folding answers *how much* of a graph is drawn. `Nest` answers a different
+question — *how finely* — and the two are independent. A graph whose nodes nest
+(a crate holds files holds types holds methods; a company holds teams holds
+people) has no one right number of nodes to draw. It has a **frontier**: for each
+branch, the deepest container the reader has opened.
+
+Everything below the frontier is still in the drawing — it is *inside* a card. So
+an edge between two hidden nodes is **lifted** onto the pair of cards that hold
+them, and the edges landing on the same pair become one wire carrying a count.
+
+```rust
+use dioxus_flow::{Forest, Nest};
+
+// Two crates; the first holds two files, each holding a function.
+let tree = Forest::new(vec![
+    vec![1, 6], vec![2], vec![], vec![4], vec![5], vec![], vec![7], vec![],
+]);
+let calls = [(2, 5), (7, 5), (2, 7)];
+
+let mut nest = Nest::new();
+assert_eq!(nest.frontier(&tree), vec![0, 3]);      // two cards
+let wires = nest.lift(&tree).bundle(&calls);
+assert_eq!(wires.iter().find(|w| (w.from, w.to) == (0, 3)).unwrap().weight, 2);
+
+nest.open(0);                                       // it becomes its files
+assert_eq!(nest.frontier(&tree), vec![1, 6, 3]);
+```
+
+That is what keeps a graph legible as it grows: 23,000 calls between 8,000
+functions is a texture; the same 23,000 calls between the 82 crates those
+functions live in is a diagram. Nothing is dropped at any level — `bundle`
+conserves every edge, and the ones whose two ends land on the same card come back
+as a bundle with `from == to`, which is the answer to "how much of this happens in
+here".
+
+One rule, and it is the only sharp edge here: **give edges only to nodes you never
+open.** A node that has been opened is no longer a card — it *is* its children —
+so an edge on it has nowhere to land and is dropped. Picking one of the children
+would invent a relationship the graph does not have.
+
+`Node::inside` puts the control on the card: a lid stating how much is in there,
+which is a different verb from a port and looks like one. `Edge::weight` draws a
+gathered wire heavier, on a log scale against the heaviest wire in the drawing.
+
+## Columns for a graph with cycles
+
+`Flow` asks the host which column each node belongs in, because in most charts
+that is a fact the host already has. A call graph is the case where it is not:
+two functions can call each other, so "how far along is this" has no answer until
+the cycles are dealt with. `rank` deals with them:
+
+```rust
+use dioxus_flow::rank;
+
+// 0 → 1 ⇄ 2 → 3
+let columns = rank(&[0, 1, 2, 3], &[(0, 1), (1, 2), (2, 1), (2, 3)]);
+assert_eq!(columns[&1], columns[&2]);  // neither of these comes first
+```
+
+Nodes that can all reach each other take one column — saying `a` precedes `b`
+when `b` also precedes `a` would be a claim the graph does not support. The
+components themselves cannot form a cycle, so they get a longest-path layering.
+Linear in nodes and edges, iterative throughout: a chain a hundred thousand deep
+does not touch the stack.
+
+Longest path deliberately, not the tighter layering that pulls each node along
+until it meets what it points at. That is 19% less total wire on a real 82-node
+call graph, and it draws a worse picture: where a graph has a few near-universal
+sinks, tightening piles everything against them, so the far half of the drawing
+becomes one dense stack and the near half is spent on the wires getting there.
+
 ## Using the layout on its own
 
 [`layered`] is a plain function over plain data — no Dioxus, no DOM — if you want
@@ -189,8 +262,11 @@ both in along/across space.
 - **Nodes are not draggable.** The verb here is expand and fold, not arrange:
   the layout owns position, and a hand-placed node would be overwritten by the
   next re-tidy.
-- **Edges are not bundled**, and there is no sub-flow, group container or
-  minimap drag.
+- **There are no group containers.** A hierarchy is drawn by drilling into it,
+  not by nesting boxes: at four levels deep, boxes inside boxes cost the reader
+  more than they give, and they fight the layered layout for the same space.
+- **Edges are not routed as bundles.** `Nest` gathers many edges into one wire
+  by *hiding* their ends; it does not braid parallel wires that stay distinct.
 - **The pane is a single graph.** There is no multi-select, no marquee and no
   copy/paste.
 
@@ -220,6 +296,13 @@ In the browser, on a 479-card, 2115-wire pane of 7,881 elements: folding a
 50-wide port re-lays and re-draws it in **93ms**, or 391ms on a CPU throttled 4×.
 Panning holds 60fps with 2 frames past 24ms over a two-second drag; zooming holds
 120fps.
+
+`Nest` is the answer to a graph too large for any of that. On a call graph of
+8,259 nodes and 23,092 edges, drawn as the 82 containers holding them: 518 wires,
+1,505 DOM elements, first paint in 607ms with **no task over 50ms**, and opening
+one container into its 43 children re-lays the whole pane in **54ms**. Panning
+and zooming hold 60fps at every level. The cost is what the reader opened, not
+what the graph holds — which is a different thing from making the drawing faster.
 
 Nothing here virtualises the pane, so first paint scales with the whole drawing —
 mounting that graph is a ~700ms task. `Folding` is the answer to that, not

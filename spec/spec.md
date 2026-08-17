@@ -94,6 +94,14 @@ bezier/straight/stepped wires, dot/line/blank ground, edge labels, and drawing a
 node's contents yourself — are exercised by `cargo run --example showcase`
 rather than by this app, which uses the defaults.
 
+A card carries two kinds of control, because a large graph is large in two
+directions. **Ports**, on the left and right edges, say how much of the *graph*
+is attached that way and open it. A **lid**, on the card's own top corner, says
+how much is *inside* and opens that — the dependency board has no use for one
+because a crate holds no crates; the call lens is nothing but lids. A port with
+no handler renders as a label rather than a button, because a control that
+promises to open something and then does nothing is worse than a number.
+
 - **`camera`** — a translation and a magnification written straight into one
   CSS transform. Magnification is held as an *exponent* of 1.2, so a wheel notch
   adds exactly ±1.0 and a notch out and back returns to the same pixels, while a
@@ -147,6 +155,24 @@ rather than by this app, which uses the defaults.
   records which nodes were reachable only through the one you folded. `Links` is
   a trait so a host's own structure is walked in place; this product implements
   it on `Workspace` rather than copying 700 crates into fresh vectors per render.
+- **`nest`** — *how finely* the graph is drawn, which is the other direction a
+  large graph is large in. Where `fold` holds how much of a flat graph is on the
+  pane, a `Nest` holds which containers of a *hierarchy* the reader has opened,
+  and derives the **frontier**: for each branch, the deepest opened container's
+  children, or the container itself. Everything below the frontier is still in
+  the drawing — it is inside a card — so `Lift::bundle` re-aims every edge at the
+  pair of cards holding its ends and gathers same-pair edges into one weighted
+  wire. Edges whose ends land on the same card come back as a bundle with
+  `from == to`: not a wire, but the answer to "how much of this happens in here".
+  One rule makes it exact — **only nodes you never open may carry edges**, since
+  an opened node is no longer a card and picking one of its children would invent
+  a relationship. `Tree` is a trait for the same reason `Links` is.
+- **`rank`** — columns for a graph that is not a DAG, which is the one case a
+  host cannot answer for itself. Nodes that can all reach each other are one
+  component and take one column, because saying `a` precedes `b` when `b` also
+  precedes `a` is a claim the graph does not support; the components cannot form
+  a cycle, so they get a longest-path layering. Kosaraju plus one sweep, both
+  passes iterative — a chain a hundred thousand deep does not touch the stack.
 - **`pane`** — the DOM shape every flow canvas converged on: absolutely
   positioned cards inside a single transformed layer, so pan and zoom write
   **one** transform string rather than touching a hundred nodes, and the dot
@@ -208,35 +234,70 @@ The second lens, at `/calls`, on the same framework.
 call" needs type inference: `x.len()` is `slice::len` or `Vec::len` or
 `HashMap::len` depending on what `x` is, and a syntax tree cannot tell you which.
 Extraction asks for the whole workspace at once and caches for the life of the
-server process; on this workspace that is ~867 functions and ~1950 calls in
-about sixteen seconds.
+server process. On this workspace that is 990 functions and 2,327 calls in about
+seventeen seconds; on liquid-cache it is 8,259 functions and 23,092 calls in
+forty-five.
 
-**Why it is a picture again.** It was one, then it was not: a whole-system call
-graph has 240 workspace functions and 225 edges between them — average internal
-degree below one — and drawing all of it spent every pixel on structure that
-carries almost no information. A *focused subgraph* is a different object. One
-function, its callers left and its callees right, opened a hop at a time, is
-exactly the two-hop diagram the earlier reviews judged the one picture that could
-earn its place. The aggregate answers stay in the record beside it.
+**A level of detail, not a walk.** The lens drew functions and only functions
+once, opened one hop at a time from `main`. Pointed at liquid-cache that renders
+**two cards and one wire**: `main` calls `launch`, a framework takes over, and a
+walk that can only follow static call edges stops there.
 
-A call graph has no global rank to borrow — it can contain cycles — so depth is
-assigned when a function first arrives and never revised, which is what stops a
-cycle walking a card back and forth across the pane.
+So the pane draws the **frontier** of the unit hierarchy — crate, file,
+struct/enum/trait/impl, function, which are seams a Rust developer already thinks
+in — and lifts every call onto the two cards that hold its ends, gathering
+same-pair calls into one wire carrying a count. Folded, liquid-cache is 82 crates
+and 518 wires: the whole program on one screen, the crates it builds on the left
+and `core` on the right. Open a crate and it becomes its files, and the wires that
+landed on the crate re-aim at the file that answers them.
 
-**What the record answers.** Where to start, in three separately named buckets
-(`main`, public API, no static caller), because collapsing them made a program
-with one `main` report 85 places execution starts. What every route crosses:
-immediate dominators over the call graph, which is inevitability rather than
-popularity — `Vec::push` has enormous fan-in and dominates nothing, because there
-is always another way round. For a held function, the chain of chokepoints above
-it, drawn on the pane the same way the dependency lens draws the chain that put a
-crate in the build: not *a* route but everything *every* route must cross.
+Nothing is hidden at any level. A call is either a wire or inside a card, the card
+says how much, and a test asserts the two add up to the call count at every depth.
+The cost is what the reader opened, not what the graph holds — no virtualisation,
+no sampling, no cap that quietly drops edges.
+
+One rule makes it sound: **only a card the pane never opens carries calls.** A
+node that has been opened is no longer a card, so an edge on it would have
+nowhere to land. The extractor therefore makes a helper written inside another
+function a sibling of it rather than a child — to the parser it nests, to a
+reader it is one more item in that file.
+
+**Columns** come from `dioxus_flow::rank`: longest-path layering over the
+condensation of the drawn graph. Two crates that call each other take the same
+column, because saying either comes first would be a claim the code does not
+support. The tighter layering that pulls each node along to meet what it points
+at was tried and rejected: it is 19% less total wire and a worse picture, because
+a call graph has a few near-universal sinks and everything piles up against them.
+
+**Ink.** The resting wire steps back on this lens and nowhere else, through one
+`--flow-wire-color` override on a `flow-dense` wrapper. It draws four to eight
+times the wire the dependency board does — every call between two crates is
+gathered onto one — and at that density a stroke sized for a few hundred wires
+stops being a line and becomes a wash the cards sink into. Width still says how
+much a wire carries; hue is still spent only on the card being held.
+
+**Where the arithmetic runs.** Dominance is a question about the whole graph and
+the same for every reader, so it is computed once during extraction and rides on
+the sheet. Reach counts are computed for the one function a reader selected. The
+first version filled a reach table for every function up front — `V·(V+E)` — and
+walked from each of 476 entry points separately for a column nothing read; in a
+browser, on a real workspace, that is not slow, it is a hang.
+
+**What the record answers.** Six kinds of unit share one form, because they are
+six kinds of the same thing — a piece of a program with calls crossing its
+boundary. Where it sits (a clickable breadcrumb of crate / file / type), what is
+in it by kind, how many calls never leave it, what calls in and what it calls out
+to with counts. For a function: the closure both ways and the overlap between
+them, and the chain of chokepoints above it — not *a* route but everything *every*
+route must cross — drawn on the pane at whatever level of detail is open, so
+folded it is the crates every route crosses. Where nothing is unavoidable above a
+function, one concrete shortest route in is shown instead of a shrug.
 
 **The honest limit, on the page.** A call edge exists only where one function
 names another. Trait objects, function pointers, macro-invoked code and framework
-callbacks leave no static edge, and the panel says in as many words that the
-functions which appear to be called by nothing are a statement about the
-analysis, not about the code.
+callbacks leave no static edge. The panel says so under the heading *Why not just
+follow main*, with the count of this workspace's own functions that have no
+visible caller — and points out that the map does not depend on the walk.
 
 ## Shell
 
@@ -285,10 +346,28 @@ Tests build the real graph for whichever workspace they run in, not a fixture.
   edges take their hue from which way they run, every edge joins two cards that
   are on the pane, a port always carries the whole count, and a crate off the pane
   arrives with its route lit end to end.
-- `src/views/calls.rs` — a column is assigned once and kept, callers sit left and
-  callees right, nothing but functions reaches the pane, the chain every route
-  crosses is lit end to end, holding a function never changes the cast, and a
-  function reached two ways is still one card.
+- `crates/dioxus-flow/src/nest.rs` — the folded hierarchy draws its roots,
+  opening a container puts its children exactly where it was and disturbs
+  nothing else, an open container inside a folded one waits its turn, folding
+  then opening returns the same pane **for every node**, every node lifts onto a
+  card that is actually on the pane, **lifting conserves every edge at every
+  depth**, an edge on a container that is then opened has nowhere to land and
+  says so, and a flat graph is the ordinary case of this one.
+- `crates/dioxus-flow/src/rank.rs` — a chain is one column per step, a node sits
+  past the *longest* route to it, nodes that reach each other share a column, a
+  graph that is all one cycle is one column, every edge between two components
+  runs forwards over a graph with a cycle and a diamond and an island in it, and
+  a hundred-thousand-deep chain does not blow the stack.
+- `src/views/calls.rs` — the opening view is one card per crate with every call
+  either on a wire or inside a card, **every call is accounted for at every
+  level**, wires run forwards unless the two cards call each other, opening a
+  card replaces it and disturbs nothing else, holding a card never changes the
+  cast, a wire carries the calls it gathered and only a lit one is labelled, a
+  lid states what opening it produces, **nothing that calls can be opened**, a
+  container the reader opened keeps its record and the way back and folding it
+  returns exactly the pane it came from, the chain every route crosses survives
+  being folded, revealing a buried function brings it to the pane, and every kind
+  of unit has a record.
 - `src/call/` — the extraction's own suite, including
   `a_chokepoint_really_is_unavoidable`, which re-runs reachability with each
   claimed chokepoint deleted, and `dominance_disagrees_with_popularity`, which
@@ -302,11 +381,19 @@ see callers in crates it never opened. Cards are not draggable: the verb is
 expand and fold, not arrange.
 
 Opening on the whole build is not free, and nothing here virtualises the pane. A
-700-crate workspace mounts 10,405 elements; served locally it draws about 470ms
-after navigation, but that first frame is one long task of roughly a second, so
-the tab is unresponsive rather than blank while it happens. The waiting wire
-covers the server resolving the workspace, not this. Culling what is off-camera
-is the obvious next move and is not made.
+700-crate workspace mounts 10,405 elements on the dependency board; served
+locally it draws about 470ms after navigation, but that first frame is one long
+task of roughly a second, so the tab is unresponsive rather than blank while it
+happens. The waiting wire covers the server resolving the workspace, not this.
+Culling what is off-camera is the obvious next move and is not made — the call
+lens does not need it, because a level of detail bounds the drawing by what the
+reader opened rather than by what the graph holds.
+
+The call sheet crosses the wire as JSON and is not compressed: 4.9MB for
+liquid-cache, which costs nothing on localhost and would cost something over a
+network. A third of that is JSON field names on 10,939 units. Extraction itself
+is 45 seconds on that workspace, nearly all of it rust-analyzer indexing, and it
+is paid once per server process.
 
 The visual system is recorded in `DESIGN.md`; the surfaces' strategies live in
 `.impeccable/surfaces/`.

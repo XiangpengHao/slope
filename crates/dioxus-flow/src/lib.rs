@@ -37,13 +37,20 @@
 //!   binding.
 //! - **Ports** as a first-class idea: a node says how much is attached to each
 //!   side and opening or folding it is one click.
+//! - **Two kinds of folding**, because a large graph is large in two directions.
+//!   [`Folding`] holds how much of the graph is drawn; [`Nest`] holds how finely,
+//!   for a graph whose nodes contain one another — open a container and it
+//!   becomes its children, with every edge that pointed at it re-aimed at
+//!   whichever child answers it.
+//! - **[`rank`]**, for when the host has no column to give because the graph has
+//!   cycles in it.
 //!
 //! # What it does not do
 //!
 //! Nodes are not draggable. This crate's verb is expand and fold, not arrange:
 //! the layout owns position, and a hand-placed node would be overwritten by the
-//! next re-tidy. Edge routing is per-edge rather than bundled, and there is no
-//! sub-flow or group container.
+//! next re-tidy. A hierarchy is drawn by drilling into it rather than as nested
+//! boxes, and parallel edges that both stay on the pane are not braided.
 //!
 //! # Styling
 //!
@@ -57,13 +64,17 @@ mod camera;
 mod fold;
 mod geometry;
 pub mod layout;
+mod nest;
 mod pane;
+mod rank;
 
 pub use camera::{Bounds, Camera, Flight};
 pub use fold::{Adjacency, Folding, Links, depths};
 pub use geometry::{Axis, Shape};
 pub use layout::{Metrics, Placement, Slot, Wire, layered};
+pub use nest::{Bundle, Forest, Lift, Nest, Tree};
 pub use pane::{Flow, FlowHandle, use_flow};
+pub use rank::rank;
 
 /// The pane's own stylesheet. Mount it once, above the pane.
 pub const STYLESHEET: Asset = asset!("/assets/flow.css");
@@ -206,6 +217,28 @@ impl Port {
     }
 }
 
+/// What a node contains, when the graph is a hierarchy drawn at a level of
+/// detail — see [`Nest`].
+///
+/// Rendered as the node's own control, distinct from its two ports, because it
+/// is a different verb: a port asks for *more of the graph*, this asks for
+/// *more detail about this node*. Nothing is hidden either way; the count is on
+/// the node whether it is open or shut.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct Inside {
+    /// How much is in there. What the reader decides to open on, so it should
+    /// be the number they are choosing between — usually the leaves under this
+    /// node rather than its immediate children.
+    pub count: usize,
+    pub open: bool,
+}
+
+impl Inside {
+    pub fn new(count: usize, open: bool) -> Self {
+        Self { count, open }
+    }
+}
+
 /// A small mark on a node. Used sparingly: a badge on every node is a column,
 /// not a badge.
 #[derive(Clone, PartialEq, Debug)]
@@ -307,11 +340,15 @@ pub enum NodeState {
 pub struct Node {
     pub id: usize,
     /// Which column this belongs in. Smaller is earlier in the flow. Values need
-    /// not be contiguous: gaps are compacted away.
+    /// not be contiguous: gaps are compacted away. [`rank`] will work one out
+    /// for a graph that has cycles in it and therefore has no natural order.
     pub column: i32,
     pub card: Card,
     pub inbound: Option<Port>,
     pub outbound: Option<Port>,
+    /// What this node holds, when it is a container in a hierarchy. See
+    /// [`Inside`] and [`Nest`].
+    pub inside: Option<Inside>,
     pub state: NodeState,
 }
 
@@ -323,6 +360,7 @@ impl Node {
             card,
             inbound: None,
             outbound: None,
+            inside: None,
             state: NodeState::Rest,
         }
     }
@@ -330,6 +368,11 @@ impl Node {
     pub fn ports(mut self, inbound: Option<Port>, outbound: Option<Port>) -> Self {
         self.inbound = inbound;
         self.outbound = outbound;
+        self
+    }
+
+    pub fn inside(mut self, inside: Inside) -> Self {
+        self.inside = Some(inside);
         self
     }
 
@@ -381,6 +424,14 @@ pub struct Edge {
     pub from: usize,
     pub to: usize,
     pub state: EdgeState,
+    /// How much this one wire stands for, when several of the graph's own edges
+    /// have been gathered onto it — see [`Bundle`]. Drawn heavier as it grows,
+    /// on a log scale against the heaviest wire in the graph, so the difference
+    /// a reader sees is the difference between one call and a hundred rather
+    /// than between a hundred and a hundred and four.
+    ///
+    /// `1` for an ordinary edge, and `1` is what [`Edge::new`] gives you.
+    pub weight: usize,
     /// Written on the wire, at its middle. Keep it to a word or two.
     pub label: Option<String>,
 }
@@ -391,12 +442,18 @@ impl Edge {
             from,
             to,
             state: EdgeState::Rest,
+            weight: 1,
             label: None,
         }
     }
 
     pub fn state(mut self, state: EdgeState) -> Self {
         self.state = state;
+        self
+    }
+
+    pub fn weight(mut self, weight: usize) -> Self {
+        self.weight = weight;
         self
     }
 

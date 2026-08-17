@@ -2,7 +2,7 @@
 
 use dioxus::prelude::*;
 
-mod calls;
+pub mod calls;
 pub mod deps;
 mod inspector;
 mod shell;

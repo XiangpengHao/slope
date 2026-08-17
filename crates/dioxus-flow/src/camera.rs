@@ -32,8 +32,8 @@ pub const FLIGHT_MS: f64 = 460.0;
 pub struct Camera {
     pub x: f32,
     pub y: f32,
-    /// Magnification as an exponent of [`ZOOM_STEP`]. A notch adds exactly ±1.0,
-    /// which is exact in binary floating point; a pinch adds a fraction.
+    /// Magnification as an exponent of a fixed step of 1.2. A notch adds exactly
+    /// ±1.0, which is exact in binary floating point; a pinch adds a fraction.
     pub exp: f32,
 }
 

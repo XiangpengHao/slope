@@ -412,7 +412,14 @@ impl Builder {
                     id,
                 );
             }
-            self.add_symbols(id, &symbol.children, lines, false);
+            // A helper written inside another function, or a type declared in
+            // one, is a sibling of it rather than a thing inside it. To the
+            // parser it nests; to a reader it is one more item in that file, and
+            // to the drawing it has to be, because a function is a card the pane
+            // never opens — anything genuinely nested under one would be a call
+            // with nowhere to land the moment it was.
+            let into = if kind == UnitKind::Function { parent } else { id };
+            self.add_symbols(into, &symbol.children, lines, false);
         }
     }
 
@@ -562,16 +569,9 @@ impl Builder {
             workspace,
             manifest_dir,
             units,
-            calls: calls
-                .iter()
-                .map(|&(from, to)| super::Call {
-                    from,
-                    to,
-                    through_trait: None,
-                    })
-                .collect(),
             roots,
             entries: Vec::new(),
+            reach: super::reach::Reach::none(),
             function_count,
             call_count,
             tests_excluded,
@@ -580,13 +580,11 @@ impl Builder {
             unopened,
             took_ms,
         };
-        // A call through a trait is a call to whichever impl is selected, and
-        // the target unit already knows which trait it belongs to.
-        for index in 0..sheet.calls.len() {
-            let to = sheet.calls[index].to;
-            sheet.calls[index].through_trait = sheet.units[to].trait_name.clone();
-        }
         mark_entries(&mut sheet);
+        // Dominance last, because it is measured from the beginnings and those
+        // were only just decided. Computed here, once, because it is a question
+        // about the whole graph — see `reach::Reach`.
+        sheet.reach = super::reach::analyse(&sheet);
         sheet
     }
 
@@ -607,7 +605,7 @@ impl Builder {
             // Types declared right here, by their bare name.
             let types: HashMap<String, usize> = children
                 .iter()
-                .filter(|&&c| self.units[c].kind == UnitKind::Type)
+                .filter(|&&c| self.units[c].kind.is_type())
                 .map(|&c| (base_type_name(&self.units[c].name), c))
                 .collect();
             if types.is_empty() {
@@ -767,7 +765,11 @@ impl Builder {
 fn unit_kind(kind: u8) -> Option<UnitKind> {
     match kind {
         2 => Some(UnitKind::Module),
-        5 | 10 | 23 => Some(UnitKind::Type),
+        // rust-analyzer names a struct `Struct` and an enum `Enum`, so the two
+        // are kept apart rather than flattened into one "type": which one it is
+        // changes how a reader reads the methods hanging off it.
+        5 | 23 => Some(UnitKind::Struct),
+        10 => Some(UnitKind::Enum),
         11 => Some(UnitKind::Trait),
         19 => Some(UnitKind::Impl),
         6 | 12 => Some(UnitKind::Function),
@@ -1181,7 +1183,8 @@ mod tests {
     fn symbol_kinds_map_to_the_units_the_brief_named() {
         assert_eq!(unit_kind(12), Some(UnitKind::Function));
         assert_eq!(unit_kind(6), Some(UnitKind::Function));
-        assert_eq!(unit_kind(23), Some(UnitKind::Type));
+        assert_eq!(unit_kind(23), Some(UnitKind::Struct));
+        assert_eq!(unit_kind(10), Some(UnitKind::Enum));
         assert_eq!(unit_kind(11), Some(UnitKind::Trait));
         assert_eq!(unit_kind(19), Some(UnitKind::Impl));
         assert_eq!(unit_kind(2), Some(UnitKind::Module));

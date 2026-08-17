@@ -381,6 +381,9 @@ pub fn Flow(
     /// A port was clicked: open or fold what is attached this way. Leave it out
     /// and a port still states its count without offering to open.
     on_port: Option<EventHandler<(usize, Way)>>,
+    /// A node's lid was clicked: open or fold what is inside it. Leave it out
+    /// and the lid still states how much is in there without offering to open.
+    on_open: Option<EventHandler<usize>>,
     /// The pane itself was clicked, which is how a reader lets go.
     on_clear: Option<EventHandler<()>>,
 ) -> Element {
@@ -708,6 +711,10 @@ pub fn Flow(
         })
         .collect();
     wired.sort_by_key(|(edge, _, _)| edge.state.layer());
+    // Weight is read against the heaviest wire in this drawing rather than
+    // against a constant, so the scale means the same thing at every level of
+    // detail: the heaviest thing here is the heaviest thing here.
+    let heaviest = graph.edges.iter().map(|edge| edge.weight).max().unwrap_or(1);
     let marks: Vec<Mark> = graph
         .nodes
         .iter()
@@ -768,6 +775,7 @@ pub fn Flow(
                                 class: "flow-edge",
                                 "data-way": edge.state.as_str(),
                                 "data-route": edge.state == EdgeState::Route,
+                                "data-heavy": heaviness(edge.weight, heaviest),
                                 d: "{d}",
                                 "marker-end": match edge.state {
                                     EdgeState::Incoming => "url(#arrow-in)",
@@ -806,6 +814,10 @@ pub fn Flow(
                                 "data-held": node.state == NodeState::Held,
                                 "data-onroute": node.state == NodeState::OnRoute,
                                 "data-fresh": arrived.contains(&node.id),
+                                // The lid sits over the card's top-right corner,
+                                // so the title line gives it room rather than
+                                // running underneath it.
+                                "data-lidded": node.inside.is_some(),
                                 "aria-current": if node.state == NodeState::Held { "true" } else { "false" },
                                 onclick: {
                                     let id = node.id;
@@ -855,6 +867,18 @@ pub fn Flow(
                                     on_port,
                                 }
                             }
+                            // A sibling of the card rather than a child of it:
+                            // the card is a button, and a button inside a button
+                            // is markup no browser agrees on.
+                            if let Some(inside) = node.inside {
+                                Lid {
+                                    id: node.id,
+                                    count: inside.count,
+                                    open: inside.open,
+                                    name: node.card.title.clone(),
+                                    on_open,
+                                }
+                            }
                         }
                     }
                 }
@@ -866,8 +890,24 @@ pub fn Flow(
     }
 }
 
+/// How heavy a wire is drawn, as one of four steps.
+///
+/// Logarithmic against the heaviest wire in the drawing. A linear scale spends
+/// its whole range on the difference between a hundred calls and a hundred and
+/// four, and gives one call and ten the same stroke.
+fn heaviness(weight: usize, heaviest: usize) -> u8 {
+    if weight <= 1 || heaviest <= 1 {
+        return 0;
+    }
+    let share = (weight.min(heaviest) as f32).ln() / (heaviest as f32).ln();
+    (share * 3.0).round().clamp(0.0, 3.0) as u8
+}
+
 /// A port: the count of what is attached this way, and the control that opens
 /// it. Nothing is hidden by folding — the number is on the card either way.
+///
+/// With no handler it is a label rather than a control, and says so: a button
+/// promising to open something and then doing nothing is worse than a number.
 #[component]
 fn Knob(
     id: usize,
@@ -877,28 +917,85 @@ fn Knob(
     name: String,
     on_port: Option<EventHandler<(usize, Way)>>,
 ) -> Element {
-    let verb = if open { "Fold" } else { "Open" };
     let what = match way {
-    Way::In => "what depends on",
-    Way::Out => "what is depended on by",
+        Way::In => "what depends on",
+        Way::Out => "what is depended on by",
     };
-    rsx! {
-    button {
-        class: "flow-port",
-        "data-way": way.as_str(),
-        "data-open": open,
-        title: "{verb} {what} {name} ({count})",
-        "aria-label": "{verb} {what} {name}, {count}",
-        "aria-expanded": open,
-        onclick: move |event| {
-            event.stop_propagation();
-            if let Some(handler) = &on_port {
-                handler.call((id, way));
+    let Some(on_port) = on_port else {
+        let side = match way {
+            Way::In => "into",
+            Way::Out => "out of",
+        };
+        return rsx! {
+            span {
+                class: "flow-port",
+                "data-way": way.as_str(),
+                "data-open": "false",
+                "data-still": "true",
+                role: "img",
+                title: "{count} {side} {name}",
+                "aria-label": "{count} {side} {name}",
+                "{count}"
             }
-        },
-        "{count}"
+        };
+    };
+    let verb = if open { "Fold" } else { "Open" };
+    rsx! {
+        button {
+            class: "flow-port",
+            "data-way": way.as_str(),
+            "data-open": open,
+            title: "{verb} {what} {name} ({count})",
+            "aria-label": "{verb} {what} {name}, {count}",
+            "aria-expanded": open,
+            onclick: move |event| {
+                event.stop_propagation();
+                on_port.call((id, way));
+            },
+            "{count}"
+        }
     }
 }
+
+/// A lid: how much is inside a node, and the control that opens it into what it
+/// holds. The other half of a port's bargain, on the other axis — a port asks
+/// for more of the graph, a lid asks for more detail about one node.
+#[component]
+fn Lid(
+    id: usize,
+    count: usize,
+    open: bool,
+    name: String,
+    on_open: Option<EventHandler<usize>>,
+) -> Element {
+    let Some(on_open) = on_open else {
+        return rsx! {
+            span {
+                class: "flow-lid",
+                "data-open": "false",
+                "data-still": "true",
+                role: "img",
+                title: "{count} inside {name}",
+                "aria-label": "{count} inside {name}",
+                "{count}"
+            }
+        };
+    };
+    let verb = if open { "Close" } else { "Open" };
+    rsx! {
+        button {
+            class: "flow-lid",
+            "data-open": open,
+            title: "{verb} {name} ({count} inside)",
+            "aria-label": "{verb} {name}, {count} inside",
+            "aria-expanded": open,
+            onclick: move |event| {
+                event.stop_propagation();
+                on_open.call(id);
+            },
+            "{count}"
+        }
+    }
 }
 
 #[component]

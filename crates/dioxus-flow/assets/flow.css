@@ -339,17 +339,84 @@
   right: auto;
   transform: translate(-50%, 50%);
 }
-.flow-port[data-way="in"]:hover,
+.flow-port[data-way="in"]:hover:not([data-still="true"]),
 .flow-port[data-way="in"][data-open="true"] {
   border-color: var(--flow-in);
   background-color: var(--flow-in);
   color: var(--flow-ink-invert);
 }
-.flow-port[data-way="out"]:hover,
+.flow-port[data-way="out"]:hover:not([data-still="true"]),
 .flow-port[data-way="out"][data-open="true"] {
   border-color: var(--flow-out);
   background-color: var(--flow-out);
   color: var(--flow-ink-invert);
+}
+/* A port with nothing to open is a label. It keeps the count — that is the fact
+ * worth having — and drops every affordance that would promise otherwise. */
+.flow-port[data-still="true"] {
+  cursor: default;
+  border-style: dashed;
+  border-color: var(--flow-line);
+  color: var(--flow-ink-faint);
+}
+
+/* A LID -------------------------------------------------------------------
+ * The other axis. A port asks for more of the graph; a lid asks for more detail
+ * about one node — open a crate and it becomes its files. It sits on the card
+ * rather than on its edge, because what is behind it is not somewhere else on
+ * the pane, it is in here. */
+.flow-lid {
+  position: absolute;
+  top: 6px;
+  right: 7px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 16px;
+  padding: 0 5px 0 3px;
+  border: 0;
+  border-radius: 5px;
+  background-color: var(--flow-chip-field);
+  color: var(--flow-ink-muted);
+  font-family: var(--flow-font);
+  font-size: 10px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  cursor: pointer;
+  transition:
+    background-color 100ms ease-out,
+    color 100ms ease-out;
+}
+.flow-lid::before {
+  content: "\25B8";
+  font-size: 9px;
+  line-height: 1;
+  opacity: 0.75;
+}
+.flow-lid[data-open="true"]::before {
+  content: "\25BE";
+}
+.flow-lid:hover:not([data-still="true"]),
+.flow-lid[data-open="true"] {
+  background-color: var(--flow-ink);
+  color: var(--flow-ink-invert);
+}
+.flow-lid[data-still="true"] {
+  cursor: default;
+}
+.flow-node[data-filled="true"] ~ .flow-lid {
+  background-color: var(--flow-ink-raised);
+  color: var(--flow-ink-invert);
+}
+.flow-node[data-filled="true"] ~ .flow-lid:hover:not([data-still="true"]),
+.flow-node[data-filled="true"] ~ .flow-lid[data-open="true"] {
+  background-color: var(--flow-surface);
+  color: var(--flow-ink);
+}
+/* The title line gives the lid its corner rather than running under it. */
+.flow-node[data-lidded="true"] .flow-node__line {
+  padding-right: 30px;
 }
 
 /* A WIRE ------------------------------------------------------------------
@@ -357,29 +424,43 @@
  * being held, and the walking dash belongs to one thing: the route the reader
  * asked to see. */
 .flow-edge {
+  --flow-stroke: 1.25;
+  /* How much heavier a wire is drawn for standing in for many. Four steps on a
+   * log scale, set from `data-heavy`; 1 is one edge, or a chart that never
+   * gathers any. */
+  --flow-heft: 1;
   fill: none;
   stroke: var(--flow-wire);
-  stroke-width: 1.25;
+  stroke-width: calc(var(--flow-stroke) * var(--flow-heft));
   transition:
     stroke 140ms ease-out,
     stroke-width 140ms ease-out;
 }
 .flow-edge[data-way="in"] {
   stroke: var(--flow-in);
-  stroke-width: 1.75;
+  --flow-stroke: 1.75;
 }
 .flow-edge[data-way="out"] {
   stroke: var(--flow-out);
-  stroke-width: 1.75;
+  --flow-stroke: 1.75;
 }
 .flow-edge[data-way="muted"] {
   stroke: var(--flow-wire-muted);
 }
 .flow-edge[data-route="true"] {
   stroke: var(--flow-in-lit);
-  stroke-width: 2.25;
+  --flow-stroke: 2.25;
   stroke-dasharray: 6 5;
   animation: flow-wire-walk 900ms linear infinite;
+}
+.flow-edge[data-heavy="1"] {
+  --flow-heft: 1.6;
+}
+.flow-edge[data-heavy="2"] {
+  --flow-heft: 2.4;
+}
+.flow-edge[data-heavy="3"] {
+  --flow-heft: 3.4;
 }
 
 .flow-label {

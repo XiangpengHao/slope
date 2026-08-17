@@ -228,6 +228,9 @@ pub fn scene(
                     count: entry.deps.len(),
                     open: folding.is_open(id, Way::Out),
                 }),
+                // A crate holds no crates. Containment is the call lens's axis,
+                // not this one's.
+                inside: None,
                 state: if held == Some(id) {
                     NodeState::Held
                 } else if on_route.contains(&id) {
@@ -259,6 +262,8 @@ pub fn scene(
                 from: id,
                 to: dep,
                 state,
+                // One manifest edge is one wire; there is nothing to gather.
+                weight: 1,
                 label: None,
             });
         }

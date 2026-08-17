@@ -207,6 +207,18 @@
     --flow-shadow-panel: var(--shadow-panel);
   }
 
+  /* The call lens draws four to eight times the wire the dependency board does —
+   * 518 wires over 82 cards folded, 4,283 over 426 opened — because every call
+   * between two crates is gathered onto one. At that density a wire drawn for a
+   * pane of a few hundred stops being a line and becomes a wash, and the cards
+   * sink into it. So the resting mesh steps back here and nothing else changes:
+   * width still says how much a wire carries, and hue is still spent only on the
+   * one card being held. */
+  .flow-dense .flow-root {
+    --flow-wire-color: #aeb8c6;
+    --flow-wire-muted-color: #dde2e9;
+  }
+
   /* CHROME -----------------------------------------------------------------
    * Everything that floats over the pane is the same plate: white, hairline,
    * one soft shadow, 10px radius. */

@@ -153,13 +153,13 @@ fn Finder(calls: bool) -> Element {
         let loaded = sheet.read();
         match loaded.as_ref() {
             Some(Some(Ok(SheetLoad::Ready(sheet)))) => {
+                // Every kind of unit, not only functions: the pane draws crates,
+                // files, types, traits and impls too, and a finder that cannot
+                // name what is on the pane is not a finder.
                 let mut hits: Vec<&crate::call::Unit> = sheet
                     .units
                     .iter()
-                    .filter(|unit| {
-                        unit.kind == crate::call::UnitKind::Function
-                            && unit.name.to_lowercase().contains(&needle)
-                    })
+                    .filter(|unit| unit.name.to_lowercase().contains(&needle))
                     .collect();
                 // Exact first, then the workspace's own code, then by how much
                 // of the sheet routes through it.
@@ -168,17 +168,47 @@ fn Finder(calls: bool) -> Element {
                         unit.name.to_lowercase() != needle,
                         unit.origin != crate::call::Origin::Workspace,
                         !unit.name.to_lowercase().starts_with(&needle),
+                        std::cmp::Reverse(sheet.reach.dominates(unit.id)),
                         std::cmp::Reverse(unit.callers.len()),
+                        // Breaks the tie between containers, which dominate
+                        // nothing and are called by nothing: the bigger one is
+                        // the one a reader meant.
+                        std::cmp::Reverse(unit.function_count),
                     )
                 });
                 hits.into_iter()
                     .take(8)
                     .map(|unit| {
+                        // Where it is, precisely enough to tell three functions
+                        // of the same name in the same crate apart — which is
+                        // the ordinary case, not a corner one.
+                        let place = unit
+                            .parent
+                            .and_then(|parent| sheet.units.get(parent))
+                            .filter(|parent| {
+                                parent.kind != crate::call::UnitKind::Crate
+                                    && unit.kind == crate::call::UnitKind::Function
+                            })
+                            .map(|parent| {
+                                // An impl block is named for the type it is on;
+                                // its own name is a whole sentence.
+                                parent
+                                    .self_ty
+                                    .clone()
+                                    .unwrap_or_else(|| parent.name.clone())
+                            })
+                            .unwrap_or_else(|| unit.crate_name.clone());
                         (
                             unit.id,
                             unit.name.clone(),
-                            unit.qualified.clone(),
-                            unit.callers.len(),
+                            format!("{} · {place}", unit.kind.noun()),
+                            // What ranks it: how much calls a function, how much
+                            // code is in anything else.
+                            if unit.kind == crate::call::UnitKind::Function {
+                                unit.callers.len()
+                            } else {
+                                unit.function_count
+                            },
                         )
                     })
                     .collect()
