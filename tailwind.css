@@ -1,2 +1,274 @@
 @import "tailwindcss";
 @source "./src/**/*.rs";
+
+/* ————— Workspace Atlas: ink on paper. Light theme only for now; the dark
+   "field edition" of the same plate is a later addition. Color roles:
+   paper ground, engraving ink, hairline ink for lines, and one reserved
+   flare color that only ever means CHANGED (and its blast halo). ————— */
+
+@theme {
+  --font-chart: "EB Garamond", Georgia, "Times New Roman", serif;
+  --font-data: "JetBrains Mono", ui-monospace, "SFMono-Regular", monospace;
+
+  --color-paper: #f6f4ed;
+  --color-ink: #23303c;
+  --color-ink-soft: #5a6574;
+  --color-ink-line: #949dab; /* hairlines and open marks, never body text */
+  --color-ink-faint: #b3bac4; /* ghost outlines only */
+  --color-flare: #a54c06; /* CHANGED, and nothing else, ever */
+}
+
+html,
+body {
+  height: 100%;
+  background: var(--color-paper);
+  color: var(--color-ink);
+}
+
+/* The parts of the browser we did not draw still carry the plate. */
+::selection {
+  background: color-mix(in srgb, var(--color-ink) 22%, transparent);
+}
+.atlas {
+  caret-color: var(--color-ink);
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-line) transparent;
+}
+.atlas :focus-visible {
+  outline: 1.5px solid var(--color-ink);
+  outline-offset: 2px;
+}
+.atlas input[type="search"]::-webkit-search-cancel-button {
+  display: none;
+}
+
+/* A paper plate with the atlas's double-ruled frame. The inner hairline is
+   drawn with inset shadows so it also works on replaced elements (inputs). */
+.plate {
+  background: var(--color-paper);
+  border: 1px solid var(--color-ink);
+  box-shadow:
+    inset 0 0 0 2.5px var(--color-paper),
+    inset 0 0 0 3.25px color-mix(in srgb, var(--color-ink) 45%, transparent),
+    0 1px 4px color-mix(in srgb, var(--color-ink) 14%, transparent);
+}
+
+details.plate > summary {
+  list-style: none;
+}
+details.plate > summary::-webkit-details-marker {
+  display: none;
+}
+details.plate > summary::after {
+  content: "–";
+  float: right;
+  color: var(--color-ink-soft);
+}
+details.plate:not([open]) > summary::after {
+  content: "+";
+}
+
+/* ————— The flow canvas dressed as the plate ————— */
+
+.atlas .dioxus-flow {
+  --df-bg: transparent;
+  --df-node-bg: transparent;
+  --df-node-color: var(--color-ink);
+  --df-node-border: transparent;
+  --df-accent: var(--color-ink);
+  --df-edge: var(--color-ink-line);
+  --df-edge-selected: var(--color-ink);
+  --df-edge-label: var(--color-ink);
+  --df-handle-bg: transparent;
+  --df-handle-border: transparent;
+  --df-grid: color-mix(in srgb, var(--color-ink) 16%, transparent);
+  --df-panel-bg: var(--color-paper);
+  --df-panel-border: var(--color-ink);
+  --df-panel-color: var(--color-ink);
+  --df-minimap-node: var(--color-ink-line);
+  --df-minimap-mask: color-mix(in srgb, var(--color-ink) 3%, transparent);
+}
+
+/* The ring guides live under the stars and lines: engraved ground, not
+   overlay. Edge hit-paths are disabled — edges are drawn, never clicked. */
+.atlas .df-world-layer.ring-guides {
+  z-index: 0;
+}
+.atlas .df-edge-hit {
+  pointer-events: none;
+}
+
+/* Edge arrowheads point the way change travels: from the dependency into
+   the crate that uses it. Colored by the edge's role. */
+.atlas .df-edge.dep .edge-head {
+  stroke: var(--color-ink);
+}
+.atlas .df-edge.user .edge-head {
+  stroke: var(--color-ink-line);
+}
+.atlas .df-edge.evented .edge-head {
+  stroke: var(--color-flare);
+}
+
+/* Ring captions and the virtual-workspace medallion, in the data voice with
+   a paper halo so they stay legible under crossing lines. Each hop caption
+   is a real control: clicking it selects its whole ring. */
+.atlas .ring-caption,
+.atlas .hub-caption {
+  font-family: var(--font-data);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  fill: var(--color-ink-soft);
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 3px;
+}
+.atlas .ring-caption {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.atlas .ring-caption:hover,
+.atlas .ring-caption:focus-visible,
+.atlas .ring-caption.is-selected {
+  fill: var(--color-ink);
+}
+.atlas .ring-caption.is-selected {
+  font-weight: 500;
+}
+
+/* The lib's overlays, re-ruled as paper plates: square corners, ink frame. */
+.atlas .df-controls {
+  border-radius: 0;
+  border: 1px solid var(--color-ink);
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--color-ink) 14%, transparent);
+  left: auto;
+  right: 14px;
+  bottom: 14px;
+}
+
+/* Edge labels are manifest events: data voice, spaced caps, flare ink.
+   A paper halo keeps the words legible where curves converge. */
+.atlas .df-edge-label {
+  font-family: var(--font-data);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 3px;
+}
+.atlas g.evented .df-edge-label {
+  fill: var(--color-flare);
+}
+
+/* One star on the rings: the mark fills the node box; the name seats on
+   the side facing away from the center. Every live star is a link — the
+   resting underline says so, hairline ink rising to full ink on hover. */
+.atlas .star-node {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+.atlas .star-node:hover {
+  z-index: 5;
+}
+.atlas .star-link {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: pointer;
+  text-decoration: none;
+}
+.atlas .star-node.is-ghost .star-link {
+  cursor: default;
+}
+.atlas .star-label {
+  position: absolute;
+  white-space: nowrap;
+  font-size: 10.5px;
+  line-height: 1.2;
+  text-decoration-line: underline;
+  text-decoration-color: var(--color-ink-line);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 120ms ease-out;
+  /* A paper halo keeps names legible over ring guides and edges. */
+  text-shadow:
+    0 0 2px var(--color-paper),
+    0 0 2px var(--color-paper),
+    0 0 3px var(--color-paper),
+    0 0 4px var(--color-paper);
+}
+.atlas .star-node:hover .star-label {
+  text-decoration-color: var(--color-ink);
+}
+.atlas .star-node.is-ghost .star-label {
+  text-decoration-line: none;
+}
+.atlas .star-label.lab-e {
+  left: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-left: 2px;
+}
+.atlas .star-label.lab-w {
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  margin-right: 2px;
+}
+.atlas .star-label.lab-n {
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 0px;
+}
+.atlas .star-label.lab-s {
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-top: 0px;
+}
+
+/* Unnamed stars keep their name folded until pointed at or focused. */
+.atlas .star-node:not(.is-named) .star-label {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+.atlas .star-node:not(.is-named):hover .star-label,
+.atlas .star-node:not(.is-named):focus-within .star-label {
+  opacity: 1;
+}
+.atlas .star-node.is-focal .star-label {
+  font-weight: 500;
+}
+
+/* ————— The one authored motion: the survey constellation draws itself. ————— */
+
+.constellation-line {
+  stroke-dasharray: 340;
+  stroke-dashoffset: 340;
+  animation: constellation-draw 2.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+.constellation-star {
+  opacity: 0;
+  animation: constellation-rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+@keyframes constellation-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+@keyframes constellation-rise {
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .constellation-line,
+  .constellation-star {
+    animation: none;
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}

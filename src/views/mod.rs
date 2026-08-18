@@ -1,8 +1,10 @@
-//! Layouts and route pages. Each layout and route in [`crate::Route`] renders
-//! one of these components.
+//! Layouts and route pages.
 
-mod home;
-pub use home::Home;
+mod atlas;
+mod chrome;
+mod radial;
+mod shell;
+mod star;
 
-mod navbar;
-pub use navbar::Navbar;
+pub use atlas::{Focus, Overview, RingSel};
+pub use shell::AtlasShell;
