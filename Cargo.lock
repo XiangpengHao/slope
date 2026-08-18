@@ -796,16 +796,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "dioxus-flow"
-version = "0.1.0"
-dependencies = [
- "dioxus",
- "serde",
- "tracing",
- "web-sys",
-]
-
-[[package]]
 name = "dioxus-fullstack"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2633,19 +2623,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust-viewer"
-version = "0.1.0"
-dependencies = [
- "dioxus",
- "dioxus-flow",
- "js-sys",
- "serde",
- "serde_json",
- "wasm-bindgen",
- "web-sys",
-]
-
-[[package]]
 name = "rustc-hash"
 version = "1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2925,6 +2902,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "debdd4b83524961983cea3c55383b3910fd2f24fd13a188f5b091d2d504a61ae"
 dependencies = [
  "rustc-hash 1.1.0",
+]
+
+[[package]]
+name = "slopify"
+version = "0.1.0"
+dependencies = [
+ "dioxus",
+ "wasm-bindgen",
 ]
 
 [[package]]

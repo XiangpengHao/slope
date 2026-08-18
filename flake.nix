@@ -1,5 +1,5 @@
 {
-  description = "rust-viewer";
+  description = "slopify";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

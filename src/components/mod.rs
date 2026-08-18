@@ -1,5 +1,2 @@
-mod icons;
-mod topbar;
-
-pub use icons::{IconFind, Mark};
-pub use topbar::TopBar;
+//! Shared components for the app. Buttons, chrome, and other UI that more than
+//! one view uses live here.
