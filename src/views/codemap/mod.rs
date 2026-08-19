@@ -17,10 +17,11 @@ use std::collections::{HashMap, HashSet};
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, FileDetail, ItemSource, code_graph};
+use crate::api::{CodeGraph, FileDetail, ItemSource};
 use crate::views::codemap::chrome::{CodeCartouche, CodeLegend, CodeSearch, CratePanel};
 use crate::views::codemap::ego::EgoPlate;
 use crate::views::codemap::map::CodeChart;
+use crate::views::survey::use_code_graph;
 
 /// What the route selects on the code map.
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -32,18 +33,32 @@ pub enum CodeSel {
     File(String, String),
 }
 
-/// Which of the selected crate's ties the map draws — the code altitude's
-/// version of the dependency chart's edges toggle. Without a selection it
-/// has nothing to act on and every tie draws.
+/// Which reading of the map's ties is drawn. Direction alone cannot thin an
+/// unanchored map — every tie is one territory's use and another's users — so
+/// each mode anchors on the territories themselves: a block draws only its own
+/// heaviest ties in the chosen direction, and hovering it reveals the rest.
+/// `Both` is the unthinned picture, kept as an explicit choice.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum RefDir {
-    /// Every tie touching the selection, both directions.
+    /// What each file reaches for — its heaviest outgoing ties. The default:
+    /// the question a reviewer brings to a change is what it leans on.
     #[default]
-    Both,
-    /// Only ties into the selection's code — who leans on it.
-    UsedBy,
-    /// Only ties its code makes to the outside — what it reaches for.
     Uses,
+    /// Who leans on each file — its heaviest incoming ties.
+    UsedBy,
+    /// Every tie, unthinned.
+    Both,
+}
+
+impl RefDir {
+    /// How many ties one territory draws at rest in this reading. `Both` keeps
+    /// every tie; the anchored readings keep each territory's heaviest few.
+    pub fn per_territory(self) -> Option<usize> {
+        match self {
+            RefDir::Both => None,
+            _ => Some(2),
+        }
+    }
 }
 
 // Session state that must survive route-variant remounts, like the dep
@@ -60,7 +75,7 @@ static SOURCES: GlobalSignal<HashMap<(u32, u32), ItemSource>> = Signal::global(H
 /// Rows the reviewer expanded in place on a focus plate, by (file id, local
 /// item id). View state, not a URL: expansion never leaves the plate.
 static EXPANDED: GlobalSignal<HashSet<(u32, u32)>> = Signal::global(HashSet::new);
-/// Which direction of a selected crate's ties the map draws.
+/// Which reading of the map's ties is drawn.
 static REF_DIR: GlobalSignal<RefDir> = Signal::global(RefDir::default);
 
 #[derive(Clone, Copy)]
@@ -80,15 +95,6 @@ pub fn use_code() -> CodeState {
         expanded: EXPANDED.signal(),
         ref_dir: REF_DIR.signal(),
     }
-}
-
-type CodeResource = Resource<Result<CodeGraph, ServerFnError>>;
-
-/// The loaded code survey, for route components under the code shell.
-pub fn use_code_graph() -> Option<CodeGraph> {
-    let res = try_use_context::<CodeResource>()?;
-    let state = res.read();
-    state.as_ref().and_then(|r| r.as_ref().ok()).cloned()
 }
 
 /// The selection the current route asks for.
@@ -116,70 +122,55 @@ pub fn item_route(path: &str, item: &str) -> Route {
     }
 }
 
-/// The code shell: loads the survey, gates its loading and error states, and
-/// lays the code furniture over whichever altitude the route asks for — the
-/// ambient map, or one selection's focus plate. Mounted by the atlas shell for
-/// every `/code` route.
+/// The code shell: lays the code furniture over whichever altitude the route
+/// asks for — the ambient map, or one selection's focus plate. Mounted by the
+/// survey shell, which has already loaded the survey this map reads.
 #[component]
-pub fn CodeShell(workspace: String, diff_line: String) -> Element {
-    let resource: CodeResource = use_resource(code_graph);
-    use_context_provider(|| resource);
-
+pub fn CodeShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
     let route = use_route::<Route>();
     let sel = route_selection(&route);
     // A file or item focus replaces the map with its own plate; the map's
     // cartouche and legend are map furniture and go with it.
     let focused = matches!(sel, CodeSel::File(_, _));
 
-    let state = resource.read();
     rsx! {
-        match &*state {
-            None => rsx! {
-                SurveyingCode {}
-            },
-            Some(Err(err)) => rsx! {
-                CodeSurveyFailed { message: err.to_string(), resource }
-            },
-            Some(Ok(graph)) => rsx! {
-                if !focused {
-                    CodeChart {
-                        graph: graph.clone(),
-                        sel: sel.clone(),
-                        workspace: workspace.clone(),
-                    }
+        if !focused {
+            CodeChart {
+                graph: graph.clone(),
+                sel: sel.clone(),
+                workspace: workspace.clone(),
+            }
+        }
+        Outlet::<Route> {}
+        if !focused {
+            div { class: "pointer-events-none absolute bottom-3 left-3 top-3 z-10 hidden w-64 flex-col gap-2 sm:flex",
+                CodeCartouche {
+                    graph: graph.clone(),
+                    workspace: workspace.clone(),
+                    diff_line: diff_line.clone(),
                 }
-                Outlet::<Route> {}
-                if !focused {
-                    div { class: "pointer-events-none absolute bottom-3 left-3 top-3 z-10 hidden w-64 flex-col gap-2 sm:flex",
-                        CodeCartouche {
-                            graph: graph.clone(),
-                            workspace: workspace.clone(),
-                            diff_line: diff_line.clone(),
-                        }
-                        div { class: "mt-auto",
-                            CodeLegend { graph: graph.clone(), start_open: true }
-                        }
-                    }
-                    // Phone: everything stacks under the cartouche.
-                    div { class: "pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-col gap-2 sm:hidden",
-                        CodeCartouche {
-                            graph: graph.clone(),
-                            workspace: workspace.clone(),
-                            diff_line: diff_line.clone(),
-                        }
-                        CodeSearch { graph: graph.clone() }
-                    }
-                    div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
-                        CodeLegend { graph: graph.clone(), start_open: false }
-                    }
+                // Directly under the cartouche: one stack, not a plate at each
+                // end of 480px of empty paper.
+                CodeLegend { graph: graph.clone(), start_open: true }
+            }
+            // Phone: everything stacks under the cartouche.
+            div { class: "pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-col gap-2 sm:hidden",
+                CodeCartouche {
+                    graph: graph.clone(),
+                    workspace: workspace.clone(),
+                    diff_line,
                 }
-                // Wider than the dependency chart's search: an item hit
-                // carries `src/analyze/manifest.rs:67`, and the name must not
-                // be the half that gets squeezed.
-                div { class: "pointer-events-none absolute right-3 top-3 z-10 hidden w-72 flex-col gap-2 sm:flex",
-                    CodeSearch { graph: graph.clone() }
-                }
-            },
+                CodeSearch { graph: graph.clone() }
+            }
+            div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
+                CodeLegend { graph: graph.clone(), start_open: false }
+            }
+        }
+        // Wider than the dependency chart's search: an item hit carries
+        // `src/analyze/manifest.rs:67`, and the name must not be the half that
+        // gets squeezed.
+        div { class: "pointer-events-none absolute right-3 top-3 z-10 hidden w-72 flex-col gap-2 sm:flex",
+            CodeSearch { graph }
         }
     }
 }
@@ -220,92 +211,6 @@ pub fn CodeFile(path: Vec<String>, item: String) -> Element {
             graph,
             path: joined.clone(),
             item,
-        }
-    }
-}
-
-/// Loading: the sources are being read. Honest about the wait — the first
-/// survey of a workspace runs rust-analyzer over everything.
-#[component]
-fn SurveyingCode() -> Element {
-    rsx! {
-        div { class: "grid h-full place-items-center",
-            div { class: "text-center",
-                svg {
-                    class: "constellation mx-auto",
-                    width: "170",
-                    height: "100",
-                    view_box: "0 0 170 100",
-                    "aria-hidden": "true",
-                    polyline {
-                        class: "constellation-line",
-                        points: "12,22 52,70 88,48 128,82 158,40",
-                        fill: "none",
-                        stroke: "var(--color-ink-line)",
-                        stroke_width: "0.9",
-                    }
-                    for (i , (x , y , r)) in [
-                        (12.0, 22.0, 3.0),
-                        (52.0, 70.0, 4.4),
-                        (88.0, 48.0, 2.7),
-                        (128.0, 82.0, 3.8),
-                        (158.0, 40.0, 3.2),
-                    ]
-                        .iter()
-                        .enumerate()
-                    {
-                        circle {
-                            class: "constellation-star",
-                            style: "animation-delay: {i as f64 * 0.45}s",
-                            cx: "{x}",
-                            cy: "{y}",
-                            r: "{r}",
-                            fill: "var(--color-ink)",
-                        }
-                    }
-                }
-                p { class: "mt-4 font-data text-[12.5px] text-ink",
-                    "rust-analyzer is reading every source file and resolving references"
-                }
-                p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
-                    "the first survey of a workspace takes a while"
-                }
-            }
-        }
-    }
-}
-
-/// The code survey failed. Say what happened, in words, and offer a retry.
-#[component]
-fn CodeSurveyFailed(message: String, resource: CodeResource) -> Element {
-    rsx! {
-        div { class: "grid h-full place-items-center p-4",
-            section { class: "plate max-w-lg px-5 py-4",
-                h1 { class: "font-chart text-[17px] tracking-[0.18em] uppercase text-ink",
-                    "The code survey failed"
-                }
-                p { class: "mt-2 break-words border-t border-ink-line pt-2 font-data text-[11px] leading-relaxed text-ink",
-                    "{message}"
-                }
-                p { class: "mt-3 font-data text-[10.5px] leading-relaxed text-ink-soft",
-                    "The dependency atlas still works without it."
-                }
-                div { class: "mt-3 flex gap-4",
-                    button {
-                        class: "font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4 hover:text-ink-soft",
-                        onclick: move |_| {
-                            let mut resource = resource;
-                            resource.restart();
-                        },
-                        "retry the survey"
-                    }
-                    Link {
-                        class: "font-data text-[10px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
-                        to: Route::Overview {},
-                        "← dependencies"
-                    }
-                }
-            }
         }
     }
 }

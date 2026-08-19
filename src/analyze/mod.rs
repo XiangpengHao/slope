@@ -2,6 +2,7 @@
 //! the detected VCS for the diff, manifest comparison for dependency events.
 
 pub mod code;
+mod data;
 mod manifest;
 mod vcs;
 

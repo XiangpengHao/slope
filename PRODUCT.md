@@ -28,6 +28,12 @@ workspace and opens a browser window that visualizes it. Success means the
 reviewer can judge a change — where it landed and what it affects — at the
 zoom level the question demands.
 
+Sharpened 2026-08-19: slopify is a **diff tool** first. Its claim over an
+ordinary diff: it keeps the important thing visible and helps the reviewer
+understand what changed, what the consequences are, and whether the change
+landed in the right place. The dep view and the code view are instruments in
+service of that diff story, with the code view the most important surface.
+
 ## Positioning
 
 Line-by-line diff review does not scale to agent-sized changes, and existing
@@ -44,11 +50,12 @@ artifact.
 - Used after an LLM agent session, when the user reviews what the agent did.
 - Target workspaces are large real-world Rust projects; graphs at full
   resolution reach thousands of nodes.
-- Near-term focus (confirmed 2026-08-18): the dependency graph viewer only.
-  It is an intermediate milestone that bootstraps the tool, not the product
-  itself. The ladder continues downward: code structure (crates → files →
-  structs → functions) and the function call graph are later rungs toward the
-  code-reviewer goal.
+- Near-term focus (confirmed 2026-08-19): the diff story. Two target flows:
+  (1) diff the uncommitted changes — working copy vs trunk base — so a
+  developer reviews code before commit (build this now); (2) diff two
+  branches, e.g. a PR in CI (later, explicitly out of scope for now). The
+  dependency viewer and code viewer exist (built 2026-08-18/19) but neither
+  yet tells a real diff story beyond file-level change marks.
 
 ## Capabilities and Constraints
 

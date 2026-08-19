@@ -178,16 +178,17 @@ pub struct Block {
 }
 
 impl Block {
-    /// The fold's own words: counts, and nothing else. A fold that does not
-    /// count what it hides is a lie by omission — but the sentence explaining
-    /// where a private item's references go belongs to the legend, said once,
-    /// not to fifteen blocks saying it at each other.
+    /// The fold's own words: counts in rust's vocabulary, and nothing else. A
+    /// fold that does not count what it hides is a lie by omission — but the
+    /// sentence explaining what "pub" means here, and where a private item's
+    /// references go, belongs to the legend, said once, not to fifteen blocks
+    /// saying it at each other.
     pub fn fold_words(&self) -> Option<String> {
         match (self.quiet, self.private) {
             (0, 0) => None,
-            (q, 0) => Some(format!("+ {q} quieter pub")),
+            (q, 0) => Some(format!("+ {q} pub")),
             (0, p) => Some(format!("+ {p} private")),
-            (q, p) => Some(format!("+ {q} quieter pub · {p} private")),
+            (q, p) => Some(format!("+ {q} pub · {p} private")),
         }
     }
 }
@@ -485,6 +486,9 @@ mod tests {
             parent,
             fan_in: 0,
             impls: Vec::new(),
+            plain_fields: 0,
+            variants: Vec::new(),
+            ty: String::new(),
         }
     }
 
@@ -526,6 +530,7 @@ mod tests {
                     count: 4,
                 },
             ],
+            holds: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
         }

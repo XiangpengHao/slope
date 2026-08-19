@@ -91,7 +91,9 @@ pub fn TitleBlock(
                     "{epoch.base} → {epoch.target}"
                 }
                 div { class: "pb-2 pt-1",
-                    crate::views::codemap::chrome::AltitudeSwitch { code: false }
+                    crate::views::codemap::chrome::AltitudeSwitch {
+                        at: crate::views::codemap::chrome::Altitude::Deps,
+                    }
                 }
             }
             details { class: "fold border-t border-ink-line open:pb-3", open: changes_open,

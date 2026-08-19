@@ -39,7 +39,6 @@ pub enum CodeNodeData {
     Block {
         info: FileInfo,
         name: String,
-        meta: String,
         rows: Vec<Row>,
         /// What the block folded away, in words, and the height those words
         /// were measured to need.
@@ -57,35 +56,28 @@ pub enum CodeNodeData {
     },
 }
 
-/// A district frame, ready to engrave. Every segment of the label band is
-/// placed here, not in the drawing: the name is never allowed to collide with
-/// the counts, and a frame too narrow for its counts drops them rather than
-/// paint over the name it exists to state.
+/// A district frame, ready to engrave. An open frame names itself and stops
+/// there: its files are on the paper to be counted. Only a fold counts what it
+/// holds — that is the gate's line, not the frame's.
 #[derive(Clone, PartialEq)]
 pub struct DistrictView {
     pub dir: u32,
     pub at: Placed,
     pub label: String,
-    /// Counts and their x offset from the frame's left edge; `None` when the
-    /// frame is too narrow to seat them clear of the name.
-    pub meta: Option<(String, f64)>,
-    /// The crate whose district this is, and its offset.
+    /// The crate whose district this is, and its offset. Drawn only where the
+    /// survey has more than one crate to tell apart.
     pub krate: Option<(String, f64)>,
     pub depth: u32,
     pub root: bool,
     pub focal: bool,
 }
 
-/// The engraved label band, matched to the CSS that draws it: every segment in
-/// the data face, because every segment is data — a directory path, its
-/// counts, its crate. The name sets at 12px, the counts at 9px tracked 0.1em,
-/// the crate at 10px. These numbers move with `tailwind.css` or the band
-/// starts colliding again.
+/// The engraved label band, matched to the CSS that draws it: both segments in
+/// the data face, because both are data — a directory path and a crate name.
+/// The name sets at 12px, the crate at 10px. These numbers move with
+/// `tailwind.css` or the band starts colliding again.
 fn name_w(text: &str) -> f64 {
     tree::text_w(text, 12.0)
-}
-fn meta_w(text: &str) -> f64 {
-    tree::tracked_w(text, 9.0, tree::MONO_ADVANCE, 0.1)
 }
 fn crate_w(text: &str) -> f64 {
     tree::text_w(text, 10.0)
@@ -112,12 +104,16 @@ pub struct TieView {
     pub from: Point,
     pub to: Point,
     pub width: f64,
-    /// The heaviest ties carry their count on the paper; the lighter ones keep
-    /// it folded until the reader hovers an end. The tie is always drawn.
+    /// The heaviest resting ties carry their count on the paper; the lighter
+    /// ones keep it folded until the reader hovers an end.
     pub labeled: bool,
+    /// Drawn at rest. A tie the reading folded away stays in the set and inks
+    /// in when the reader hovers either of its ends — the fold is reachable,
+    /// never silently cut.
+    pub rest: bool,
 }
 
-/// Ties whose counts are engraved at rest. Past this the labels would be the
+/// Resting ties whose counts are engraved. Past this the labels would be the
 /// map's texture instead of its data.
 const TIE_LABELS: usize = 12;
 
@@ -149,11 +145,11 @@ fn row_words(row: &Row) -> String {
 /// A block's measured size, and the height its fold's words need. The layout
 /// must know both before anything is drawn, so the plate and its box agree to
 /// the pixel — and so a fold never has its count clipped.
-fn block_size(name: &str, meta: &str, rows: &[Row], fold: Option<&str>) -> (f64, f64, f64) {
-    // Each line on its own face and tracking: the name at 10.5px, the counts
-    // at 8.5px tracked 0.06em, the fold's words at 8.5px tracked 0.02em.
-    let head =
-        tree::text_w(name, 10.5) + tree::tracked_w(meta, 8.5, tree::MONO_ADVANCE, 0.06) + 20.0;
+fn block_size(name: &str, rows: &[Row], fold: Option<&str>) -> (f64, f64, f64) {
+    // Each line on its own face and tracking: the name at 10.5px, the fold's
+    // words at 8.5px tracked 0.02em. The header holds the name and the changed
+    // marker and nothing else, so the name is never the half that gets clipped.
+    let head = tree::text_w(name, 10.5) + 22.0;
     // The fold buys the same slack in width that the wrap estimate spends, so
     // its one sentence stays one line whenever the block is allowed to widen.
     let fold_w = fold
@@ -193,8 +189,9 @@ struct Built {
 }
 
 /// Which side of two boxes face each other, so a tie leaves and lands on open
-/// paper instead of crossing its own territory.
-fn tie_ends(a: Placed, b: Placed) -> (Point, Point) {
+/// paper instead of crossing its own territory. The data chart draws its edges
+/// between measured boxes the same way, so this is shared rather than copied.
+pub(crate) fn tie_ends(a: Placed, b: Placed) -> (Point, Point) {
     let (ac, bc) = (a.center(), b.center());
     if (ac.x - bc.x).abs() > (ac.y - bc.y).abs() {
         let left = ac.x < bc.x;
@@ -250,7 +247,6 @@ fn build_map(
     struct BlockView {
         info: FileInfo,
         name: String,
-        meta: String,
         rows: Vec<Row>,
         fold: Option<String>,
         fold_h: f64,
@@ -260,11 +256,6 @@ fn build_map(
     for block in &blocks {
         let info = graph.files[block.file as usize].clone();
         let name = file_name(&info.path).to_string();
-        let meta = format!(
-            "{} lines · {}",
-            info.lines,
-            plural(info.items as usize, "item")
-        );
         let rows: Vec<Row> = block
             .rows
             .iter()
@@ -281,14 +272,13 @@ fn build_map(
             })
             .collect();
         let fold = block.fold_words();
-        let (w, h, fold_h) = block_size(&name, &meta, &rows, fold.as_deref());
+        let (w, h, fold_h) = block_size(&name, &rows, fold.as_deref());
         measures.blocks.insert(block.file, (w, h));
         node_data.insert(
             block.file,
             BlockView {
                 info,
                 name,
-                meta,
                 rows,
                 fold,
                 fold_h,
@@ -329,30 +319,34 @@ fn build_map(
         }
     }
 
-    let district_label = |dir: &tree::DirNode| -> (String, String) {
+    // A crate tag only earns its place where there is more than one crate to
+    // tell apart; in a single-crate workspace it repeats the cartouche.
+    let multi_crate = graph
+        .files
+        .iter()
+        .map(|f| f.krate.as_str())
+        .collect::<HashSet<&str>>()
+        .len()
+        > 1;
+    let district_label = |dir: &tree::DirNode| -> String {
         // The directory as it is on disk, with the marker that folds it. The
         // root holds the whole survey and never folds, so it carries none.
-        let label = if dir.id == ROOT {
+        if dir.id == ROOT {
             workspace.to_string()
         } else {
             format!("▾ {}/", dir.name)
-        };
-        let meta = format!(
-            "{} · {}",
-            plural(dir.file_count as usize, "file"),
-            plural(dir_items[dir.id as usize] as usize, "item")
-        );
-        (label, meta)
+        }
     };
+    fn district_crate(dir: &tree::DirNode, multi_crate: bool) -> Option<&str> {
+        dir.krate.as_deref().filter(|_| multi_crate)
+    }
     for dir in &tree.dirs {
         if !open.contains(&dir.id) {
             continue;
         }
-        let (label, meta) = district_label(dir);
-        // The frame must be wide enough for the whole band, or the band will
-        // have to fold something later.
-        let mut band = LABEL_X + name_w(&label) + LABEL_GAP + meta_w(&meta) + LABEL_X;
-        if let Some(krate) = dir.krate.as_deref() {
+        // The frame must be wide enough for the whole band.
+        let mut band = LABEL_X + name_w(&district_label(dir)) + LABEL_X;
+        if let Some(krate) = district_crate(dir, multi_crate) {
             band += LABEL_GAP + crate_w(&crate_tag(krate));
         }
         measures.labels.insert(dir.id, band);
@@ -393,7 +387,6 @@ fn build_map(
                 CodeNodeData::Block {
                     info: view.info.clone(),
                     name: view.name.clone(),
-                    meta: view.meta.clone(),
                     rows: view.rows.clone(),
                     fold: view.fold.clone(),
                     fold_h: view.fold_h,
@@ -434,29 +427,14 @@ fn build_map(
         .iter()
         .map(|d| {
             let dir = &tree.dirs[d.dir as usize];
-            let (label, meta) = district_label(dir);
-            // Seat the band left to right, each segment clear of the last. A
-            // frame with no room for the counts drops them: a truncated name
-            // names nothing, and the crate tag outranks a repeated tally.
+            let label = district_label(dir);
+            // Two segments, seated left to right, the crate clear of the name.
             let after_name = LABEL_X + name_w(&label) + LABEL_GAP;
-            let tail = dir
-                .krate
-                .as_deref()
-                .map(|k| LABEL_GAP + crate_w(&crate_tag(k)))
-                .unwrap_or(0.0);
-            let room = d.at.w - LABEL_X;
-            let keep_meta = after_name + meta_w(&meta) + tail <= room;
-            let meta_end = if keep_meta {
-                after_name + meta_w(&meta) + LABEL_GAP
-            } else {
-                after_name
-            };
             DistrictView {
                 dir: d.dir,
                 at: d.at,
                 label,
-                meta: keep_meta.then_some((meta, after_name)),
-                krate: dir.krate.clone().map(|name| (name, meta_end)),
+                krate: district_crate(dir, multi_crate).map(|name| (name.to_string(), after_name)),
                 depth: d.depth,
                 root: d.dir == ROOT,
                 focal: sel_crate_dir == Some(d.dir),
@@ -489,10 +467,10 @@ fn build_map(
         }
     };
     let all_ties = model::ties(graph, containment, territory);
-    // A selected crate reads like the dependency chart's selection: only its
-    // own ties draw, in the direction the toggle asks for. A territory is the
-    // selection's when its file belongs to the crate, or its gate stands
-    // inside the crate's district. Without a selection every tie draws.
+    // A selected crate reads like the dependency chart's selection: it is the
+    // anchor, so only ties crossing its boundary draw, in the direction the
+    // reading asks for. A territory is the selection's when its file belongs to
+    // the crate, or its gate stands inside the crate's district.
     let in_sel = |t: Territory| -> bool {
         let Some(sel_dir) = sel_crate_dir else {
             return false;
@@ -510,7 +488,7 @@ fn build_map(
             },
         }
     };
-    let all_ties: Vec<model::Tie> = all_ties
+    let kept: Vec<model::Tie> = all_ties
         .into_iter()
         .filter(|tie| {
             if sel_crate_dir.is_none() {
@@ -523,19 +501,51 @@ fn build_map(
             }
         })
         .collect();
-    // The label bar: the heaviest handful state their counts at rest, so the
-    // labels stay data instead of texture. Every other tie still draws, and
-    // says its count when the reader hovers either end.
+
+    // Which ties rest on the paper. Direction alone cannot thin an unanchored
+    // map — every tie is one territory's use and another's users — so each
+    // territory becomes its own anchor and draws its heaviest few in the
+    // reading's direction. Everything else stays in the set and inks in when
+    // the reader hovers one of its ends. A crate selection is already an
+    // anchor, so its boundary set draws whole.
+    let resting: HashSet<usize> = match (sel_crate_dir, ref_dir.per_territory()) {
+        (None, Some(cap)) => {
+            let mut by_anchor: HashMap<Territory, Vec<usize>> = HashMap::new();
+            for (i, tie) in kept.iter().enumerate() {
+                // `uses` anchors on the territory writing the reference; `used
+                // by` anchors on the one being referenced.
+                let anchor = match ref_dir {
+                    RefDir::UsedBy => tie.def,
+                    _ => tie.user,
+                };
+                by_anchor.entry(anchor).or_default().push(i);
+            }
+            by_anchor
+                .into_values()
+                .flat_map(|mut idx| {
+                    idx.sort_unstable_by_key(|&i| (std::cmp::Reverse(kept[i].count), i));
+                    idx.into_iter().take(cap)
+                })
+                .collect()
+        }
+        _ => (0..kept.len()).collect(),
+    };
+
+    // The label bar: among the resting ties, the heaviest handful state their
+    // counts, so the labels stay data instead of texture. Every other resting
+    // tie says its count when the reader hovers either end.
     let label_bar = {
-        let mut counts: Vec<u32> = all_ties.iter().map(|t| t.count).collect();
+        let mut counts: Vec<u32> = resting.iter().map(|&i| kept[i].count).collect();
         counts.sort_unstable_by(|a, b| b.cmp(a));
         counts.get(TIE_LABELS).copied().unwrap_or(0).max(2)
     };
-    let ties: Vec<TieView> = all_ties
-        .into_iter()
-        .filter_map(|tie| {
+    let ties: Vec<TieView> = kept
+        .iter()
+        .enumerate()
+        .filter_map(|(i, tie)| {
             let (def, user) = (rect_of(tie.def)?, rect_of(tie.user)?);
             let (from, to) = tie_ends(def, user);
+            let rest = resting.contains(&i);
             Some(TieView {
                 key: format!("{:?}-{:?}", tie.def, tie.user),
                 def: tie.def,
@@ -544,7 +554,8 @@ fn build_map(
                 from,
                 to,
                 width: (0.55 + tie.count as f64 * 0.13).min(2.8),
-                labeled: tie.count > label_bar,
+                labeled: rest && tie.count > label_bar,
+                rest,
             })
         })
         .collect();
@@ -584,13 +595,13 @@ fn build_map(
 // Rendering.
 // ---------------------------------------------------------------------------
 
-/// One file's block: its name and size on the header, its landmarks engraved
-/// beneath, and the fold's own words at the foot.
+/// One file's block: its name on the header, its landmarks engraved beneath,
+/// and the fold's own words at the foot. The header states the name and whether
+/// the file changed — the tallies belong where something is actually hidden.
 #[component]
 fn BlockPlate(
     info: FileInfo,
     name: String,
-    meta: String,
     rows: Vec<Row>,
     fold: Option<String>,
     fold_h: f64,
@@ -611,7 +622,7 @@ fn BlockPlate(
                 a {
                     class: "cb-name",
                     href: file_route(&info.path).to_string(),
-                    title: "{info.path} · {info.lines} lines · focus this file",
+                    title: "{info.path} · {info.lines} lines · {plural(info.items as usize, \"item\")} · focus this file",
                     onclick: {
                         let path = path.clone();
                         move |e: Event<MouseData>| {
@@ -625,7 +636,6 @@ fn BlockPlate(
                         span { class: "cb-chg", title: "changed since the diff base", "M" }
                     }
                 }
-                span { class: "cb-meta", "{meta}" }
             }
             for row in rows.iter() {
                 a {
@@ -662,7 +672,6 @@ fn CodeNode(ctx: NodeViewCtx<CodeNodeData>) -> Element {
         CodeNodeData::Block {
             info,
             name,
-            meta,
             rows,
             fold,
             fold_h,
@@ -672,7 +681,6 @@ fn CodeNode(ctx: NodeViewCtx<CodeNodeData>) -> Element {
             BlockPlate {
                 info,
                 name,
-                meta,
                 rows,
                 fold,
                 fold_h,
@@ -754,14 +762,6 @@ fn DistrictLayer(districts: Vec<DistrictView>) -> Element {
                         },
                         "{d.label}"
                     }
-                    if let Some((meta, dx)) = d.meta.clone() {
-                        text {
-                            class: "district-meta",
-                            x: "{d.at.x + dx}",
-                            y: "{d.at.y + 4.0}",
-                            "{meta}"
-                        }
-                    }
                     if let Some((krate, dx)) = d.krate.clone() {
                         text {
                             class: "district-crate",
@@ -831,6 +831,7 @@ fn TieLayer(ties: Vec<TieView>, hot: Signal<Option<Territory>>) -> Element {
                         g {
                             key: "{tie.key}",
                             class: "code-tie",
+                            class: if !tie.rest { "is-folded" },
                             class: if !tie.labeled { "is-quiet" },
                             class: if is_hot { "is-hot" },
                             path {
@@ -871,7 +872,10 @@ fn chrome_insets(narrow: bool, focused: bool) -> (f64, f64, f64, f64) {
     }
 }
 
-fn narrow_viewport() -> bool {
+/// What the browser says about the window it is drawing in. Every chart that
+/// reserves room for its furniture needs the same three answers, so they are
+/// asked once here.
+pub(crate) fn narrow_viewport() -> bool {
     #[cfg(target_arch = "wasm32")]
     {
         web_sys::window()
@@ -884,7 +888,7 @@ fn narrow_viewport() -> bool {
     false
 }
 
-fn prefers_reduced_motion() -> bool {
+pub(crate) fn prefers_reduced_motion() -> bool {
     #[cfg(target_arch = "wasm32")]
     {
         web_sys::window()
@@ -897,7 +901,7 @@ fn prefers_reduced_motion() -> bool {
     false
 }
 
-fn window_size() -> Option<(f64, f64)> {
+pub(crate) fn window_size() -> Option<(f64, f64)> {
     #[cfg(target_arch = "wasm32")]
     {
         let window = web_sys::window()?;

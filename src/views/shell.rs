@@ -10,7 +10,7 @@ use crate::Route;
 use crate::api::{WorkspaceGraph, workspace_graph};
 use crate::views::atlas::Chart;
 use crate::views::chrome::{Legend, SearchBox, TitleBlock};
-use crate::views::codemap::CodeShell;
+use crate::views::survey::SurveyShell;
 
 type GraphResource = Resource<Result<WorkspaceGraph, ServerFnError>>;
 
@@ -190,9 +190,14 @@ pub fn AtlasShell() -> Element {
     // silently drop the trail's first step. The code altitude keeps its own
     // selection state; it never writes the dependency trail.
     let route = use_route::<Route>();
-    let code_route = matches!(
+    // The two altitudes that read the code survey. One shell serves both, so
+    // stepping between them never re-runs the survey fetch.
+    let survey_route = matches!(
         &route,
-        Route::CodeOverview {} | Route::CodeCrate { .. } | Route::CodeFile { .. }
+        Route::CodeOverview {}
+            | Route::CodeCrate { .. }
+            | Route::CodeFile { .. }
+            | Route::DataOverview {}
     );
     let step: Option<TrailStep> = match &route {
         Route::Overview {} => Some(None),
@@ -244,16 +249,17 @@ pub fn AtlasShell() -> Element {
                 Some(Err(err)) => rsx! {
                     SurveyFailed { message: err.to_string(), resource }
                 },
-                Some(Ok(graph)) if code_route => {
-                    // The code altitude: its own shell, chart, and furniture.
-                    // The workspace's identity and epoch ride along so both
-                    // altitudes stamp the same cartouche facts.
+                Some(Ok(graph)) if survey_route => {
+                    // The code and data altitudes: one survey shell, and its
+                    // own chart and furniture inside. The workspace's identity
+                    // and epoch ride along so every altitude stamps the same
+                    // cartouche facts.
                     let diff_line = format!(
                         "diff {} → {}",
                         graph.epoch.base, graph.epoch.target
                     );
                     rsx! {
-                        CodeShell { workspace: graph.name.clone(), diff_line }
+                        SurveyShell { workspace: graph.name.clone(), diff_line }
                     }
                 }
                 Some(Ok(graph)) => {

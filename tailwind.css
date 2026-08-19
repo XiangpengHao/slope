@@ -342,8 +342,7 @@ details.fold:not([open]) > summary::after {
 .atlas .cb-head {
   display: flex;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 4px;
   flex: none;
   padding-bottom: 3px;
   margin-bottom: 4px;
@@ -366,13 +365,6 @@ details.fold:not([open]) > summary::after {
   color: var(--color-flare);
   font-weight: 700;
   margin-left: 4px;
-}
-.atlas .cb-meta {
-  flex: none;
-  font-size: 8.5px;
-  letter-spacing: 0.06em;
-  color: var(--color-ink-soft);
-  white-space: nowrap;
 }
 /* Landmark rows: engraved weight follows fan-in, in three tiers. */
 .atlas .cb-row {
@@ -419,6 +411,16 @@ details.fold:not([open]) > summary::after {
   letter-spacing: 0.02em;
   color: var(--color-ink-soft);
   overflow: hidden;
+}
+
+/* A block whose items all folded away has nothing between its two rules; one
+   rule is enough to divide a name from the count under it. */
+.atlas .code-block:not(:has(.cb-row)) .cb-head {
+  border-bottom: none;
+  margin-bottom: 0;
+}
+.atlas .code-block:not(:has(.cb-row)) .cb-fold {
+  border-top: none;
 }
 
 /* A folded directory: one gate carrying its counts. */
@@ -474,7 +476,6 @@ details.fold:not([open]) > summary::after {
   stroke-width: 1.4;
 }
 .atlas .district-label,
-.atlas .district-meta,
 .atlas .district-crate {
   paint-order: stroke;
   stroke: var(--color-paper);
@@ -499,13 +500,8 @@ details.fold:not([open]) > summary::after {
   text-decoration: underline;
   text-underline-offset: 4px;
 }
-.atlas .district-meta {
-  font-family: var(--font-data);
-  font-size: 9px;
-  letter-spacing: 0.1em;
-  fill: var(--color-ink-soft);
-}
-/* The crate name, spelled the way cargo spells it. */
+/* The crate name, spelled the way cargo spells it. Drawn only where the survey
+   has more than one crate to tell apart. */
 .atlas .district-crate {
   font-family: var(--font-data);
   font-size: 10px;
@@ -520,12 +516,22 @@ details.fold:not([open]) > summary::after {
 }
 
 /* Ties: territory to territory, summed, the arrowhead resting on the user.
-   They draw over the district tints and under the blocks. */
+   Both world layers sit under the flow viewport, so a tie draws over the
+   district tints and under the blocks — never across a file's own rows. Ties
+   come after the ground in the DOM, which is what stacks them above it. */
 .atlas .df-world-layer.code-ties {
-  z-index: 1;
+  z-index: 0;
 }
 .atlas .code-tie {
   animation: edge-ink 400ms ease-out;
+}
+/* A tie the reading folded away: still in the set, drawn the moment the reader
+   hovers either of its ends. The fold is reachable, never silently cut. */
+.atlas .code-tie.is-folded {
+  display: none;
+}
+.atlas .code-tie.is-folded.is-hot {
+  display: inline;
 }
 .atlas .code-tie .tie-path,
 .atlas .code-tie .tie-head {
@@ -573,11 +579,246 @@ details.fold:not([open]) > summary::after {
   }
 }
 
+/* ————— The data altitude: type marks, module frames, holding edges. —————
+
+   Every number here is also in `views/datamap/map.rs`, which measures a block
+   before the layout places it: a plate taller than its box would stand on its
+   neighbour. Move one and the other must follow. */
+
+.atlas .data-node {
+  width: 100%;
+  height: 100%;
+}
+.atlas .data-mark {
+  display: block;
+  overflow: hidden;
+  background: var(--color-paper);
+  border: 1px solid var(--color-ink-line);
+  padding: 5px 7px 4px;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.atlas .data-mark:hover {
+  border-color: var(--color-ink);
+}
+/* A static is a root — state no type holds. The 2.5px ink left edge is the
+   gate's own mark, reused: this is where a chain of holding begins. */
+.atlas .data-mark.is-root {
+  border-left: 2.5px solid var(--color-ink);
+  padding-left: 5.5px;
+}
+.atlas .dm-head {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  height: 16px;
+  font-size: 10.5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.atlas .dm-kw {
+  flex: none;
+  color: var(--color-ink-soft);
+}
+.atlas .dm-nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 700;
+  color: var(--color-ink);
+}
+.atlas .data-mark:hover .dm-nm {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.atlas .dm-chg {
+  flex: none;
+  color: var(--color-flare);
+  font-weight: 700;
+}
+/* A static's declared type, quoted as written. It breaks anywhere, because a
+   generic type has no spaces to break at. */
+.atlas .dm-ty {
+  font-size: 9.5px;
+  line-height: 14px;
+  color: var(--color-ink-soft);
+  overflow-wrap: anywhere;
+}
+.atlas .dm-ty,
+.atlas .dm-row {
+  color: var(--color-ink-soft);
+}
+/* One holding field, quoted: its name, then its declared type with the one run
+   that names the held type at full ink. */
+.atlas .dm-row {
+  font-size: 10px;
+  line-height: 15px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.atlas .dm-fname {
+  color: var(--color-ink-soft);
+}
+.atlas .dm-held {
+  color: var(--color-ink);
+  font-weight: 500;
+}
+/* An enum's variants, as written, read across the block. */
+.atlas .dm-var {
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--color-ink-soft);
+}
+/* What the mark holds back, counted. A mark that hides nothing draws no rule. */
+.atlas .dm-folds {
+  margin-top: 3px;
+  padding-top: 2px;
+  border-top: 1px dotted color-mix(in srgb, var(--color-ink-line) 70%, transparent);
+}
+.atlas .dm-fold {
+  font-size: 9px;
+  line-height: 12px;
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.atlas .dm-loc {
+  height: 14px;
+  padding-top: 2px;
+  font-size: 8.5px;
+  line-height: 12px;
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* A frame's counted fold row: the private types it never draws, or the quiet
+   ones the budget folded. Every edge that touches one lands here. */
+.atlas .data-foldrow {
+  display: flex;
+  align-items: center;
+  background: var(--color-paper);
+  border: 1px dotted var(--color-ink-line);
+  padding: 3px 8px;
+  font-size: 9.5px;
+  line-height: 14px;
+  color: var(--color-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+}
+
+/* The ground: crate and module frames, tinted like the code map's districts so
+   nesting reads as depth without a second material. */
+.atlas .df-world-layer.data-ground {
+  z-index: 0;
+}
+.atlas .df-world-layer.data-ground svg,
+.atlas .df-world-layer.data-wires svg {
+  pointer-events: none;
+}
+.atlas .data-frame {
+  fill: color-mix(in srgb, var(--color-ink) 2.6%, transparent);
+  stroke: var(--color-ink-line);
+  stroke-width: 1;
+}
+/* The label chips onto the border: rust's own words for the module, with a
+   paper halo so the border reads as interrupted rather than crossed. */
+.atlas .data-frame-label {
+  font-family: var(--font-data);
+  font-size: 12px;
+  font-weight: 500;
+  fill: var(--color-ink);
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 6px;
+  stroke-linejoin: round;
+}
+
+/* The two edge families, over the frame tints and under the blocks. Holds is
+   structure and rests at full pressure; the reference reading rests at half,
+   so the two never read as one family. Neither ever takes a colour. */
+.atlas .df-world-layer.data-wires {
+  z-index: 0;
+}
+.atlas .data-wire {
+  animation: edge-ink 400ms ease-out;
+}
+.atlas .data-wire .wire-path {
+  fill: none;
+  stroke: var(--color-ink-line);
+}
+.atlas .data-wire .wire-head {
+  fill: var(--color-ink-line);
+  stroke: none;
+}
+.atlas .data-wire .wire-label {
+  font-family: var(--font-data);
+  font-size: 9.5px;
+  fill: var(--color-ink-soft);
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+/* Kind is dash grammar; the wrapper writes its own word on the line. */
+.atlas .data-wire.is-shares .wire-path,
+.atlas .data-wire.is-dyn .wire-path {
+  stroke: var(--color-ink-soft);
+  stroke-dasharray: 6 4;
+}
+.atlas .data-wire.is-shares .wire-head,
+.atlas .data-wire.is-dyn .wire-head {
+  fill: var(--color-ink-soft);
+}
+.atlas .data-wire.is-borrows .wire-path {
+  stroke: var(--color-ink-soft);
+  stroke-dasharray: 1.6 3;
+}
+.atlas .data-wire.is-borrows .wire-head {
+  fill: var(--color-ink-soft);
+}
+.atlas .data-wire.is-ref .wire-path,
+.atlas .data-wire.is-ref .wire-head {
+  opacity: 0.45;
+}
+/* A wire the chart folded away — a hub's fan-in, or a tie outside the current
+   reading — stays in the set and is given back on hover of either end. */
+.atlas .data-wire.is-folded {
+  display: none;
+}
+.atlas .data-wire.is-folded.is-hot {
+  display: inline;
+}
+.atlas .data-wire.is-hot .wire-path {
+  stroke: var(--color-ink);
+}
+.atlas .data-wire.is-hot .wire-head {
+  fill: var(--color-ink);
+}
+.atlas .data-wire.is-hot .wire-path,
+.atlas .data-wire.is-hot .wire-head {
+  opacity: 1;
+}
+.atlas .data-wire.is-hot .wire-label {
+  fill: var(--color-ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .atlas .data-wire {
+    animation: none;
+  }
+}
+
 /* ————— The focus plate: one selection, quoted. ————— */
 
-.atlas .ego-group {
-  border: 1px solid var(--color-ink-line);
-  background: var(--color-paper);
+/* A group is a section of one list, divided by a rule — not a plate inside the
+   page's own paper. Nine boxed groups in a column was nine frames drawn to say
+   what one rule each says. */
+.atlas .ego-group + .ego-group {
+  margin-top: 10px;
 }
 /* The group header is a file path. A path is never uppercased. */
 .atlas .ego-group-head {
@@ -585,8 +826,18 @@ details.fold:not([open]) > summary::after {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  padding: 4px 9px;
-  border-bottom: 1px solid color-mix(in srgb, var(--color-ink-line) 55%, transparent);
+  padding-bottom: 3px;
+  border-bottom: 1px solid var(--color-ink-line);
+  font-family: var(--font-data);
+  font-size: 9.5px;
+  color: var(--color-ink-soft);
+}
+.atlas .ego-group-rows {
+  padding: 2px 0 0;
+}
+/* What the group holds back: private items, counted once, never named. */
+.atlas .ego-group-fold {
+  padding: 1px 4px 0;
   font-family: var(--font-data);
   font-size: 9.5px;
   color: var(--color-ink-soft);
@@ -627,11 +878,6 @@ details.fold:not([open]) > summary::after {
   font-size: 9.5px;
   color: var(--color-ink-soft);
 }
-/* A lifted private reference names nothing — it is still a count, in the
-   same hand as every other count. */
-.atlas .ego-row.is-lifted .ego-row-name {
-  color: var(--color-ink-soft);
-}
 .atlas .ego-row.is-more {
   font-size: 9.5px;
   color: var(--color-ink-soft);
@@ -650,13 +896,19 @@ details.fold:not([open]) > summary::after {
    would show it. The gutter counts from the item's first line in the real
    file and stays put while the code scrolls under it. Long definitions
    scroll inside the pane rather than being cut. */
+.atlas .ego-center {
+  min-width: 0;
+}
 .atlas .ego-code {
   margin: 0;
   max-height: 70vh;
   overflow: auto;
-  border: 1px solid var(--color-ink-line);
+  border: 1px solid var(--color-ink);
+  box-shadow:
+    inset 0 0 0 2.5px var(--color-paper),
+    inset 0 0 0 3.25px color-mix(in srgb, var(--color-ink) 45%, transparent);
   background: var(--color-paper);
-  padding: 7px 0;
+  padding: 9px 0;
   font-family: var(--font-data);
   font-size: 12px;
   line-height: 1.55;
@@ -698,6 +950,10 @@ details.fold:not([open]) > summary::after {
 }
 .atlas .ego-expand .ego-code {
   max-height: 40vh;
+  border: none;
+  border-left: 2.5px solid var(--color-ink-line);
+  box-shadow: none;
+  padding: 4px 0;
 }
 .atlas .ego-expand-foot {
   margin-top: 3px;
@@ -808,9 +1064,18 @@ details.fold:not([open]) > summary::after {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.atlas .ego-member-refs,
+.atlas .ego-member-refs {
+  flex: none;
+  font-size: 9.5px;
+  color: var(--color-ink-soft);
+}
+/* The line, in the plate's own locator idiom: the header names the file,
+   the row completes it. Set apart from the ref count so the two never read as
+   one run of digits. */
 .atlas .ego-member-line {
   flex: none;
+  width: 42px;
+  text-align: right;
   font-size: 9.5px;
   color: var(--color-ink-soft);
 }

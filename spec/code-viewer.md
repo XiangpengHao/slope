@@ -5,7 +5,10 @@ streets-and-dots plan with its cutaway list was rejected and replaced by
 nested territories plus a focus plate. **Reworked 2026-08-19** (audit): the
 focus plate now quotes the item's own source instead of describing it, and
 every invented label was replaced by the word rust, cargo, or the VCS already
-uses. The second altitude of the review ladder: crates → **files → items**.
+uses. **Distilled 2026-08-19**: a count is drawn only where something is
+hidden, the ambient tie layer became a reading with a per-block bar, and the
+legend stopped restating what the drawing already says. The second altitude of
+the review ladder: crates → **files → items**.
 
 ## Job and audience
 
@@ -54,31 +57,51 @@ mode: **Operate**.
 2. **Privacy is a permanent fold.** Private items never draw as marks
    anywhere. Their cross-container references lift — to their type if the type
    is visible, else to their file — and stay counted, because a file whose
-   private helpers call another module is still coupled to it. In lists, the
-   lifted references show as one row named `private items`, with its own
-   count.
+   private helpers call another module is still coupled to it. In lists they are
+   the group's counted fold, `+ 96 private` (distilled 2026-08-19): a row named
+   `private items` names nothing, and it appeared in eight of nine groups on a
+   plate, usually as the loudest row in each.
 3. **Cartographic generalization.** The ambient map engraves only landmarks
    whose interest clears the altitude's bar: interest = item-level fan-in +
    visibility (`pub` 2, `pub(crate)` 1) + 2 if the diff touched the file. The
    bar is the whole map's (a mark budget, ~210 rows) with a per-block cap of 7,
    and every block still names its loudest item so no block goes mute.
-   Everything else folds into a counted line — "+ 27 private", "+ 14
-   quieter pub", "+ 9 quieter pub · 5 private". Counts only: a fold that
-   does not count what it hides is a lie by omission, but the sentence saying
-   where a private item's references went is the legend's, said once, not
-   repeated by fifteen blocks.
-4. **Ambient coupling, aggregated.** The map always draws territory-to-
-   territory ties: curved hairlines, width by count, the arrowhead resting on
-   the **user** (the way change travels). No global item-level spaghetti,
-   ever. The heaviest dozen ties carry their `×n` at rest and draw at full
-   weight; lighter ties draw at half and keep their count until the reader
-   hovers either end, and hovering a block brings its own ties up to full ink.
-   A selected crate reads like the dependency chart's selection (2026-08-19):
-   only ties touching the crate draw, and its sheet carries a references
-   toggle — uses / used by / both (default both), the code altitude's version
-   of the dependency chart's edges toggle. A tie is the crate's when its file
-   block belongs to the crate or its gate stands inside the crate's district.
-   Deselecting restores every tie.
+   Everything else folds into a counted line — "+ 27 private", "+ 14 pub",
+   "+ 9 pub · 5 private". Counts only, in rust's own word: a fold that does not
+   count what it hides is a lie by omission, but the sentence saying what "pub"
+   means here, and where a private item's references went, is the legend's, said
+   once, not repeated by fifteen blocks.
+   **Count only what is hidden** (distilled 2026-08-19): a fold counts, and
+   nothing else does. A block's header carries its name and its `M`, never a
+   `254 lines · 31 items` that competed with the name for width and won — the
+   name was the half that got clipped. An open district frame names itself and
+   stops: its files are on the paper to be counted. A folded gate still counts,
+   because a gate is where the elision is. Line and item totals live in one
+   place each — the cartouche for the workspace, the crate sheet's file list per
+   file, the focus plate's facts line for the file in focus.
+4. **Ambient coupling, as a reading** (reworked 2026-08-19, user decision).
+   Ties are territory-to-territory: curved hairlines, width by count, the
+   arrowhead resting on the **user** (the way change travels), aggregated — no
+   global item-level spaghetti, ever. But *every* aggregated tie at rest was a
+   hairball: ~100 curves over 18 files, counts floating unattributable to any
+   one of them, which is the whole-graph-at-once the product's first principle
+   forbids. So the map carries a **references** toggle — `uses` (default) /
+   `used by` / `both` — and it is a reading, not a filter. Direction alone
+   cannot thin an unanchored map, because `ties()` already holds one tie per
+   ordered (definition, user) pair: every tie is somebody's use and somebody
+   else's users, so a global direction filter is the identity. Each mode
+   therefore anchors on the territories themselves — under `uses` a block draws
+   the two heaviest files it leans on, under `used by` the two heaviest that
+   lean on it, and `both` draws every tie unthinned. Nothing is cut: a folded
+   tie stays in the set and inks in, with its count, when the reader hovers
+   either of its ends, and the legend says so. The heaviest dozen *resting*
+   ties carry their count on the paper; the rest keep it until hovered. A
+   selected crate is already an anchor, so its boundary set draws whole in the
+   reading's direction — a tie is the crate's when its file block belongs to the
+   crate or its gate stands inside the crate's district. The toggle rides on the
+   cartouche, because it acts on the whole plate; the crate sheet no longer
+   carries it, and a crate with no boundary references says so in one line
+   instead of two empty headings over a control with nothing to act on.
 5. **Selection becomes a definition plate.** Center plate = the item's own
    source text, sliced from the file the survey read and lexed on the server:
    doc comment, attributes, signature, and body, exactly as written, with a
@@ -100,24 +123,23 @@ mode: **Operate**.
 ## The map
 
 - **Directory frames**: one per open directory, faint ink tint, its name on
-  the border exactly as it is on disk (`▾ views/`, mono, lowercase) with its
-  file and item counts beside it. The label folds the directory; the crate
-  name (`slopify`, mono) on the shallowest directory holding all of a crate's
-  files climbs to the crate sheet. The root frame carries the workspace.
-- The label band (name, counts, crate tag) is measured per segment on its own
-  face and tracking — these are tracked caps, and tracking is most of their
-  width — and each segment is placed clear of the last, with the frame widened
-  to hold the whole band. A frame with no room drops the counts entirely: a
-  truncated name names nothing, and the halo of an overlapping segment eats
-  the name it overlaps.
+  the border exactly as it is on disk (`▾ views/`, mono, lowercase) and nothing
+  else. The label folds the directory; the crate name (`slopify`, mono) on the
+  shallowest directory holding all of a crate's files climbs to the crate sheet,
+  and is drawn only where the survey has more than one crate to tell apart. The
+  root frame carries the workspace.
+- The label band (name, crate tag) is measured per segment on its own face, and
+  the crate is placed clear of the name with the frame widened to hold both.
 - **Blocks**: one per visible file. Header = name (amber `M` if the file
-  changed since the diff base) + `254 lines · 31 items`. Then landmark rows,
+  changed since the diff base). Then landmark rows,
   each written as rust — `pub fn parse`, `struct Trail`, `pub(crate) mod
   tree` — the keyword and visibility in soft ink, the name in ink, engraved in
   three weight tiers by fan-in, each row a link to that item's definition
   plate. Then the fold's own words.
 - **Gates**: a folded directory becomes one bordered row — "▸ views/" over
-  "12 files · 255 items" — and every tie into anything inside it lands there.
+  "12 files · 255 items", the one place on the ground that counts, because it is
+  the one place that hides something — and every tie into anything inside it
+  lands there.
   Clicking opens it. Disclosure is budgeted: the first paint keeps the visible
   mark count under ~320 by folding the deepest directories.
 - Blocks are measured before they are placed (name width, row widths, wrapped
@@ -156,11 +178,30 @@ mode: **Operate**.
   the row again folds it; Escape folds all open quotations before it climbs.
   Expansion is view state, not a URL.
 - Both directions always show, so the plate's REFS toggle is gone. (`RefDir`
-  returned 2026-08-19 as the map's crate-selection toggle; the plate's columns
-  are not affected by it.)
+  returned 2026-08-19 as the map's reading toggle; the plate's columns are not
+  affected by it.)
 - Same-file references come from the file detail and are grouped by the same
   rules as the rest of the workspace.
 - Private members are counted, never named: `+ 3 private`.
+- **The columns' rows name things** (distilled 2026-08-19). References that lift
+  to a file's private items used to take a row called `private items` in every
+  group — eight of nine groups on a plate, and usually the loudest row in each,
+  so the column's dominant content named nothing. They are now the group's own
+  counted fold, `+ 96 private`, in the same grammar the map's blocks use.
+- A reference group is a section of one list — a header, a rule, its rows — not
+  a plate. Nine boxed groups down a column drew nine frames to say what one rule
+  each says, and nested a card inside the page's own paper. Both columns set
+  their type left: the column's side of the plate carries the direction, so a
+  heading never floats away from the rows it names and a path is read the way a
+  path is read.
+- The centre track holds exactly one frame, and it is the quotation's: the
+  double-ruled plate *is* the code pane, so a quotation is not a frame inside a
+  frame 20px away from it. A whole-file focus, which has no quotation, keeps its
+  outline on the page's bare paper under the facts line. The page runs to 1460px
+  with 240px columns, so the quotation gets the width instead of the furniture.
+- An outline row's two numbers read as two: `87 refs` then `:29`, the plate's own
+  `path:line` idiom completed by the row, never `87 refs 29` running together as
+  one column of digits.
 
 ## Routes
 

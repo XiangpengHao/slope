@@ -53,32 +53,47 @@ pub(crate) fn decl_words(vis: Vis, kind: ItemKind) -> String {
     }
 }
 
-/// The altitude line: the ladder between the two charts. The current rung
-/// is engraved solid; the other is a link.
+/// Which rung of the ladder a cartouche stands on.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Altitude {
+    /// `/` — crates on rings of hops.
+    Deps,
+    /// `/code` — files and items as nested territory.
+    Code,
+    /// `/data` — types, and what holds what.
+    Data,
+}
+
+/// The altitude line: the ladder between the three charts, and the only
+/// navigation between them. The current rung is engraved solid; the others are
+/// links.
 #[component]
-pub fn AltitudeSwitch(code: bool) -> Element {
-    rsx! {
-        p { class: "flex gap-3 font-data text-[9.5px] tracking-[0.14em] uppercase",
-            if code {
-                Link {
-                    class: "text-ink-soft underline-offset-4 hover:text-ink hover:underline",
-                    to: Route::Overview {},
-                    "dependencies"
-                }
-                span { class: "text-ink underline underline-offset-4", "code" }
+pub fn AltitudeSwitch(at: Altitude) -> Element {
+    let rung = |label: &'static str, to: Route, mine: Altitude| {
+        rsx! {
+            if at == mine {
+                span { class: "text-ink underline underline-offset-4", "{label}" }
             } else {
-                span { class: "text-ink underline underline-offset-4", "dependencies" }
                 Link {
                     class: "text-ink-soft underline-offset-4 hover:text-ink hover:underline",
-                    to: Route::CodeOverview {},
-                    "code"
+                    to,
+                    "{label}"
                 }
             }
+        }
+    };
+    rsx! {
+        p { class: "flex gap-3 font-data text-[9.5px] tracking-[0.14em] uppercase",
+            {rung("dependencies", Route::Overview {}, Altitude::Deps)}
+            {rung("code", Route::CodeOverview {}, Altitude::Code)}
+            {rung("data", Route::DataOverview {}, Altitude::Data)}
         }
     }
 }
 
-/// The code map's title block.
+/// The code map's title block. It holds the survey's totals — the map itself no
+/// longer repeats them on every frame and every block — and the reading control
+/// for the map's ties, which acts on the whole plate and so belongs here.
 #[component]
 pub fn CodeCartouche(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
     let files = graph.files.len();
@@ -86,34 +101,31 @@ pub fn CodeCartouche(graph: CodeGraph, workspace: String, diff_line: String) -> 
         graph.files.iter().map(|f| f.krate.as_str()).collect();
     let lines: u64 = graph.files.iter().map(|f| f.lines as u64).sum();
     let items = graph.items.len();
-    let pubs = graph
-        .items
-        .iter()
-        .filter(|i| i.vis == crate::api::Vis::Pub)
-        .count();
     let changed = graph.files.iter().filter(|f| f.changed).count();
 
     rsx! {
-        section { class: "plate pointer-events-auto px-4 py-3",
-            h1 { class: "font-chart text-[19px] leading-tight tracking-[0.18em] uppercase text-ink",
-                "{workspace}"
-            }
-            p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
-                "{plural(files, \"file\")} · {plural(crates.len(), \"crate\")}"
-            }
-            div { class: "mt-2 space-y-1 border-t border-ink-line pt-2 font-data text-[10.5px] leading-relaxed text-ink",
-                AltitudeSwitch { code: true }
-                p {
-                    span { class: "text-ink-soft", "surveyed " }
-                    "{lines} lines · {items} items, {pubs} pub"
+        section { class: "plate pointer-events-auto",
+            div { class: "px-4 pt-3 pb-2",
+                h1 { class: "font-chart text-[19px] leading-tight tracking-[0.18em] uppercase text-ink",
+                    "{workspace}"
                 }
-                p { class: "text-ink-soft", "{diff_line}" }
-                if changed > 0 {
-                    p { class: "text-flare", "{plural(changed, \"file\")} changed" }
-                } else {
-                    p { class: "text-ink-soft", "no files changed" }
+                p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
+                    "{plural(files, \"file\")} · {items} items · {lines} lines"
+                    if crates.len() > 1 {
+                        " · {plural(crates.len(), \"crate\")}"
+                    }
+                }
+                div { class: "mt-2 space-y-1 border-t border-ink-line pt-2 font-data text-[10.5px] leading-relaxed text-ink",
+                    AltitudeSwitch { at: Altitude::Code }
+                    p { class: "text-ink-soft", "{diff_line}" }
+                    if changed > 0 {
+                        p { class: "text-flare", "{plural(changed, \"file\")} changed" }
+                    } else {
+                        p { class: "text-ink-soft", "no files changed" }
+                    }
                 }
             }
+            RefDirToggle {}
         }
     }
 }
@@ -308,8 +320,10 @@ fn UsageRow(gesture: &'static str, effect: &'static str) -> Element {
     }
 }
 
-/// The key: every mark the map can draw, named in words, plus the survey's
-/// own honesty notes.
+/// The key: every mark the map can draw that the map cannot state for itself,
+/// plus the survey's own honesty notes. What the drawing already says — a block
+/// is a file, a frame is its directory, a row is written as rust — is not
+/// repeated here in prose.
 #[component]
 pub fn CodeLegend(graph: CodeGraph, #[props(default = true)] start_open: bool) -> Element {
     rsx! {
@@ -319,30 +333,39 @@ pub fn CodeLegend(graph: CodeGraph, #[props(default = true)] start_open: bool) -
             summary { class: "cursor-pointer select-none px-4 py-2 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
                 "Reading this map"
             }
-            // The key reads first — every mark and line named in words — then
-            // the gestures, then the survey's own honesty notes.
-            div { class: "legend-scroll space-y-2.5 px-4 font-data text-[10px] leading-snug text-ink sm:max-h-[42dvh]",
-                p {
-                    "a block is one file; the frame around it is its directory. an item row is written as rust: "
-                    span { class: "text-ink", "pub fn parse" }
-                    "."
-                }
-                div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
+            // The key first — the marks that need naming — then the gestures,
+            // then the survey's own honesty notes.
+            div { class: "legend-scroll space-y-2.5 px-4 font-data text-[10px] leading-snug text-ink max-h-[42dvh] sm:max-h-[calc(100dvh_-_260px)]",
+                div { class: "space-y-1.5",
                     div { class: "flex items-center gap-2",
                         TieSample { width: 1.9 }
                         span { "n — references between two files, summed" }
                     }
                     p { class: "text-ink-soft",
-                        "the arrow rests on the user — the way change travels. fold a directory and the references into everything inside it gather onto its gate; open it and they redistribute."
+                        "the arrow rests on the user — the way change travels."
+                    }
+                    p { class: "text-ink-soft",
+                        "the references toggle sets the reading: "
+                        span { class: "text-ink", "uses" }
+                        " and "
+                        span { class: "text-ink", "used by" }
+                        " draw each block\u{2019}s two heaviest ties, "
+                        span { class: "text-ink", "both" }
+                        " draws every one. hover a block for all of its ties."
+                    }
+                    p { class: "text-ink-soft",
+                        "fold a directory and the references into everything inside it gather onto its gate, which counts what it holds."
                     }
                 }
                 div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
                     p {
-                        span { class: "font-medium", "+ n private" }
-                        " — a block\u{2019}s last line counts what it hides: items too quiet for this altitude, and every private one."
+                        span { class: "font-medium", "+ 4 pub · 5 private" }
+                        span { class: "text-ink-soft",
+                            " — a block\u{2019}s last line counts what it holds back: pub items too quiet for this altitude, and every private one."
+                        }
                     }
                     p { class: "text-ink-soft",
-                        "private items are never drawn — that fold is permanent — but their references to other files still count, which is why a block can be tied to a module none of its named items mention."
+                        "private items are never drawn, but their references to other files still count — which is why a block can be tied to a module none of its named items mention."
                     }
                     p {
                         span { class: "text-flare", "M" }
@@ -350,13 +373,13 @@ pub fn CodeLegend(graph: CodeGraph, #[props(default = true)] start_open: bool) -
                     }
                 }
                 div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
-                    UsageRow { gesture: "click a file", effect: "focus it — its items, and both directions of its references" }
-                    UsageRow { gesture: "click an item", effect: "focus that item — its source, and what uses it" }
+                    // Only what clicking around does not already teach: a file
+                    // and an item announce their own focus the first time the
+                    // reader clicks one.
                     UsageRow { gesture: "click a directory", effect: "fold it to a counted gate; click the gate to open" }
-                    UsageRow { gesture: "hover a block", effect: "its ties come up to full ink, lighter ties show their counts" }
-                    UsageRow { gesture: "back / esc", effect: "step back up" }
-                    UsageRow { gesture: "← · →", effect: "back · forward through the review" }
+                    UsageRow { gesture: "hover a block", effect: "all of its ties, at full ink, with their counts" }
                     UsageRow { gesture: "/ · f", effect: "find a file or item · refit the map" }
+                    UsageRow { gesture: "← · → · esc", effect: "back · forward · step back up" }
                 }
                 div { class: "space-y-1 border-t border-ink-line pt-2.5 text-ink-soft",
                     for note in graph.notes.iter() {
@@ -403,10 +426,10 @@ fn RefList(rows: Vec<(Route, String, String, u32)>) -> Element {
     }
 }
 
-/// Which of the selected crate's ties the map draws. It rides on the crate
-/// sheet, because it has nothing to act on without a selection — the same
-/// grammar as the dependency chart's edges toggle. Active segment wears a
-/// 1px ink border — no fills on this plate, ever.
+/// Which reading of the map's ties is drawn. It rides on the cartouche because
+/// it acts on the whole plate: each block draws its heaviest ties in the chosen
+/// direction, and hovering a block reveals the rest. `both` is the unthinned
+/// picture. Active segment wears a 1px ink border — no fills on this plate.
 #[component]
 pub fn RefDirToggle() -> Element {
     let code = use_code();
@@ -430,14 +453,14 @@ pub fn RefDirToggle() -> Element {
         div {
             class: "border-t border-ink-line px-4 py-1.5",
             role: "group",
-            "aria-label": "which of the crate's references the map draws",
+            "aria-label": "which reading of the map's references is drawn",
             span { class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
                 "references"
             }
             div { class: "mt-1 flex items-stretch gap-0.5",
-                {seg("uses", "only references its code makes to other crates", RefDir::Uses)}
-                {seg("used by", "only references into its code from other crates", RefDir::UsedBy)}
-                {seg("both", "both directions of its references", RefDir::Both)}
+                {seg("uses", "each file's heaviest references out — what it leans on", RefDir::Uses)}
+                {seg("used by", "each file's heaviest references in — who leans on it", RefDir::UsedBy)}
+                {seg("both", "every reference between files, unthinned", RefDir::Both)}
             }
         }
     }
@@ -523,27 +546,34 @@ pub fn CratePanel(graph: CodeGraph, name: String) -> Element {
                     "its dependencies ↑"
                 }
             }
-            RefDirToggle {}
             div { class: "min-h-0 flex-1 overflow-y-auto px-4 pb-3",
-                h3 { class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
-                    "Used outside ({used_rows.len()})"
-                }
-                if used_rows.is_empty() {
-                    p { class: "mt-1 font-data text-[10px] text-ink-soft",
-                        "no other workspace crate references its code"
+                // A crate no workspace crate touches has one thing to say, not
+                // two empty headings and a toggle with nothing to act on.
+                if used_rows.is_empty() && uses_rows.is_empty() {
+                    p { class: "mt-3 border-t border-ink-line pt-3 font-data text-[10px] leading-relaxed text-ink-soft",
+                        "no references cross this crate's boundary"
                     }
                 } else {
-                    RefList { rows: used_rows }
-                }
-                h3 { class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
-                    "Uses outside ({uses_rows.len()})"
-                }
-                if uses_rows.is_empty() {
-                    p { class: "mt-1 font-data text-[10px] text-ink-soft",
-                        "its code references no other workspace crate"
+                    h3 { class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
+                        "Used outside ({used_rows.len()})"
                     }
-                } else {
-                    RefList { rows: uses_rows }
+                    if used_rows.is_empty() {
+                        p { class: "mt-1 font-data text-[10px] text-ink-soft",
+                            "no other workspace crate references its code"
+                        }
+                    } else {
+                        RefList { rows: used_rows }
+                    }
+                    h3 { class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
+                        "Uses outside ({uses_rows.len()})"
+                    }
+                    if uses_rows.is_empty() {
+                        p { class: "mt-1 font-data text-[10px] text-ink-soft",
+                            "its code references no other workspace crate"
+                        }
+                    } else {
+                        RefList { rows: uses_rows }
+                    }
                 }
                 h3 { class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
                     "Files ({files.len()})"

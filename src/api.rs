@@ -254,6 +254,55 @@ pub struct ItemMark {
     /// workspace. Derives are not here: they stand in the type's own source,
     /// and a derive is not code anyone wrote.
     pub impls: Vec<String>,
+    /// Fields whose type walk reached no workspace type at all — a `u32`, a
+    /// `String`, a generic parameter. The data chart counts them instead of
+    /// drawing them. Structs and unions only; zero everywhere else.
+    pub plain_fields: u32,
+    /// An enum's variant names, as written, in source order. Empty for
+    /// everything that is not an enum.
+    pub variants: Vec<String>,
+    /// A static's declared type, as written. Empty for everything that is not
+    /// a static.
+    pub ty: String,
+}
+
+/// What a field says about the state its type reaches: whether the holder
+/// owns it outright, shares a handle to it, only views it, or names a trait
+/// instead of a type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HoldKind {
+    /// No shared handle anywhere on the walk: the holder owns the value.
+    /// Interior mutability alone (`Mutex`, `RefCell`) is still ownership.
+    Owns,
+    /// A shared handle — `Arc`, `Rc`, `Weak`, or a dioxus signal — so other
+    /// code can reach the same state.
+    Shares,
+    /// A reference: the holder views state something else owns.
+    Borrows,
+    /// `dyn Trait`: the edge lands on a trait, not on a type.
+    Dyn,
+}
+
+/// One holding relation: `from` has one or more fields whose type walk
+/// reaches `to`. Aggregated per (from, to, kind, wrapper), so every field
+/// that says the same thing arrives on one edge. Private types are here too
+/// — privacy folds the chart, it does not hide a fact from it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct HoldEdge {
+    /// The holder's [`ItemMark::id`]: a struct, an enum, a union, or a static.
+    pub from: u32,
+    /// The held type's [`ItemMark::id`]. Equal to `from` when a type holds
+    /// itself, which linked structures really do.
+    pub to: u32,
+    pub kind: HoldKind,
+    /// The strongest wrapper met on the walk, in its own word (`Arc`, `Rc`,
+    /// `Weak`, `Signal`, `&`, `&mut`, `dyn`); empty for a plain hold.
+    pub via: String,
+    /// Every field that draws this edge, quoted from source in declaration
+    /// order: (name as written, declared type as written). A tuple field's
+    /// name is its index; an enum payload's is its variant's name; a static's
+    /// is the static's own name.
+    pub fields: Vec<(String, String)>,
 }
 
 /// A reference between two items, aggregated per pair. Endpoints carry their
@@ -282,6 +331,10 @@ pub struct CodeGraph {
     pub items: Vec<ItemMark>,
     /// Cross-file references at item precision, aggregated per pair.
     pub item_edges: Vec<ItemEdge>,
+    /// Which type holds which, and through what wrapper — the data
+    /// altitude's structure. Every surveyed type is here, private ones
+    /// included.
+    pub holds: Vec<HoldEdge>,
     /// Names the survey could not resolve (type-inference limits). They are
     /// not on the chart; the words on the plate must say so.
     pub unresolved: u32,

@@ -30,14 +30,14 @@ const ROW_CAP: usize = 3;
 // Drawn wires would need every row's box measured in the browser (refs plus a
 // resize observer); descoped as decoration until the layout is settled.
 
-/// One row of a reference column, ready to draw.
+/// One row of a reference column, ready to draw. Every row names something —
+/// the references that resolve to nothing nameable are the group's fold.
 #[derive(Clone, PartialEq)]
 pub struct RowView {
-    /// `None` for the lifted-private line: it names nothing, by design.
-    kind: Option<ItemKind>,
+    kind: ItemKind,
     name: String,
     title: String,
-    to: Option<Route>,
+    to: Route,
     count: u32,
 }
 
@@ -48,6 +48,10 @@ pub struct GroupView {
     path: String,
     total: u32,
     rows: Vec<RowView>,
+    /// References that lifted to this file's private items. Private items are
+    /// never named, so they are counted once at the group's foot instead of
+    /// taking the loudest row in every group on the page.
+    private: u32,
 }
 
 /// One row of a whole file's outline: an item the file defines.
@@ -115,47 +119,37 @@ fn column_views(graph: &CodeGraph, groups: Vec<Group>) -> Vec<GroupView> {
                 .get(group.file as usize)
                 .map(|f| f.path.clone())
                 .unwrap_or_default();
-            let rows = group
-                .rows
-                .iter()
-                .map(
-                    |row| match row.mark.and_then(|m| graph.items.get(m as usize)) {
-                        Some(mark) => {
-                            let file = graph
-                                .files
-                                .get(mark.file as usize)
-                                .map(|f| f.path.clone())
-                                .unwrap_or_default();
-                            RowView {
-                                kind: Some(mark.kind),
-                                name: mark.name.clone(),
-                                title: format!(
-                                    "{} · {} · {}",
-                                    mark.label,
-                                    kind_words(mark.kind),
-                                    mark.vis.words()
-                                ),
-                                to: Some(item_route(&file, &mark.label)),
-                                count: row.count,
-                            }
-                        }
-                        None => RowView {
-                            kind: None,
-                            name: "private items".to_string(),
-                            title: "private items are never drawn; their references count \
-                                against the file that holds them"
-                                .to_string(),
-                            to: None,
-                            count: row.count,
-                        },
-                    },
-                )
-                .collect();
+            let mut private = 0;
+            let mut rows = Vec::new();
+            for row in group.rows.iter() {
+                let Some(mark) = row.mark.and_then(|m| graph.items.get(m as usize)) else {
+                    private += row.count;
+                    continue;
+                };
+                let file = graph
+                    .files
+                    .get(mark.file as usize)
+                    .map(|f| f.path.clone())
+                    .unwrap_or_default();
+                rows.push(RowView {
+                    kind: mark.kind,
+                    name: mark.name.clone(),
+                    title: format!(
+                        "{} · {} · {}",
+                        mark.label,
+                        kind_words(mark.kind),
+                        mark.vis.words()
+                    ),
+                    to: item_route(&file, &mark.label),
+                    count: row.count,
+                });
+            }
             GroupView {
                 file: group.file,
                 path,
                 total: group.total,
                 rows,
+                private,
             }
         })
         .collect()
@@ -200,7 +194,10 @@ fn EgoColumn(groups: Vec<GroupView>, head: String, outgoing: bool) -> Element {
     let files: usize = groups.len();
     let total: u32 = groups.iter().map(|g| g.total).sum();
     rsx! {
-        div { class: if outgoing { "lg:text-right" } else { "" },
+        div {
+            // The column's side of the plate carries the direction; the type
+            // stays left-aligned so a path is read the way a path is read, and
+            // a heading never floats away from the rows it names.
             h2 { class: "font-chart text-[13px] font-semibold tracking-[0.26em] uppercase text-ink",
                 "{head}"
             }
@@ -217,7 +214,9 @@ fn EgoColumn(groups: Vec<GroupView>, head: String, outgoing: bool) -> Element {
                     "{plural(total as usize, \"reference\")} in {plural(files, \"file\")}"
                 }
             }
-            div { class: "mt-3 space-y-2 text-left",
+            // Group spacing is the group's own rule (`.ego-group + .ego-group`),
+            // stated once in CSS rather than twice.
+            div { class: "mt-3",
                 for group in groups.iter() {
                     {
                         let open = opened.read().contains(&group.file);
@@ -241,35 +240,16 @@ fn EgoColumn(groups: Vec<GroupView>, head: String, outgoing: bool) -> Element {
                                         "{plural(group.total as usize, \"ref\")}"
                                     }
                                 }
-                                div { class: "px-1.5 py-1",
+                                div { class: "ego-group-rows",
                                     for (i , row) in group.rows.iter().take(shown).enumerate() {
-                                        {
-                                            let body = rsx! {
-                                                if let Some(kind) = row.kind {
-                                                    span { class: "ego-row-kw", "{kind_words(kind)}" }
-                                                }
-                                                span { class: "ego-row-name", "{row.name}" }
-                                                span { class: "ego-row-count", "{row.count}" }
-                                            };
-                                            match row.to.clone() {
-                                                Some(to) => rsx! {
-                                                    Link {
-                                                        key: "{i}",
-                                                        class: "ego-row",
-                                                        to,
-                                                        title: "{row.title}",
-                                                        {body}
-                                                    }
-                                                },
-                                                None => rsx! {
-                                                    div {
-                                                        key: "{i}",
-                                                        class: "ego-row is-lifted",
-                                                        title: "{row.title}",
-                                                        {body}
-                                                    }
-                                                },
-                                            }
+                                        Link {
+                                            key: "{i}",
+                                            class: "ego-row",
+                                            to: row.to.clone(),
+                                            title: "{row.title}",
+                                            span { class: "ego-row-kw", "{kind_words(row.kind)}" }
+                                            span { class: "ego-row-name", "{row.name}" }
+                                            span { class: "ego-row-count", "{row.count}" }
                                         }
                                     }
                                     if left > 0 {
@@ -283,6 +263,15 @@ fn EgoColumn(groups: Vec<GroupView>, head: String, outgoing: bool) -> Element {
                                             span { class: "ego-row-name",
                                                 "+{left} more ({plural(hidden as usize, \"ref\")})"
                                             }
+                                        }
+                                    }
+                                    // Private items are never named, here or on
+                                    // the map; the group counts them once.
+                                    if group.private > 0 {
+                                        p {
+                                            class: "ego-group-fold",
+                                            title: "private items are never drawn; their references count against the file that holds them",
+                                            "+ {group.private} private"
                                         }
                                     }
                                 }
@@ -424,8 +413,8 @@ fn CenterPlate(
     let code = use_code();
     let expanded = code.expanded.read().clone();
     rsx! {
-        section { class: "plate flex flex-col",
-            div { class: "px-5 pb-4 pt-4",
+        section { class: "ego-center",
+            div {
                 p { class: "flex items-baseline gap-2 font-data text-[11px] text-ink",
                     span { class: "break-all", "{locator}" }
                     if changed {
@@ -470,9 +459,11 @@ fn CenterPlate(
                                     span { class: "ego-member-decl", "{decl_words(row.vis, row.kind)}" }
                                     span { class: "ego-member-name", "{row.name}" }
                                     if row.refs > 0 {
-                                        span { class: "ego-member-refs", "{row.refs} refs" }
+                                        span { class: "ego-member-refs",
+                                            "{plural(row.refs as usize, \"ref\")}"
+                                        }
                                     }
-                                    span { class: "ego-member-line", "{row.line}" }
+                                    span { class: "ego-member-line", ":{row.line}" }
                                 }
                                 if expanded.contains(&row.key) {
                                     InlinePane {
@@ -851,12 +842,12 @@ pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
 
     rsx! {
         div { class: "absolute inset-0 overflow-y-auto",
-            div { class: "mx-auto w-full max-w-[1360px] px-6 pb-24 pt-[92px]",
+            div { class: "mx-auto w-full max-w-[1460px] px-6 pb-24 pt-[92px]",
                 Crumb {
                     path: info.path.clone(),
                     item: mark.as_ref().map(|m| m.name.clone()).unwrap_or_default(),
                 }
-                div { class: "mt-6 grid items-start gap-8 lg:grid-cols-[264px_minmax(0,1fr)_264px] lg:gap-10",
+                div { class: "mt-6 grid items-start gap-8 lg:grid-cols-[240px_minmax(0,1fr)_240px] lg:gap-10",
                     EgoColumn {
                         groups: used,
                         head: "Used by".to_string(),

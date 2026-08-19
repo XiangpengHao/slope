@@ -1,6 +1,8 @@
 use dioxus::prelude::*;
 
-use views::{AtlasShell, CodeCrate, CodeFile, CodeOverview, Focus, Overview, RingSel};
+use views::{
+    AtlasShell, CodeCrate, CodeFile, CodeOverview, DataOverview, Focus, Overview, RingSel,
+};
 
 /// Server-side analysis: cargo metadata, VCS diff, manifest events.
 #[cfg(feature = "server")]
@@ -16,6 +18,7 @@ mod views;
 /// joins crate names with `+` (impossible in a crate name); a whole ring is
 /// `/ring/:hop`. The `/code` family is the code altitude: the file map,
 /// one crate's district, one file (its path segments), one item (`?item=`).
+/// `/data` is the data altitude: every type, and what holds what.
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
@@ -32,6 +35,8 @@ enum Route {
         CodeCrate { name: String },
         #[route("/code/file/:..path?:item")]
         CodeFile { path: Vec<String>, item: String },
+        #[route("/data")]
+        DataOverview {},
 }
 
 /* impeccable direction contract — served inside the page, greppable in the

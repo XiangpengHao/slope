@@ -28,6 +28,7 @@ use ra_ap_syntax::{
 use ra_ap_vfs::{FileId, Vfs};
 use tokio::sync::OnceCell;
 
+use super::data;
 use crate::api::{
     CodeGraph, FileDetail, FileInfo, FileRef, ItemEdge, ItemInfo, ItemKind, ItemMark, ItemRef,
     ItemSource, ItemXRef, SrcLink, SrcRun, Tok, Vis,
@@ -394,6 +395,47 @@ fn survey_attached(
         })
         .collect();
 
+    // ---- Pass C: the data walk. -------------------------------------------
+
+    // Which types hold which, and through what. A field's type resolves to a
+    // mark through the very same def → mark path a reference does, so the
+    // data altitude never invents a landmark the code altitude does not have.
+    let data_mark = |def: ModuleDef| -> Option<u32> {
+        let want: &[ItemKind] = match def {
+            ModuleDef::Adt(_) => &[ItemKind::Struct, ItemKind::Enum, ItemKind::Union],
+            ModuleDef::Trait(_) => &[ItemKind::Trait],
+            _ => return None,
+        };
+        let target = def_target(&sema, db, vfs, &root, &file_of, &raw, def)?;
+        let local = target.item?;
+        // A type declared inside a function body has no mark of its own and
+        // resolves to the function around it, which is not a data mark.
+        let item = raw[target.file as usize].items.get(local as usize)?;
+        if !want.contains(&item.kind) {
+            return None;
+        }
+        mark_of[target.file as usize][local as usize]
+    };
+    let holders: Vec<data::Holder> = mark_at
+        .iter()
+        .enumerate()
+        .filter_map(|(id, &(fi, li))| {
+            let item = &raw[fi as usize].items[li as usize];
+            matches!(
+                item.kind,
+                ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Static
+            )
+            .then(|| data::Holder {
+                mark: id as u32,
+                kind: item.kind,
+                file: fi,
+                range: item.range,
+            })
+        })
+        .collect();
+    let efids: Vec<EditionedFileId> = raw.iter().map(|f| f.efid).collect();
+    let mut walk = data::walk(&sema, db, &efids, &holders, mark_at.len(), &data_mark);
+
     // ---- Assemble the wire model. -----------------------------------------
 
     // Containment: an item's parent is the type its impl names, or the trait
@@ -533,6 +575,9 @@ fn survey_attached(
             parent: parent_of[id],
             fan_in: fan_in[id],
             impls,
+            plain_fields: walk.plain_fields[id],
+            variants: std::mem::take(&mut walk.variants[id]),
+            ty: std::mem::take(&mut walk.ty[id]),
         });
     }
 
@@ -628,6 +673,16 @@ fn survey_attached(
         "an `impl Trait for Type` counts as a reference from the type to the \
          trait — the impl block itself holds no ground"
             .to_string(),
+        "holds edges walk declared field types: `Arc`, `Rc`, `Weak` and the \
+         dioxus signals read as sharing, a reference as borrowing, `dyn \
+         Trait` as its trait; every other generic type — `Vec`, `Box`, \
+         `Mutex`, an unknown external — is transparent and the walk recurses \
+         into it"
+            .to_string(),
+        "a field whose walk reaches no workspace type is counted as a plain \
+         field, not drawn; generic parameters on the holder are holes and \
+         count the same way"
+            .to_string(),
     ];
     if !proc_macros {
         notes.push(
@@ -649,6 +704,7 @@ fn survey_attached(
             refs,
             items,
             item_edges,
+            holds: walk.holds,
             unresolved,
             notes,
         },

@@ -532,6 +532,7 @@ mod tests {
             refs: Vec::new(),
             items: Vec::new(),
             item_edges: Vec::new(),
+            holds: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
         }
