@@ -44,24 +44,25 @@ pub fn star_box(info: &CrateInfo) -> f64 {
     2.0 * (star_radius(info.dependents) + MARK_OVERHANG)
 }
 
-/// The state a star announces, in words — never color alone.
+/// The state a star announces, in words — never color alone, and in the words
+/// the tools themselves use.
 fn state_words(info: &CrateInfo) -> Option<String> {
     if info.ghost {
-        return Some("REMOVED".into());
+        return Some("removed".into());
     }
     if info.changed {
         let files = info.changed_files;
         return Some(if files == 1 {
-            "CHANGED · 1 FILE".into()
+            "1 file changed".into()
         } else {
-            format!("CHANGED · {files} FILES")
+            format!("{files} files changed")
         });
     }
     if let Some(dist) = info.affected_dist {
         return Some(if dist == 1 {
-            "AFFECTED · 1 HOP".into()
+            "1 hop downstream".into()
         } else {
-            format!("AFFECTED · {dist} HOPS")
+            format!("{dist} hops downstream")
         });
     }
     None

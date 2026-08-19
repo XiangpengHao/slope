@@ -274,10 +274,10 @@ const D_PAD: f64 = 13.0;
 const D_LABEL_H: f64 = 14.0;
 const GAP: f64 = 11.0;
 
-/// One em of advance in the data face (JetBrains Mono is monospaced) and in
-/// the chart face's caps (EB Garamond, which sets wider than it measures).
+/// One em of advance in the data face (JetBrains Mono is monospaced). Every
+/// measured label on the map is data, so this is the only advance the layout
+/// needs.
 pub const MONO_ADVANCE: f64 = 0.6;
-pub const CAPS_ADVANCE: f64 = 0.68;
 
 /// Estimated width of mono text at a given size. The map would rather carry
 /// slack than clip a name.

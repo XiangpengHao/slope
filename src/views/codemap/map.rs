@@ -14,7 +14,7 @@ use dioxus_flow::WorldLayer;
 use dioxus_flow::prelude::{Flow, Node as FlowNode, NodeViewCtx, Point, Rect, Side, Size};
 
 use crate::api::{CodeGraph, FileInfo, ItemKind, Vis};
-use crate::views::codemap::chrome::{ItemGlyph, file_name, plural};
+use crate::views::codemap::chrome::{decl_words, file_name, plural};
 use crate::views::codemap::model::{self, Containment, Territory};
 use crate::views::codemap::tree::{self, FileTree, Measures, Placed, ROOT, dir_key, file_key};
 use crate::views::codemap::{CodeSel, file_route, item_route, use_code};
@@ -76,18 +76,19 @@ pub struct DistrictView {
     pub focal: bool,
 }
 
-/// The engraved label band, matched to the CSS that draws it: the name in the
-/// chart face at 13px tracked 0.24em, the counts in the data face at 9px
-/// tracked 0.1em, the crate tag in the chart face at 9.5px tracked 0.2em.
-/// These numbers move with `tailwind.css` or the band starts colliding again.
+/// The engraved label band, matched to the CSS that draws it: every segment in
+/// the data face, because every segment is data — a directory path, its
+/// counts, its crate. The name sets at 12px, the counts at 9px tracked 0.1em,
+/// the crate at 10px. These numbers move with `tailwind.css` or the band
+/// starts colliding again.
 fn name_w(text: &str) -> f64 {
-    tree::tracked_w(text, 13.0, tree::CAPS_ADVANCE, 0.24)
+    tree::text_w(text, 12.0)
 }
 fn meta_w(text: &str) -> f64 {
     tree::tracked_w(text, 9.0, tree::MONO_ADVANCE, 0.1)
 }
 fn crate_w(text: &str) -> f64 {
-    tree::tracked_w(text, 9.5, tree::CAPS_ADVANCE, 0.2)
+    tree::text_w(text, 10.0)
 }
 
 /// Where the band starts inside the frame, and the clear paper between its
@@ -95,9 +96,9 @@ fn crate_w(text: &str) -> f64 {
 const LABEL_X: f64 = 14.0;
 const LABEL_GAP: f64 = 11.0;
 
-/// The crate tag as engraved.
+/// The crate tag as engraved: the name cargo knows it by, and nothing else.
 fn crate_tag(krate: &str) -> String {
-    format!("CRATE {krate}")
+    krate.to_string()
 }
 
 /// One tie, placed: from the definition's territory to the user's, where the
@@ -138,6 +139,13 @@ fn row_px(tier: u8) -> f64 {
     }
 }
 
+/// One landmark row as it is written: `pub fn parse`, `struct Parse`. The row
+/// is measured on this string, not on the name alone, or the keyword the row
+/// exists to state would be the first thing clipped.
+fn row_words(row: &Row) -> String {
+    format!("{} {}", decl_words(row.vis, row.kind), row.name)
+}
+
 /// A block's measured size, and the height its fold's words need. The layout
 /// must know both before anything is drawn, so the plate and its box agree to
 /// the pixel — and so a fold never has its count clipped.
@@ -153,7 +161,7 @@ fn block_size(name: &str, meta: &str, rows: &[Row], fold: Option<&str>) -> (f64,
         .unwrap_or(0.0);
     let widest = rows
         .iter()
-        .map(|r| tree::text_w(&r.name, row_px(r.tier)) + 22.0)
+        .map(|r| tree::text_w(&row_words(r), row_px(r.tier)) + 10.0)
         .fold(head.max(fold_w), f64::max);
     let w = (widest + tree::BLOCK_PAD_X * 2.0).clamp(tree::BLOCK_MIN_W, tree::BLOCK_MAX_W);
     // Ragged line breaks cost a little more than the ratio; the slack keeps
@@ -203,10 +211,11 @@ fn tie_ends(a: Placed, b: Placed) -> (Point, Point) {
     }
 }
 
-/// State words for a gate: what folding this district hid.
+/// State words for a gate: what folding this directory hid. The `▸` already
+/// says it is folded; the words only have to count.
 fn gate_words(files: u32, items: u32) -> String {
     format!(
-        "folded · {} · {}",
+        "{} · {}",
         plural(files as usize, "file"),
         plural(items as usize, "item")
     )
@@ -250,7 +259,11 @@ fn build_map(
     for block in &blocks {
         let info = graph.files[block.file as usize].clone();
         let name = file_name(&info.path).to_string();
-        let meta = format!("{} L · {}", info.lines, plural(info.items as usize, "item"));
+        let meta = format!(
+            "{} lines · {}",
+            info.lines,
+            plural(info.items as usize, "item")
+        );
         let rows: Vec<Row> = block
             .rows
             .iter()
@@ -316,10 +329,12 @@ fn build_map(
     }
 
     let district_label = |dir: &tree::DirNode| -> (String, String) {
+        // The directory as it is on disk, with the marker that folds it. The
+        // root holds the whole survey and never folds, so it carries none.
         let label = if dir.id == ROOT {
             workspace.to_string()
         } else {
-            format!("{}/", dir.name)
+            format!("▾ {}/", dir.name)
         };
         let meta = format!(
             "{} · {}",
@@ -572,7 +587,7 @@ fn BlockPlate(
                     },
                     "{name}"
                     if info.changed {
-                        span { class: "cb-chg", title: "touched in this epoch", "▎" }
+                        span { class: "cb-chg", title: "changed since the diff base", "M" }
                     }
                 }
                 span { class: "cb-meta", "{meta}" }
@@ -581,10 +596,9 @@ fn BlockPlate(
                 a {
                     key: "{row.label}",
                     class: "cb-row t{row.tier}",
-                    class: if row.vis == Vis::Crate { "is-crate" },
                     style: "height: {tree::BLOCK_ROW_H}px; font-size: {row_px(row.tier)}px;",
                     href: item_route(&info.path, &row.label).to_string(),
-                    title: "{row.label} · {row.vis.words()} · {plural(row.fan_in as usize, \"reference\")} in from other files",
+                    title: "{row.label} · {plural(row.fan_in as usize, \"reference\")} in from other files",
                     onclick: {
                         let path = path.clone();
                         let label = row.label.clone();
@@ -594,7 +608,7 @@ fn BlockPlate(
                             nav.push(item_route(&path, &label));
                         }
                     },
-                    ItemGlyph { kind: row.kind, box_px: 11.0 }
+                    span { class: "cb-kw", "{decl_words(row.vis, row.kind)}" }
                     span { class: "cb-nm", "{row.name}" }
                 }
             }
@@ -722,7 +736,7 @@ fn DistrictLayer(districts: Vec<DistrictView>) -> Element {
                                 e.stop_propagation();
                                 nav.push(crate::Route::CodeCrate { name: krate.clone() });
                             },
-                            "CRATE {krate}"
+                            "{krate}"
                         }
                     }
                 }
@@ -802,7 +816,7 @@ fn TieLayer(ties: Vec<TieView>, hot: Signal<Option<Territory>>) -> Element {
                                 x: "{lx}",
                                 y: "{ly - 3.0}",
                                 text_anchor: "middle",
-                                "×{tie.count}"
+                                "{tie.count}"
                             }
                         }
                     }
@@ -900,7 +914,11 @@ window.__slopifyKeys = (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === '/') {
         e.preventDefault();
-        const s = document.getElementById('code-search');
+        // The map lays out one search plate for the desktop and one for a
+        // narrow viewport; only one of them is on the page at a time, so `/`
+        // must reach whichever is actually showing.
+        const s = [...document.querySelectorAll('#code-search')]
+            .find((el) => el.offsetParent !== null);
         if (s) s.focus();
         return;
     }

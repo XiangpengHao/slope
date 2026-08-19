@@ -7,8 +7,8 @@ use std::collections::HashMap;
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, FileInfo, ItemKind};
-use crate::views::codemap::file_route;
+use crate::api::{CodeGraph, FileInfo, ItemKind, ItemMark, Vis};
+use crate::views::codemap::{file_route, item_route};
 
 pub(crate) fn plural(n: usize, word: &str) -> String {
     if n == 1 {
@@ -26,6 +26,8 @@ pub(crate) fn dir_of(path: &str) -> &str {
     path.rsplit_once('/').map(|(d, _)| d).unwrap_or("")
 }
 
+/// An item's kind, as rust writes it. The keyword is the representation every
+/// rust reader already has; there is nothing to learn.
 pub(crate) fn kind_words(kind: ItemKind) -> &'static str {
     match kind {
         ItemKind::Fn => "fn",
@@ -42,124 +44,12 @@ pub(crate) fn kind_words(kind: ItemKind) -> &'static str {
     }
 }
 
-/// The tiny glyph vocabulary for items, shared by the map's landmark rows, the
-/// focus plate, and the legend. Every glyph is ink; kind is shape, never
-/// color.
-#[component]
-pub fn ItemGlyph(kind: ItemKind, #[props(default = 12.0)] box_px: f64) -> Element {
-    let c = box_px / 2.0;
-    rsx! {
-        svg {
-            class: "shrink-0",
-            width: "{box_px}",
-            height: "{box_px}",
-            view_box: "0 0 {box_px} {box_px}",
-            "aria-hidden": "true",
-            match kind {
-                ItemKind::Fn => rsx! {
-                    circle { cx: "{c}", cy: "{c}", r: "2.6", fill: "var(--color-ink)" }
-                },
-                ItemKind::Struct => rsx! {
-                    rect {
-                        x: "{c - 2.6}",
-                        y: "{c - 2.6}",
-                        width: "5.2",
-                        height: "5.2",
-                        fill: "var(--color-ink)",
-                    }
-                },
-                ItemKind::Enum => rsx! {
-                    rect {
-                        x: "{c - 2.7}",
-                        y: "{c - 2.7}",
-                        width: "5.4",
-                        height: "5.4",
-                        fill: "var(--color-ink)",
-                        transform: "rotate(45 {c} {c})",
-                    }
-                },
-                ItemKind::Union => rsx! {
-                    rect {
-                        x: "{c - 2.7}",
-                        y: "{c - 2.7}",
-                        width: "5.4",
-                        height: "5.4",
-                        fill: "none",
-                        stroke: "var(--color-ink)",
-                        stroke_width: "1.1",
-                        transform: "rotate(45 {c} {c})",
-                    }
-                    circle { cx: "{c}", cy: "{c}", r: "1.1", fill: "var(--color-ink)" }
-                },
-                ItemKind::Trait => rsx! {
-                    path {
-                        d: "M{c} {c - 3.1} L{c + 3.1} {c + 2.6} L{c - 3.1} {c + 2.6} Z",
-                        fill: "none",
-                        stroke: "var(--color-ink)",
-                        stroke_width: "1.1",
-                    }
-                },
-                ItemKind::TypeAlias => rsx! {
-                    rect {
-                        x: "{c - 2.7}",
-                        y: "{c - 2.7}",
-                        width: "5.4",
-                        height: "5.4",
-                        fill: "none",
-                        stroke: "var(--color-ink)",
-                        stroke_width: "1.1",
-                    }
-                },
-                ItemKind::Const | ItemKind::Static => rsx! {
-                    rect {
-                        x: "{c - 3.2}",
-                        y: "{c - 0.9}",
-                        width: "6.4",
-                        height: "1.8",
-                        fill: "var(--color-ink)",
-                    }
-                },
-                ItemKind::Macro => rsx! {
-                    g {
-                        stroke: "var(--color-ink)",
-                        stroke_width: "1.1",
-                        stroke_linecap: "round",
-                        line { x1: "{c}", y1: "{c - 3.2}", x2: "{c}", y2: "{c + 3.2}" }
-                        line {
-                            x1: "{c - 2.8}",
-                            y1: "{c - 1.6}",
-                            x2: "{c + 2.8}",
-                            y2: "{c + 1.6}",
-                        }
-                        line {
-                            x1: "{c + 2.8}",
-                            y1: "{c - 1.6}",
-                            x2: "{c - 2.8}",
-                            y2: "{c + 1.6}",
-                        }
-                    }
-                },
-                ItemKind::Mod => rsx! {
-                    rect {
-                        x: "{c - 2.8}",
-                        y: "{c - 2.8}",
-                        width: "5.6",
-                        height: "5.6",
-                        fill: "none",
-                        stroke: "var(--color-ink)",
-                        stroke_width: "1.1",
-                    }
-                    circle { cx: "{c}", cy: "{c}", r: "1.2", fill: "var(--color-ink)" }
-                },
-                ItemKind::Impl => rsx! {
-                    g { stroke: "var(--color-ink)", stroke_width: "1.1",
-                        line { x1: "{c - 3.0}", y1: "{c - 3.0}", x2: "{c - 3.0}", y2: "{c + 3.0}" }
-                        line { x1: "{c - 3.0}", y1: "{c - 3.0}", x2: "{c + 1.0}", y2: "{c - 3.0}" }
-                        line { x1: "{c - 3.0}", y1: "{c + 3.0}", x2: "{c + 1.0}", y2: "{c + 3.0}" }
-                    }
-                },
-            }
-        }
+/// `pub fn`, `struct`, `pub(crate) mod` — what rust writes in front of a name.
+/// A private item declares no visibility, so neither does its row.
+pub(crate) fn decl_words(vis: Vis, kind: ItemKind) -> String {
+    match vis.keyword() {
+        Some(vis) => format!("{vis} {}", kind_words(kind)),
+        None => kind_words(kind).to_string(),
     }
 }
 
@@ -190,7 +80,7 @@ pub fn AltitudeSwitch(code: bool) -> Element {
 
 /// The code map's title block.
 #[component]
-pub fn CodeCartouche(graph: CodeGraph, workspace: String, epoch_line: String) -> Element {
+pub fn CodeCartouche(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
     let files = graph.files.len();
     let crates: std::collections::HashSet<&str> =
         graph.files.iter().map(|f| f.krate.as_str()).collect();
@@ -208,8 +98,8 @@ pub fn CodeCartouche(graph: CodeGraph, workspace: String, epoch_line: String) ->
             h1 { class: "font-chart text-[19px] leading-tight tracking-[0.18em] uppercase text-ink",
                 "{workspace}"
             }
-            p { class: "mt-0.5 font-chart text-[12px] italic text-ink-soft",
-                "code structure · {plural(files, \"file\")} · {plural(crates.len(), \"crate\")}"
+            p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
+                "{plural(files, \"file\")} · {plural(crates.len(), \"crate\")}"
             }
             div { class: "mt-2 space-y-1 border-t border-ink-line pt-2 font-data text-[10.5px] leading-relaxed text-ink",
                 AltitudeSwitch { code: true }
@@ -217,20 +107,31 @@ pub fn CodeCartouche(graph: CodeGraph, workspace: String, epoch_line: String) ->
                     span { class: "text-ink-soft", "surveyed " }
                     "{lines} lines · {items} items, {pubs} pub"
                 }
-                p { class: "text-ink-soft", "{epoch_line}" }
+                p { class: "text-ink-soft", "{diff_line}" }
                 if changed > 0 {
-                    p { class: "text-flare",
-                        "▎{plural(changed, \"file\")} touched this epoch"
-                    }
+                    p { class: "text-flare", "{plural(changed, \"file\")} changed" }
                 } else {
-                    p { class: "text-ink-soft", "nothing touched in this epoch" }
+                    p { class: "text-ink-soft", "no files changed" }
                 }
             }
         }
     }
 }
 
-/// Find a file by any part of its path.
+/// Find a file by any part of its path, or an item by name. One list: the
+/// reviewer is looking for a place in the code, and a file and an item are
+/// both places.
+#[derive(Clone, PartialEq)]
+enum Hit {
+    File(FileInfo),
+    /// The item, and the path of the file that defines it.
+    Item(ItemMark, String),
+}
+
+/// How one hit ranks: a prefix match is what the reviewer meant, files come
+/// before items, and the rest ranks by how much of the workspace leans on it.
+type Rank = (bool, u8, std::cmp::Reverse<u32>, String);
+
 #[component]
 pub fn CodeSearch(graph: CodeGraph) -> Element {
     let mut query = use_signal(String::new);
@@ -242,22 +143,48 @@ pub fn CodeSearch(graph: CodeGraph) -> Element {
         if q.is_empty() {
             return Vec::new();
         }
-        let mut hits: Vec<FileInfo> = graph
-            .files
+        let mut hits: Vec<(Rank, Hit)> = Vec::new();
+        for file in graph.files.iter().filter(|f| f.path.to_lowercase().contains(&q)) {
+            let name = file_name(&file.path).to_lowercase();
+            hits.push((
+                (
+                    !name.starts_with(&q),
+                    0,
+                    std::cmp::Reverse(file.refs_in_files),
+                    file.path.clone(),
+                ),
+                Hit::File(file.clone()),
+            ));
+        }
+        for item in graph
+            .items
             .iter()
-            .filter(|f| f.path.to_lowercase().contains(&q))
-            .cloned()
-            .collect();
-        hits.sort_by_key(|f| {
-            (
-                !file_name(&f.path).to_lowercase().starts_with(&q),
-                std::cmp::Reverse(f.refs_in_files),
-                f.path.clone(),
-            )
-        });
-        hits.truncate(9);
-        hits
+            .filter(|m| m.label.to_lowercase().contains(&q))
+        {
+            let path = graph
+                .files
+                .get(item.file as usize)
+                .map(|f| f.path.clone())
+                .unwrap_or_default();
+            hits.push((
+                (
+                    !item.name.to_lowercase().starts_with(&q),
+                    1,
+                    std::cmp::Reverse(item.fan_in),
+                    item.label.clone(),
+                ),
+                Hit::Item(item.clone(), path),
+            ));
+        }
+        hits.sort_by(|a, b| a.0.cmp(&b.0));
+        hits.truncate(10);
+        hits.into_iter().map(|(_, hit)| hit).collect()
     });
+
+    let route_of = |hit: &Hit| match hit {
+        Hit::File(f) => file_route(&f.path),
+        Hit::Item(m, path) => item_route(path, &m.label),
+    };
 
     rsx! {
         div { class: "pointer-events-auto relative w-full",
@@ -265,10 +192,10 @@ pub fn CodeSearch(graph: CodeGraph) -> Element {
                 id: "code-search",
                 class: "plate w-full px-3 py-1.5 font-data text-[11px] text-ink placeholder:text-ink-soft focus:outline-none",
                 r#type: "search",
-                placeholder: "find a file…   /",
+                placeholder: "find a file or item…   /",
                 autocomplete: "off",
                 spellcheck: "false",
-                "aria-label": "Find a file",
+                "aria-label": "Find a file or item",
                 value: "{query}",
                 oninput: move |e| {
                     query.set(e.value());
@@ -287,7 +214,7 @@ pub fn CodeSearch(graph: CodeGraph) -> Element {
                         }
                         Key::Enter => {
                             if let Some(hit) = results().get(active().min(n.saturating_sub(1))) {
-                                nav.push(file_route(&hit.path));
+                                nav.push(route_of(hit));
                                 query.set(String::new());
                             }
                         }
@@ -299,26 +226,33 @@ pub fn CodeSearch(graph: CodeGraph) -> Element {
             if !query().trim().is_empty() {
                 if results().is_empty() {
                     div { class: "plate absolute left-0 right-0 top-full z-20 mt-1 px-3 py-2",
-                        p { class: "font-data text-[10px] tracking-[0.1em] uppercase text-ink-soft",
-                            "no matches"
-                        }
+                        p { class: "font-data text-[10px] text-ink-soft", "no matches" }
                     }
                 } else {
                     ul { class: "plate absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-auto py-1",
                         for (i , hit) in results().into_iter().enumerate() {
                             li {
                                 Link {
-                                    to: file_route(&hit.path),
+                                    to: route_of(&hit),
                                     class: if i == active() { "flex w-full items-baseline gap-1.5 px-2.5 py-1 bg-ink/5" } else { "flex w-full items-baseline gap-1.5 px-2.5 py-1 hover:bg-ink/5" },
                                     onclick: move |_| query.set(String::new()),
-                                    span { class: "truncate font-data text-[11px] text-ink",
-                                        "{file_name(&hit.path)}"
-                                    }
-                                    if hit.changed {
-                                        span { class: "shrink-0 font-data text-[9px] text-flare", "▎" }
-                                    }
-                                    span { class: "ml-auto shrink-0 truncate font-data text-[9px] text-ink-soft",
-                                        "{dir_of(&hit.path)}"
+                                    match &hit {
+                                        Hit::File(f) => rsx! {
+                                            span { class: "truncate font-data text-[11px] text-ink", "{file_name(&f.path)}" }
+                                            if f.changed {
+                                                span { class: "shrink-0 font-data text-[9.5px] text-flare", "M" }
+                                            }
+                                            span { class: "ml-auto shrink-0 truncate font-data text-[9px] text-ink-soft",
+                                                "{dir_of(&f.path)}"
+                                            }
+                                        },
+                                        Hit::Item(m, path) => rsx! {
+                                            span { class: "shrink-0 font-data text-[9.5px] text-ink-soft", "{kind_words(m.kind)}" }
+                                            span { class: "truncate font-data text-[11px] text-ink", "{m.name}" }
+                                            span { class: "ml-auto shrink-0 truncate font-data text-[9px] text-ink-soft",
+                                                "{path}:{m.line}"
+                                            }
+                                        },
                                     }
                                 }
                             }
@@ -385,68 +319,43 @@ pub fn CodeLegend(graph: CodeGraph, #[props(default = true)] start_open: bool) -
             summary { class: "cursor-pointer select-none px-4 py-2 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
                 "Reading this map"
             }
-            // The key reads first — every territory, mark and line named in
-            // words — then the gestures, then the survey's own honesty notes.
+            // The key reads first — every mark and line named in words — then
+            // the gestures, then the survey's own honesty notes.
             div { class: "legend-scroll space-y-2.5 px-4 font-data text-[10px] leading-snug text-ink sm:max-h-[42dvh]",
                 p {
-                    "every directory holds territory; a file is a block inside it. nesting means one thing only: "
-                    span { class: "text-ink", "belongs to" }
+                    "a block is one file; the frame around it is its directory. an item row is written as rust: "
+                    span { class: "text-ink", "pub fn parse" }
                     "."
-                }
-                div { class: "space-y-2 border-t border-ink-line pt-2.5",
-                    div { class: "flex items-baseline gap-2",
-                        div { class: "flex shrink-0 items-baseline gap-1",
-                            ItemGlyph { kind: ItemKind::Struct, box_px: 12.0 }
-                            ItemGlyph { kind: ItemKind::Enum, box_px: 12.0 }
-                            ItemGlyph { kind: ItemKind::Fn, box_px: 12.0 }
-                            ItemGlyph { kind: ItemKind::Trait, box_px: 12.0 }
-                        }
-                        span { "struct · enum · fn · trait — engraved size follows fan-in" }
-                    }
-                    div { class: "grid grid-cols-2 gap-x-3 gap-y-1",
-                        for (kind , words) in [
-                            (ItemKind::TypeAlias, "type alias"),
-                            (ItemKind::Const, "const · static"),
-                            (ItemKind::Macro, "macro"),
-                            (ItemKind::Mod, "module"),
-                        ]
-                        {
-                            div { class: "flex items-center gap-1.5",
-                                ItemGlyph { kind, box_px: 12.0 }
-                                span { "{words}" }
-                            }
-                        }
-                    }
                 }
                 div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
                     div { class: "flex items-center gap-2",
                         TieSample { width: 1.9 }
-                        span { "×n — every reference between two territories, summed" }
+                        span { "n — references between two files, summed" }
                     }
                     p { class: "text-ink-soft",
-                        "the arrow rests on the user — the way change travels. fold a district and the ties into everything inside it gather onto its gate; open it and they redistribute."
+                        "the arrow rests on the user — the way change travels. fold a directory and the references into everything inside it gather onto its gate; open it and they redistribute."
                     }
                 }
                 div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
                     p {
-                        span { class: "font-medium", "+ n folded" }
-                        " — a block's last line counts what it hides: items too quiet for this altitude, and every private one."
+                        span { class: "font-medium", "+ n private" }
+                        " — a block\u{2019}s last line counts what it hides: items too quiet for this altitude, and every private one."
                     }
                     p { class: "text-ink-soft",
-                        "private items are never drawn — that fold is permanent — but their references to other blocks lift to the block that holds them and stay counted, which is why a block can be tied to a module none of its named items mention."
+                        "private items are never drawn — that fold is permanent — but their references to other files still count, which is why a block can be tied to a module none of its named items mention."
                     }
                     p {
-                        span { class: "text-flare", "▎" }
-                        span { class: "text-ink-soft", " touched in this epoch" }
+                        span { class: "text-flare", "M" }
+                        span { class: "text-ink-soft", " — changed since the diff base" }
                     }
                 }
                 div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
-                    UsageRow { gesture: "click a file", effect: "focus it — its plate, and both directions of its references" }
-                    UsageRow { gesture: "click an item", effect: "focus that item instead" }
-                    UsageRow { gesture: "click a district", effect: "fold it to a counted gate; click the gate to open" }
+                    UsageRow { gesture: "click a file", effect: "focus it — its items, and both directions of its references" }
+                    UsageRow { gesture: "click an item", effect: "focus that item — its source, and what uses it" }
+                    UsageRow { gesture: "click a directory", effect: "fold it to a counted gate; click the gate to open" }
                     UsageRow { gesture: "hover a block", effect: "its ties come up to full ink, lighter ties show their counts" }
                     UsageRow { gesture: "back / esc", effect: "step back up" }
-                    UsageRow { gesture: "/ · f", effect: "find a file · refit the map" }
+                    UsageRow { gesture: "/ · f", effect: "find a file or item · refit the map" }
                 }
                 div { class: "space-y-1 border-t border-ink-line pt-2.5 text-ink-soft",
                     for note in graph.notes.iter() {
@@ -476,7 +385,7 @@ fn RefList(rows: Vec<(Route, String, String, u32)>) -> Element {
                         span { class: "truncate font-data text-[9px] text-ink-soft", "{detail}" }
                         if count > 1 {
                             span { class: "ml-auto shrink-0 font-data text-[9px] text-ink-soft",
-                                "×{count}"
+                                "{count} refs"
                             }
                         }
                     }
@@ -493,7 +402,7 @@ fn RefList(rows: Vec<(Route, String, String, u32)>) -> Element {
     }
 }
 
-/// One crate's district sheet: its files, and what crosses its boundary.
+/// One crate's sheet: its files, and what crosses its boundary.
 #[component]
 pub fn CratePanel(graph: CodeGraph, name: String) -> Element {
     let mut files: Vec<FileInfo> = graph
@@ -564,7 +473,7 @@ pub fn CratePanel(graph: CodeGraph, name: String) -> Element {
                 }
                 if changed > 0 {
                     p { class: "font-data text-[10px] text-flare",
-                        "▎{plural(changed, \"file\")} touched this epoch"
+                        "{plural(changed, \"file\")} changed"
                     }
                 }
                 Link {
@@ -605,10 +514,10 @@ pub fn CratePanel(graph: CodeGraph, name: String) -> Element {
                                 class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 hover:bg-ink/5",
                                 span { class: "truncate font-data text-[10.5px] text-ink", "{f.path}" }
                                 if f.changed {
-                                    span { class: "shrink-0 font-data text-[9px] text-flare", "▎" }
+                                    span { class: "shrink-0 font-data text-[9px] text-flare", "M" }
                                 }
                                 span { class: "ml-auto shrink-0 font-data text-[9px] text-ink-soft",
-                                    "{f.lines} L"
+                                    "{f.lines} lines"
                                 }
                             }
                         }

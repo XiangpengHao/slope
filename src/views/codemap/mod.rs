@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, FileDetail, code_graph};
+use crate::api::{CodeGraph, FileDetail, ItemSource, code_graph};
 use crate::views::codemap::chrome::{CodeCartouche, CodeLegend, CodeSearch, CratePanel};
 use crate::views::codemap::ego::EgoPlate;
 use crate::views::codemap::map::CodeChart;
@@ -37,19 +37,25 @@ pub enum CodeSel {
 /// Directories the reviewer folded or unfolded by hand, as flips against
 /// the default disclosure depth.
 static TOGGLED: GlobalSignal<HashSet<u32>> = Signal::global(HashSet::new);
-/// File details already fetched, by file id: item bodies for the focus plate.
+/// File details already fetched, by file id: item lists and same-file
+/// references for the focus plate.
 static DETAILS: GlobalSignal<HashMap<u32, FileDetail>> = Signal::global(HashMap::new);
+/// Item source already fetched, by (file id, item id): the definition the
+/// focus plate quotes.
+static SOURCES: GlobalSignal<HashMap<(u32, u32), ItemSource>> = Signal::global(HashMap::new);
 
 #[derive(Clone, Copy)]
 pub struct CodeState {
     pub toggled: Signal<HashSet<u32>>,
     pub details: Signal<HashMap<u32, FileDetail>>,
+    pub sources: Signal<HashMap<(u32, u32), ItemSource>>,
 }
 
 pub fn use_code() -> CodeState {
     CodeState {
         toggled: TOGGLED.signal(),
         details: DETAILS.signal(),
+        sources: SOURCES.signal(),
     }
 }
 
@@ -92,7 +98,7 @@ pub fn item_route(path: &str, item: &str) -> Route {
 /// ambient map, or one selection's focus plate. Mounted by the atlas shell for
 /// every `/code` route.
 #[component]
-pub fn CodeShell(workspace: String, epoch_line: String) -> Element {
+pub fn CodeShell(workspace: String, diff_line: String) -> Element {
     let resource: CodeResource = use_resource(code_graph);
     use_context_provider(|| resource);
 
@@ -125,7 +131,7 @@ pub fn CodeShell(workspace: String, epoch_line: String) -> Element {
                         CodeCartouche {
                             graph: graph.clone(),
                             workspace: workspace.clone(),
-                            epoch_line: epoch_line.clone(),
+                            diff_line: diff_line.clone(),
                         }
                         div { class: "mt-auto",
                             CodeLegend { graph: graph.clone(), start_open: true }
@@ -136,7 +142,7 @@ pub fn CodeShell(workspace: String, epoch_line: String) -> Element {
                         CodeCartouche {
                             graph: graph.clone(),
                             workspace: workspace.clone(),
-                            epoch_line: epoch_line.clone(),
+                            diff_line: diff_line.clone(),
                         }
                         CodeSearch { graph: graph.clone() }
                     }
@@ -144,7 +150,10 @@ pub fn CodeShell(workspace: String, epoch_line: String) -> Element {
                         CodeLegend { graph: graph.clone(), start_open: false }
                     }
                 }
-                div { class: "pointer-events-none absolute right-3 top-3 z-10 hidden w-56 flex-col gap-2 sm:flex",
+                // Wider than the dependency chart's search: an item hit
+                // carries `src/analyze/manifest.rs:67`, and the name must not
+                // be the half that gets squeezed.
+                div { class: "pointer-events-none absolute right-3 top-3 z-10 hidden w-72 flex-col gap-2 sm:flex",
                     CodeSearch { graph: graph.clone() }
                 }
             },
@@ -232,11 +241,10 @@ fn SurveyingCode() -> Element {
                         }
                     }
                 }
-                p { class: "mt-4 font-chart text-[16px] italic text-ink", "Surveying the code…" }
-                p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
+                p { class: "mt-4 font-data text-[12.5px] text-ink",
                     "rust-analyzer is reading every source file and resolving references"
                 }
-                p { class: "mt-0.5 font-data text-[10px] text-ink-soft",
+                p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
                     "the first survey of a workspace takes a while"
                 }
             }

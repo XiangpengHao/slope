@@ -170,6 +170,17 @@ impl Vis {
         }
     }
 
+    /// The visibility as rust writes it. Private declares nothing, so it has
+    /// no keyword: rust writes nothing at all, and so does the interface.
+    pub fn keyword(self) -> Option<&'static str> {
+        match self {
+            Vis::Pub => Some("pub"),
+            Vis::Crate => Some("pub(crate)"),
+            Vis::Private => None,
+        }
+    }
+
+    /// The same fact in a sentence, for tooltips and titles.
     pub fn words(self) -> &'static str {
         match self {
             Vis::Pub => "pub",
@@ -238,9 +249,11 @@ pub struct ItemMark {
     /// Item-level references reaching it from other files. Drives the
     /// engraved weight of its mark.
     pub fan_in: u32,
-    /// Traits this type derives or implements, from every impl anywhere in
-    /// the workspace. A lens on the type, never nesting.
-    pub traits: Vec<String>,
+    /// Hand-written trait impls of this type, as their headers are written
+    /// (`impl Clone for Vis`), gathered from every impl anywhere in the
+    /// workspace. Derives are not here: they stand in the type's own source,
+    /// and a derive is not code anyone wrote.
+    pub impls: Vec<String>,
 }
 
 /// A reference between two items, aggregated per pair. Endpoints carry their
@@ -276,17 +289,6 @@ pub struct CodeGraph {
     pub notes: Vec<String>,
 }
 
-/// One field of a struct, or one variant of an enum: the body the focus plate
-/// unfolds.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ItemMember {
-    /// Field or variant name; the index for a tuple field.
-    pub name: String,
-    /// Field type or variant payload, as written. Empty when there is none.
-    pub ty: String,
-    pub vis: Vis,
-}
-
 /// One item inside a file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct ItemInfo {
@@ -304,12 +306,10 @@ pub struct ItemInfo {
     pub vis: Vis,
     /// Index into [`CodeGraph::items`]; `None` for impl blocks.
     pub mark: Option<u32>,
-    /// Struct fields or enum variants, in source order.
-    pub members: Vec<ItemMember>,
-    /// A function's signature, without its body.
-    pub sig: Option<String>,
-    /// Derive names, for the plate's badges.
-    pub derives: Vec<String>,
+    /// Byte offsets of the item's own source text, doc comment and attributes
+    /// included. The focus plate quotes exactly this range.
+    pub start: u32,
+    pub end: u32,
 }
 
 /// A reference between two items of the same file.
@@ -370,4 +370,59 @@ pub async fn file_detail(file: u32) -> Result<FileDetail, ServerFnError> {
         .get(file as usize)
         .cloned()
         .ok_or_else(|| ServerFnError::new(format!("no file with id {file} in this survey")))
+}
+
+/// What one run of source text is, for colouring. The classes are a lexer's,
+/// not a palette's: the client decides how each one is inked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Tok {
+    /// A rust keyword.
+    Kw,
+    Comment,
+    /// A doc comment: `///`, `//!`, `/** */`.
+    Doc,
+    /// A string, char, or byte literal.
+    Str,
+    Num,
+    Lifetime,
+    /// Anything inside an attribute, `#[derive(Clone)]` included.
+    Attr,
+    /// A name whose first letter is uppercase.
+    Type,
+    /// The name in a `fn` declaration.
+    Fn,
+    /// A macro name, called or declared.
+    Macro,
+    Ident,
+    Punct,
+    Space,
+}
+
+/// One item's own source text, lexed into coloured runs — what Go to
+/// Definition lands on. The interface quotes the file rather than describing
+/// it, so nothing here is reconstructed: the runs concatenate back to exactly
+/// the bytes on disk, minus the shared indent every line was stripped of.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemSource {
+    /// Path relative to the workspace root, for the locator.
+    pub path: String,
+    /// 1-based line the first quoted line is, in the real file. Equal to
+    /// [`ItemInfo::line`].
+    pub first_line: u32,
+    /// Per line, its runs of text in order.
+    pub lines: Vec<Vec<(String, Tok)>>,
+    /// Lines cut from the end of a long body; 0 when the item is whole.
+    pub elided: u32,
+}
+
+/// One item's source, lexed. `file` is a [`FileInfo::id`] and `item` is that
+/// item's [`ItemMark::local`] index inside the file.
+#[server]
+pub async fn item_source(file: u32, item: u32) -> Result<ItemSource, ServerFnError> {
+    let idx = crate::analyze::code::index()
+        .await
+        .map_err(ServerFnError::new)?;
+    crate::analyze::code::item_source(&idx, file, item).ok_or_else(|| {
+        ServerFnError::new(format!("no item {item} in file {file} in this survey"))
+    })
 }

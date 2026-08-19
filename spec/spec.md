@@ -77,6 +77,12 @@ Frontend (`src/views/`): one living chart that blooms.
   simplification is written in words on the plates.
 - design: light theme, ink on paper, per spec/dependency-viewer.md.
   DESIGN.md records the visual system.
+- vocabulary (2026-08-19): every user-facing label is the word rust,
+  cargo, or the VCS already uses — `pub(crate)`, `fn`, `(dev)`,
+  `dev-dependencies`, `M`, `3 files changed`, `src/api.rs:10`. Invented
+  uppercase abbreviations (EXT, DEV, GATE, `12 L`, "epoch") are retired,
+  and the code altitude's focus plate quotes an item's own source instead
+  of describing it. See spec/code-viewer.md and DESIGN.md.
 
 Run it:
 

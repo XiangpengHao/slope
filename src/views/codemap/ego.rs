@@ -1,19 +1,25 @@
-//! The focus plate: one selection, unfolded, with one hop of its references.
+//! The focus plate: one selection, quoted, with one hop of its references.
 //!
-//! Selecting anything on the map replaces the map with this: the selection
-//! engraved on the center plate — fields, variants, methods, or a signature —
-//! with what leans on it on the left and what it reaches for on the right,
-//! each grouped by the container the reference lives in. One hop only, never
-//! global spaghetti, and every row re-centers the plate on itself. Every focus
-//! is a URL.
+//! Selecting an item on the map replaces the map with this: the item's own
+//! source text on the center plate — the definition, syntax-highlighted, with
+//! a line-number gutter counting from its first line in the real file — with
+//! what leans on it on the left and what it reaches for on the right, each
+//! grouped by the file the reference is written in. One hop only, never global
+//! spaghetti, and every row re-centers the plate on itself. Every focus is a
+//! URL.
+//!
+//! Selecting a whole file gives the same plate with the file's items as an
+//! outline instead of a quotation: a file has no single definition to quote.
 
 use std::collections::{HashMap, HashSet};
 
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, ItemInfo, ItemKind, ItemMark, Vis, file_detail};
-use crate::views::codemap::chrome::{ItemGlyph, dir_of, file_name, kind_words, plural};
+use crate::api::{
+    CodeGraph, ItemKind, ItemMark, ItemSource, Tok, Vis, file_detail, item_source,
+};
+use crate::views::codemap::chrome::{decl_words, dir_of, file_name, kind_words, plural};
 use crate::views::codemap::model::{self, Center, Containment, Dir, Group};
 use crate::views::codemap::{file_route, item_route, use_code};
 
@@ -35,7 +41,7 @@ pub struct RowView {
     count: u32,
 }
 
-/// One container's rows in a reference column.
+/// One file's rows in a reference column.
 #[derive(Clone, PartialEq)]
 pub struct GroupView {
     file: u32,
@@ -44,42 +50,52 @@ pub struct GroupView {
     rows: Vec<RowView>,
 }
 
-/// One member row of the center plate: a field, a variant, or a method.
+/// One row of a whole file's outline: an item the file defines.
 #[derive(Clone, PartialEq)]
-pub struct MemberView {
-    glyph: Option<ItemKind>,
+pub struct OutlineRow {
+    kind: ItemKind,
+    vis: Vis,
     name: String,
-    detail: String,
-    quiet: bool,
-    to: Option<Route>,
+    refs: u32,
+    line: u32,
+    to: Route,
 }
 
-/// The plate's own last line: what the survey can honestly say about this
-/// selection, in the chart's voice.
-fn foot_words(used: &[GroupView], uses: &[GroupView], vis: Vis) -> String {
-    let sum = |gs: &[GroupView]| gs.iter().map(|g| g.total).sum::<u32>();
-    let (arriving, leaving) = (sum(used), sum(uses));
-    match (arriving, leaving) {
-        (0, 0) => match vis {
-            Vis::Pub => "pub, and nothing charted leans on it — a door no one has opened.".into(),
-            Vis::Crate => "visible to its crate, and unreferenced beyond its own file.".into(),
-            Vis::Private => {
-                "private: it is folded into its container everywhere it is named.".into()
-            }
-        },
-        (0, leaving) => format!(
-            "nothing charted leans on it; it reaches out ×{leaving} into {}.",
-            plural(uses.len(), "container")
-        ),
-        (arriving, 0) => format!(
-            "×{arriving} references arrive from {}; it reaches for nothing beyond itself.",
-            plural(used.len(), "container")
-        ),
-        (arriving, leaving) => format!(
-            "×{arriving} references arrive from {}; ×{leaving} leave for {}.",
-            plural(used.len(), "container"),
-            plural(uses.len(), "container")
-        ),
+/// One `impl` block's methods, gathered wherever the impl is written.
+#[derive(Clone, PartialEq)]
+pub struct ImplGroup {
+    /// The impl header exactly as it is written: `impl Vis`, `impl Clone for Vis`.
+    head: String,
+    rows: Vec<ImplRow>,
+}
+
+/// One associated item under an impl header.
+#[derive(Clone, PartialEq)]
+pub struct ImplRow {
+    kind: ItemKind,
+    vis: Vis,
+    name: String,
+    /// `src/api.rs:165` — where this one is written.
+    locator: String,
+    to: Route,
+}
+
+/// The class that inks one run of quoted source. Colour lives inside the code
+/// pane and says one thing only: what kind of token this is.
+fn tok_class(tok: Tok) -> &'static str {
+    match tok {
+        Tok::Kw => "tok-kw",
+        Tok::Comment => "tok-comment",
+        Tok::Doc => "tok-doc",
+        Tok::Str => "tok-str",
+        Tok::Num => "tok-num",
+        Tok::Lifetime => "tok-lifetime",
+        Tok::Attr => "tok-attr",
+        Tok::Type => "tok-type",
+        Tok::Fn => "tok-fn",
+        Tok::Macro => "tok-macro",
+        Tok::Punct => "tok-punct",
+        Tok::Ident | Tok::Space => "tok-ident",
     }
 }
 
@@ -119,9 +135,9 @@ fn column_views(graph: &CodeGraph, groups: Vec<Group>) -> Vec<GroupView> {
                         }
                         None => RowView {
                             kind: None,
-                            name: "private items — folded, lifted here".to_string(),
-                            title: "private items never draw as marks; their references lift to \
-                                the container that holds them"
+                            name: "private items".to_string(),
+                            title: "private items are never drawn; their references count \
+                                against the file that holds them"
                                 .to_string(),
                             to: None,
                             count: row.count,
@@ -171,28 +187,28 @@ fn Crumb(path: String, item: String) -> Element {
     }
 }
 
-/// One reference column: grouped by container, capped rows, counted folds.
+/// One reference column: grouped by file, capped rows, counted folds.
 #[component]
-fn EgoColumn(groups: Vec<GroupView>, head: String, sub: String, right: bool) -> Element {
+fn EgoColumn(groups: Vec<GroupView>, head: String, outgoing: bool) -> Element {
     let mut opened: Signal<HashSet<u32>> = use_signal(HashSet::new);
-    let rows: usize = groups.iter().map(|g| g.rows.len()).sum();
+    let files: usize = groups.len();
     let total: u32 = groups.iter().map(|g| g.total).sum();
     rsx! {
-        div { class: if right { "lg:text-right" } else { "" },
+        div { class: if outgoing { "lg:text-right" } else { "" },
             h2 { class: "font-chart text-[13px] font-semibold tracking-[0.26em] uppercase text-ink",
                 "{head}"
-                span { class: "ml-2 font-data text-[10px] font-normal normal-case tracking-[0.06em] text-ink-soft",
-                    "{rows} · ×{total}"
-                }
             }
-            p { class: "mt-0.5 font-chart text-[12px] italic text-ink-soft", "{sub}" }
             if groups.is_empty() {
-                p { class: "mt-3 font-chart text-[12.5px] italic text-ink-soft",
-                    if right {
-                        "reaches for nothing beyond itself."
+                p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
+                    if outgoing {
+                        "No outgoing references."
                     } else {
-                        "nothing charted leans on this."
+                        "No references."
                     }
+                }
+            } else {
+                p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
+                    "{plural(total as usize, \"reference\")} in {plural(files, \"file\")}"
                 }
             }
             div { class: "mt-3 space-y-2 text-left",
@@ -215,19 +231,19 @@ fn EgoColumn(groups: Vec<GroupView>, head: String, sub: String, right: bool) -> 
                                         to: file_route(&group.path),
                                         "{group.path}"
                                     }
-                                    span { class: "ego-group-total", "×{group.total}" }
+                                    span { class: "ego-group-total",
+                                        "{plural(group.total as usize, \"ref\")}"
+                                    }
                                 }
                                 div { class: "px-1.5 py-1",
                                     for (i , row) in group.rows.iter().take(shown).enumerate() {
                                         {
                                             let body = rsx! {
                                                 if let Some(kind) = row.kind {
-                                                    ItemGlyph { kind, box_px: 11.0 }
-                                                } else {
-                                                    span { class: "w-[11px] shrink-0" }
+                                                    span { class: "ego-row-kw", "{kind_words(kind)}" }
                                                 }
                                                 span { class: "ego-row-name", "{row.name}" }
-                                                span { class: "ego-row-count", "×{row.count}" }
+                                                span { class: "ego-row-count", "{row.count}" }
                                             };
                                             match row.to.clone() {
                                                 Some(to) => rsx! {
@@ -258,8 +274,9 @@ fn EgoColumn(groups: Vec<GroupView>, head: String, sub: String, right: bool) -> 
                                                 set.insert(file);
                                                 opened.set(set);
                                             },
-                                            span { class: "w-[11px] shrink-0" }
-                                            span { class: "ego-row-name", "+ {left} more · ×{hidden} folded" }
+                                            span { class: "ego-row-name",
+                                                "+{left} more ({plural(hidden as usize, \"ref\")})"
+                                            }
                                         }
                                     }
                                 }
@@ -272,90 +289,111 @@ fn EgoColumn(groups: Vec<GroupView>, head: String, sub: String, right: bool) -> 
     }
 }
 
-/// The center plate: the selection unfolded. One shape for a file and for an
-/// item — a plate is a plate.
+/// The item's own source, as the reviewer's editor would show it: a line
+/// gutter counting from the item's real first line, no wrapping, and the text
+/// itself selectable so it can be copied straight out of the plate.
 #[component]
-#[allow(clippy::too_many_arguments)]
+fn CodePane(source: ItemSource) -> Element {
+    rsx! {
+        div { class: "ego-code",
+            div { class: "ego-lines",
+                for (i , line) in source.lines.iter().enumerate() {
+                    div { key: "{i}", class: "ego-line",
+                        span { class: "ego-ln", "{source.first_line as usize + i}" }
+                        span { class: "ego-src",
+                            for (n , (text , tok)) in line.iter().enumerate() {
+                                span { key: "{n}", class: tok_class(*tok), "{text}" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if source.elided > 0 {
+            p { class: "ego-elided", "+ {source.elided} more lines" }
+        }
+    }
+}
+
+/// The center plate: the selection quoted, then everything the source itself
+/// cannot show — the methods written for it elsewhere, and the file's outline
+/// when the whole file is in focus.
+#[component]
 fn CenterPlate(
-    kind: Option<ItemKind>,
-    eyebrow_left: String,
-    eyebrow_right: String,
-    name: String,
+    locator: String,
+    facts: String,
     changed: bool,
-    where_line: String,
-    badges: Vec<String>,
-    sig: Option<String>,
-    members: Vec<MemberView>,
+    source: Option<ItemSource>,
+    loading: bool,
+    outline: Vec<OutlineRow>,
+    impls: Vec<ImplGroup>,
     folds: Vec<String>,
-    foot: String,
 ) -> Element {
     rsx! {
         section { class: "plate flex flex-col",
             div { class: "px-5 pb-4 pt-4",
-                div { class: "flex items-baseline justify-between gap-3 font-data text-[9px] tracking-[0.16em] uppercase text-ink-soft",
-                    span { "{eyebrow_left}" }
-                    span { "{eyebrow_right}" }
-                }
-                h1 { class: "mt-1.5 flex items-baseline gap-2 font-data text-[19px] font-bold text-ink",
-                    if let Some(kind) = kind {
-                        ItemGlyph { kind, box_px: 14.0 }
-                    }
-                    span { class: "break-all", "{name}" }
+                p { class: "flex items-baseline gap-2 font-data text-[11px] text-ink",
+                    span { class: "break-all", "{locator}" }
                     if changed {
-                        span { class: "text-flare", title: "touched in this epoch", "▎" }
-                    }
-                }
-                p { class: "mt-0.5 break-all font-data text-[10px] text-ink-soft", "{where_line}" }
-                if !badges.is_empty() {
-                    div { class: "mt-2.5 flex flex-wrap gap-1",
-                        for badge in badges.iter() {
-                            span { key: "{badge}", class: "ego-badge", "{badge}" }
+                        span {
+                            class: "text-flare",
+                            title: "this file changed since the diff base",
+                            "M"
                         }
                     }
                 }
-                if let Some(sig) = sig {
-                    pre { class: "ego-sig", "{sig}" }
+                if !facts.is_empty() {
+                    p { class: "mt-0.5 font-data text-[10px] text-ink-soft", "{facts}" }
                 }
-                if !members.is_empty() || !folds.is_empty() {
+                if let Some(source) = source {
+                    div { class: "mt-3", CodePane { source } }
+                } else if loading {
+                    p { class: "mt-3 font-data text-[10.5px] text-ink-soft", "loading…" }
+                }
+                if !outline.is_empty() {
                     div { class: "mt-3 border-t border-ink-line",
-                        for (i , member) in members.iter().enumerate() {
-                            {
-                                let body = rsx! {
-                                    if let Some(glyph) = member.glyph {
-                                        ItemGlyph { kind: glyph, box_px: 11.0 }
-                                    } else {
-                                        span { class: "w-[11px] shrink-0 text-center text-ink-line", "·" }
-                                    }
-                                    span {
-                                        class: "truncate font-data text-[11.5px]",
-                                        class: if member.quiet { "text-ink-soft" } else { "font-medium text-ink" },
-                                        "{member.name}"
-                                    }
-                                    if !member.detail.is_empty() {
-                                        span { class: "ml-auto shrink-0 truncate pl-3 font-data text-[10.5px] text-ink-soft",
-                                            "{member.detail}"
-                                        }
-                                    }
-                                };
-                                match member.to.clone() {
-                                    Some(to) => rsx! {
-                                        Link { key: "{i}", class: "ego-member", to, {body} }
-                                    },
-                                    None => rsx! {
-                                        div { key: "{i}", class: "ego-member", {body} }
-                                    },
+                        for row in outline.iter() {
+                            Link {
+                                key: "{row.line}-{row.name}",
+                                class: "ego-member",
+                                to: row.to.clone(),
+                                title: "{row.name} · {row.vis.words()}",
+                                span { class: "ego-member-decl", "{decl_words(row.vis, row.kind)}" }
+                                span { class: "ego-member-name", "{row.name}" }
+                                if row.refs > 0 {
+                                    span { class: "ego-member-refs", "{row.refs} refs" }
                                 }
+                                span { class: "ego-member-line", "{row.line}" }
                             }
                         }
+                    }
+                }
+                for group in impls.iter() {
+                    div { key: "{group.head}", class: "mt-3 border-t border-ink-line pt-2",
+                        p { class: "ego-impl-head", "{group.head}" }
+                        for row in group.rows.iter() {
+                            Link {
+                                key: "{row.locator}",
+                                class: "ego-member",
+                                to: row.to.clone(),
+                                title: "{row.name} · {row.vis.words()}",
+                                span { class: "ego-member-decl", "{decl_words(row.vis, row.kind)}" }
+                                span { class: "ego-member-name", "{row.name}" }
+                                span { class: "ego-member-line", "{row.locator}" }
+                            }
+                        }
+                    }
+                }
+                if !folds.is_empty() {
+                    div { class: "mt-2 space-y-0.5",
                         for fold in folds.iter() {
-                            p { key: "{fold}", class: "px-1 pt-1.5 font-data text-[9.5px] leading-snug text-ink-soft",
+                            p { key: "{fold}", class: "font-data text-[9.5px] leading-snug text-ink-soft",
                                 "{fold}"
                             }
                         }
                     }
                 }
             }
-            p { class: "ego-foot", "{foot}" }
         }
     }
 }
@@ -373,7 +411,8 @@ window.__slopifyKeys = (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === '/') {
         e.preventDefault();
-        const s = document.getElementById('code-search');
+        const s = [...document.querySelectorAll('#code-search')]
+            .find((el) => el.offsetParent !== null);
         if (s) s.focus();
         return;
     }
@@ -432,8 +471,9 @@ pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
             .flatten()
     });
 
-    // Members of the selected type, wherever their impls are written; a
-    // method's signature lives with its own source, so fetch those files too.
+    // Members of the selected type, wherever their impls are written; the impl
+    // header a method sits under lives with its own source, so fetch those
+    // files too.
     let kids: Vec<u32> = mark
         .as_ref()
         .map(|m| containment.read().kids(m.id).to_vec())
@@ -460,6 +500,21 @@ pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
         }
     }));
 
+    // The selection's own source text — the definition the plate quotes.
+    let quoted: Option<(u32, u32)> = mark.as_ref().map(|m| (m.file, m.local));
+    use_effect(use_reactive((&quoted,), move |(quoted,)| {
+        let Some(key) = quoted else { return };
+        if code.sources.peek().contains_key(&key) {
+            return;
+        }
+        spawn(async move {
+            if let Ok(source) = item_source(key.0, key.1).await {
+                let mut sources = code.sources;
+                sources.write().insert(key, source);
+            }
+        });
+    }));
+
     let Some(info) = found else {
         return rsx! {
             div { class: "absolute inset-0 grid place-items-center p-4",
@@ -481,13 +536,10 @@ pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
 
     let details = code.details.read();
     let detail = details.get(&info.id);
+    let source = quoted.and_then(|key| code.sources.read().get(&key).cloned());
 
-    // The selection's own body, and the local ids of everything inside it:
-    // same-file references are the file detail's to report.
-    let body: Option<ItemInfo> = match (&mark, detail) {
-        (Some(m), Some(d)) => d.items.iter().find(|i| i.mark == Some(m.id)).cloned(),
-        _ => None,
-    };
+    // The local ids of everything inside the selection: same-file references
+    // are the file detail's to report.
     let inside: HashSet<u32> = match &mark {
         Some(m) => {
             let mut marks = Vec::new();
@@ -555,24 +607,14 @@ pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
         )
     };
 
-    let vis = mark.as_ref().map(|m| m.vis).unwrap_or(Vis::Pub);
-    let foot = foot_words(&used, &uses, vis);
-
     // ---- The center plate. ------------------------------------------------
-    let mut members: Vec<MemberView> = Vec::new();
+    let mut outline: Vec<OutlineRow> = Vec::new();
+    let mut impls: Vec<ImplGroup> = Vec::new();
     let mut folds: Vec<String> = Vec::new();
-    let plate = match &mark {
+    let (locator, facts) = match &mark {
         Some(mark) => {
-            let member_glyph = model::member_kind(mark.kind);
-            if let Some(body) = &body {
-                members.extend(body.members.iter().map(|m| MemberView {
-                    glyph: member_glyph,
-                    name: m.name.clone(),
-                    detail: m.ty.clone(),
-                    quiet: m.vis == Vis::Private,
-                    to: None,
-                }));
-            }
+            // A type's associated items, grouped under the impl header they
+            // are written under — wherever in the workspace that is.
             let mut private_kids = 0usize;
             for kid in kids.iter().filter_map(|k| graph.items.get(*k as usize)) {
                 if kid.vis == Vis::Private {
@@ -584,36 +626,43 @@ pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
                     .get(kid.file as usize)
                     .map(|f| f.path.clone())
                     .unwrap_or_default();
-                let elsewhere = kid.file != info.id;
-                members.push(MemberView {
-                    glyph: Some(kid.kind),
+                let head = details
+                    .get(&kid.file)
+                    .and_then(|d| d.items.get(kid.local as usize))
+                    .map(|i| i.section.clone())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or_else(|| format!("impl {}", mark.name));
+                let row = ImplRow {
+                    kind: kid.kind,
+                    vis: kid.vis,
                     name: kid.name.clone(),
-                    detail: if elsewhere {
-                        format!("in {}", file_name(&where_from))
-                    } else {
-                        format!("L{}", kid.line)
-                    },
-                    quiet: kid.vis == Vis::Crate,
-                    to: Some(item_route(&where_from, &kid.label)),
-                });
+                    locator: format!("{where_from}:{}", kid.line),
+                    to: item_route(&where_from, &kid.label),
+                };
+                match impls.iter_mut().find(|g| g.head == head) {
+                    Some(group) => group.rows.push(row),
+                    None => impls.push(ImplGroup {
+                        head,
+                        rows: vec![row],
+                    }),
+                }
+            }
+            // A trait impl with no items of its own is still code someone
+            // wrote, and rustdoc lists it; so does this plate.
+            for header in &mark.impls {
+                if !impls.iter().any(|g| &g.head == header) {
+                    impls.push(ImplGroup {
+                        head: header.clone(),
+                        rows: Vec::new(),
+                    });
+                }
             }
             if private_kids > 0 {
-                folds.push(format!(
-                    "+ {} folded into this plate — their outside references lift here",
-                    plural(private_kids, "private member")
-                ));
-            }
-            if body.is_none() {
-                folds.push("reading the item's body…".to_string());
+                folds.push(format!("+ {private_kids} private"));
             }
             (
-                Some(mark.kind),
-                kind_words(mark.kind).to_string(),
-                mark.vis.words().to_string(),
-                mark.name.clone(),
-                format!("{} · L{} · crate {}", info.path, mark.line, info.krate),
-                mark.traits.clone(),
-                body.as_ref().and_then(|b| b.sig.clone()),
+                format!("{}:{}", info.path, mark.line),
+                format!("crate {}", info.krate),
             )
         }
         None => {
@@ -628,81 +677,61 @@ pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
                     private += 1;
                     continue;
                 }
-                members.push(MemberView {
-                    glyph: Some(m.kind),
+                outline.push(OutlineRow {
+                    kind: m.kind,
+                    vis: m.vis,
                     name: m.name.clone(),
-                    detail: if m.fan_in > 0 {
-                        format!("×{} in · L{}", m.fan_in, m.line)
-                    } else {
-                        format!("L{}", m.line)
-                    },
-                    quiet: m.vis == Vis::Crate,
-                    to: Some(item_route(&info.path, &m.label)),
+                    refs: m.fan_in,
+                    line: m.line,
+                    to: item_route(&info.path, &m.label),
                 });
             }
             if private > 0 {
-                folds.push(format!(
-                    "+ {} folded — their outside references lift to this file",
-                    plural(private, "private item")
-                ));
+                folds.push(format!("+ {private} private"));
             }
             if nested > 0 {
-                folds.push(format!(
-                    "+ {} on the plates of their own types",
-                    plural(nested, "member")
-                ));
+                folds.push(format!("+ {nested} on their own types"));
             }
             (
-                None,
-                "file".to_string(),
-                format!("crate {}", info.krate),
-                file_name(&info.path).to_string(),
+                info.path.clone(),
                 format!(
-                    "{} · {} lines · {}",
-                    info.path,
+                    "{} lines · {} · crate {}",
                     info.lines,
-                    plural(info.items as usize, "item")
+                    plural(info.items as usize, "item"),
+                    info.krate
                 ),
-                Vec::new(),
-                None,
             )
         }
     };
-    let (kind, eyebrow_left, eyebrow_right, name, where_line, badges, sig) = plate;
+    let loading = mark.is_some() && source.is_none();
 
     rsx! {
         div { class: "absolute inset-0 overflow-y-auto",
-            div { class: "mx-auto w-full max-w-[1240px] px-6 pb-24 pt-[92px]",
+            div { class: "mx-auto w-full max-w-[1360px] px-6 pb-24 pt-[92px]",
                 Crumb {
                     path: info.path.clone(),
                     item: mark.as_ref().map(|m| m.name.clone()).unwrap_or_default(),
                 }
-                div { class: "mt-6 grid items-start gap-8 lg:grid-cols-[300px_minmax(0,1fr)_300px] lg:gap-12",
+                div { class: "mt-6 grid items-start gap-8 lg:grid-cols-[264px_minmax(0,1fr)_264px] lg:gap-10",
                     EgoColumn {
                         groups: used,
                         head: "Used by".to_string(),
-                        sub: "who leans on the selection — grouped by container, heaviest first"
-                            .to_string(),
-                        right: false,
+                        outgoing: false,
                     }
                     CenterPlate {
-                        kind,
-                        eyebrow_left,
-                        eyebrow_right,
-                        name,
+                        locator,
+                        facts,
                         changed: info.changed,
-                        where_line,
-                        badges,
-                        sig,
-                        members,
+                        source,
+                        loading,
+                        outline,
+                        impls,
                         folds,
-                        foot,
                     }
                     EgoColumn {
                         groups: uses,
                         head: "Uses".to_string(),
-                        sub: "what the selection reaches for".to_string(),
-                        right: true,
+                        outgoing: true,
                     }
                 }
             }

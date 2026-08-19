@@ -225,12 +225,12 @@ pub fn AtlasShell() -> Element {
                     // The code altitude: its own shell, chart, and furniture.
                     // The workspace's identity and epoch ride along so both
                     // altitudes stamp the same cartouche facts.
-                    let epoch_line = format!(
-                        "epoch {} → {}",
+                    let diff_line = format!(
+                        "diff {} → {}",
                         graph.epoch.base, graph.epoch.target
                     );
                     rsx! {
-                        CodeShell { workspace: graph.name.clone(), epoch_line }
+                        CodeShell { workspace: graph.name.clone(), diff_line }
                     }
                 }
                 Some(Ok(graph)) => {
@@ -312,9 +312,11 @@ fn Surveying() -> Element {
                         }
                     }
                 }
-                p { class: "mt-4 font-chart text-[16px] italic text-ink", "Surveying the workspace…" }
-                p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
+                p { class: "mt-4 font-data text-[12.5px] text-ink",
                     "cargo metadata is resolving the dependency graph"
+                }
+                p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
+                    "and the VCS is being asked what changed"
                 }
             }
         }

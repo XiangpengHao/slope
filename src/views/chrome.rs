@@ -83,11 +83,11 @@ pub fn TitleBlock(
                 h1 { class: "font-chart text-[19px] leading-tight tracking-[0.18em] uppercase text-ink",
                     "{graph.name}"
                 }
-                p { class: "mt-0.5 font-chart text-[12px] italic text-ink-soft",
+                p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
                     "{plural(members, \"workspace crate\")} · {externals} external"
                 }
                 p { class: "mt-2 border-t border-ink-line pt-2 font-data text-[10.5px] leading-relaxed text-ink",
-                    span { class: "text-ink-soft", "epoch " }
+                    span { class: "text-ink-soft", "diff " }
                     "{epoch.base} → {epoch.target}"
                 }
                 div { class: "pb-2 pt-1",
@@ -119,12 +119,12 @@ pub fn TitleBlock(
                                     span { class: "truncate font-data text-[11px] font-medium text-ink",
                                         "{info.name}"
                                     }
-                                    span { class: "shrink-0 font-data text-[9px] tracking-[0.1em] text-flare",
-                                        if info.changed_files == 1 { "1 FILE" } else { "{info.changed_files} FILES" }
+                                    span { class: "shrink-0 font-data text-[9px] text-flare",
+                                        "{plural(info.changed_files as usize, \"file\")}"
                                     }
                                     if info.manifest_changed {
-                                        span { class: "shrink-0 font-data text-[9px] tracking-[0.1em] text-flare",
-                                            "MANIFEST"
+                                        span { class: "shrink-0 font-data text-[9px] text-flare",
+                                            "Cargo.toml"
                                         }
                                     }
                                     if visited.contains(&info.name) {
@@ -138,7 +138,7 @@ pub fn TitleBlock(
                     }
                     p { class: "mx-4 mt-2 border-t border-ink-line pt-2 font-data text-[9.5px] tracking-[0.1em] uppercase text-ink",
                         if seen == total { "all {total} seen" } else { "{seen} of {total} seen" }
-                        span { class: "text-ink-soft", " · {affected} affected" }
+                        span { class: "text-ink-soft", " · {affected} downstream" }
                     }
                 }
             }
@@ -170,19 +170,19 @@ pub fn DirectionToggle() -> Element {
     };
     rsx! {
         div {
-            class: "flex items-center gap-2 border-t border-ink-line px-4 py-1.5",
+            class: "border-t border-ink-line px-4 py-1.5",
             role: "group",
             "aria-label": "which of the selection's edges the chart draws",
-            span { class: "shrink-0 font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
-                "edges"
+            span { class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
+                "dependencies"
             }
-            div { class: "flex flex-1 items-stretch gap-0.5",
+            div { class: "mt-1 flex items-stretch gap-0.5",
                 {seg("depends on", "what the selection depends on", DirFilter::Deps)}
                 {seg("used by", "what depends on the selection, one hop out", DirFilter::Users)}
                 {
                     seg(
-                        "path to root",
-                        "every route from the root down to the selection — what depends on it, and what depends on those, all the way up",
+                        "reverse deps",
+                        "what depends on the selection, and what depends on those, all the way to the root — cargo tree -i",
                         DirFilter::PathToRoot,
                     )
                 }
@@ -311,22 +311,22 @@ pub fn Legend(#[props(default = true)] start_open: bool, center: String) -> Elem
                     div { class: "flex items-center gap-2",
                         StarMark { info: changed, focal: false, box_px: 26.0 }
                         span {
-                            span { class: "font-medium text-flare", "CHANGED" }
-                            " — edited in this epoch"
+                            span { class: "font-medium text-flare", "changed" }
+                            " — files under it changed since the diff base"
                         }
                     }
                     div { class: "flex items-center gap-2",
                         StarMark { info: affected, focal: false, box_px: 26.0 }
                         span {
-                            span { class: "font-medium", "AFFECTED" }
-                            " — downstream of a change; the halo fades with distance"
+                            span { class: "font-medium", "downstream" }
+                            " — it depends on a changed crate; the halo fades with distance"
                         }
                     }
                     div { class: "flex items-center gap-2",
                         StarMark { info: ghost, focal: false, box_px: 20.0 }
                         span {
-                            span { class: "font-medium", "REMOVED" }
-                            " — a dependency this epoch deleted"
+                            span { class: "font-medium", "removed" }
+                            " — a dependency the diff deleted"
                         }
                     }
                 }
@@ -341,7 +341,7 @@ pub fn Legend(#[props(default = true)] start_open: bool, center: String) -> Elem
                     }
                     div { class: "flex items-center gap-2",
                         LineSample { dasharray: "6 4", stroke: "var(--color-ink-line)" }
-                        span { "dev dependency — dashed (build: dotted)" }
+                        span { "dev-dependencies — dashed · build-dependencies — dotted" }
                     }
                     div { class: "flex items-center gap-2",
                         LineSample { dasharray: "", stroke: "var(--color-flare)", width: 1.4 }
@@ -445,8 +445,8 @@ pub fn SearchBox(graph: WorkspaceGraph) -> Element {
                                     StarMark { info: hit.clone(), focal: false, box_px: 18.0 }
                                     span { class: "truncate font-data text-[11px] text-ink", "{hit.name}" }
                                     if !hit.is_member {
-                                        span { class: "ml-auto font-data text-[9.5px] tracking-[0.12em] text-ink-soft",
-                                            "EXT"
+                                        span { class: "ml-auto shrink-0 font-data text-[9.5px] text-ink-soft",
+                                            "v{hit.version}"
                                         }
                                     }
                                 }
@@ -473,19 +473,20 @@ fn repeated_names<'a>(crates: impl Iterator<Item = &'a CrateInfo>) -> HashSet<St
     twice
 }
 
-/// What one dependency row says about its edge.
+/// Which cargo table an edge comes from, spelled the way `cargo tree` spells
+/// it. A normal dependency needs no tag: it is the default table.
 fn kind_words(kind: DepKind) -> Option<&'static str> {
     match kind {
         DepKind::Normal => None,
-        DepKind::Dev => Some("DEV"),
-        DepKind::Build => Some("BUILD"),
+        DepKind::Dev => Some("(dev)"),
+        DepKind::Build => Some("(build)"),
     }
 }
 
 fn event_words(event: &DepEvent) -> String {
     match event {
-        DepEvent::Added => "ADDED".into(),
-        DepEvent::Removed => "REMOVED".into(),
+        DepEvent::Added => "added".into(),
+        DepEvent::Removed => "removed".into(),
         DepEvent::Bumped(old, new) => format!("{old} → {new}"),
     }
 }
@@ -511,10 +512,10 @@ fn CrateRow(
             }
         }
         if let Some(k) = kind_words(kind) {
-            span { class: "font-data text-[9px] tracking-[0.12em] text-ink-soft", "{k}" }
+            span { class: "shrink-0 font-data text-[9.5px] text-ink-soft", "{k}" }
         }
         if let Some(ev) = &event {
-            span { class: "ml-auto shrink-0 font-data text-[9.5px] tracking-[0.1em] text-flare",
+            span { class: "ml-auto shrink-0 font-data text-[9.5px] text-flare",
                 "{event_words(ev)}"
             }
         }
@@ -605,7 +606,7 @@ fn out_links(info: &CrateInfo) -> Vec<(&'static str, String)> {
 fn FactRow(label: &'static str, value: String) -> Element {
     rsx! {
         div { class: "flex items-baseline gap-2",
-            span { class: "w-[52px] shrink-0 font-data text-[9.5px] tracking-[0.1em] uppercase text-ink-soft",
+            span { class: "w-[84px] shrink-0 font-data text-[9.5px] text-ink-soft",
                 "{label}"
             }
             span { class: "min-w-0 break-words font-data text-[10px] text-ink", "{value}" }
@@ -654,7 +655,7 @@ fn CrateFacts(info: CrateInfo) -> Element {
                     FactRow { label: "path", value: path }
                 }
                 FactRow {
-                    label: "deps",
+                    label: "dependencies",
                     value: "{info.direct_deps} direct · {info.external_deps} external",
                 }
             }
@@ -790,15 +791,14 @@ pub fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
 
     let state = if focal.changed {
         Some(format!(
-            "CHANGED — {} file{} edited in this epoch",
-            focal.changed_files,
-            if focal.changed_files == 1 { "" } else { "s" }
+            "{} changed",
+            plural(focal.changed_files as usize, "file")
         ))
     } else {
         focal.affected_dist.map(|d| {
             format!(
-                "AFFECTED — {d} hop{} downstream of a change",
-                if d == 1 { "" } else { "s" }
+                "{} downstream of a change",
+                plural(d as usize, "hop")
             )
         })
     };
@@ -823,15 +823,15 @@ pub fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
                 }
                 if versions.len() > 1 {
                     p { class: "mt-0.5 font-data text-[10px] leading-snug text-ink-soft",
-                        "resolved {versions.len()} times — one star each, all selected"
+                        "cargo resolved {versions.len()} versions — one star each, all selected"
                     }
                 }
                 if let Some(state) = state {
-                    p { class: "mt-1.5 font-data text-[10px] tracking-[0.08em] text-flare", "{state}" }
+                    p { class: "mt-1.5 font-data text-[10px] text-flare", "{state}" }
                 }
                 if focal.manifest_changed {
-                    p { class: "mt-0.5 font-data text-[10px] tracking-[0.08em] text-flare",
-                        "MANIFEST EDITED — its dependency list changed"
+                    p { class: "mt-0.5 font-data text-[10px] text-flare",
+                        "Cargo.toml changed — its dependency list"
                     }
                 }
             }
@@ -843,7 +843,7 @@ pub fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
                 }
                 if used_by.is_empty() {
                     p { class: "mt-1 font-data text-[10px] text-ink-soft",
-                        if focal.changed { "nothing depends on it — the blast radius is this crate alone" }
+                        if focal.changed { "nothing depends on it — the change stops here" }
                         else { "nothing in the resolved graph" }
                     }
                 } else {
@@ -853,7 +853,7 @@ pub fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
                     "Depends on ({depends_on.len()})"
                 }
                 if depends_on.is_empty() {
-                    p { class: "mt-1 font-data text-[10px] text-ink-soft", "nothing — a leaf crate" }
+                    p { class: "mt-1 font-data text-[10px] text-ink-soft", "nothing — it has no dependencies" }
                 } else {
                     CrateList { rows: depends_on }
                 }
@@ -999,9 +999,9 @@ pub fn RingPanel(graph: WorkspaceGraph, hop: u32) -> Element {
                                         span { class: "text-ink-line", " v{info.version}" }
                                     }
                                 }
-                                if !info.is_member {
-                                    span { class: "ml-auto shrink-0 font-data text-[9.5px] tracking-[0.12em] text-ink-soft",
-                                        "EXT"
+                                if !info.is_member && !repeated.contains(info.name.as_str()) {
+                                    span { class: "ml-auto shrink-0 font-data text-[9.5px] text-ink-soft",
+                                        "v{info.version}"
                                     }
                                 }
                             }

@@ -2,6 +2,29 @@
 
 Confirmed via /impeccable shape, 2026-08-18. Built the same day.
 
+**Vocabulary rework (2026-08-19, audit):** every invented label on this chart
+was replaced by the word rust, cargo, or the VCS already uses. Nothing about
+the geometry, the rings, the edges, or the interactions changed.
+
+- "epoch" is gone from the surface. The cartouche reads
+  `diff main @ 1a2b3c4 → working copy`; the code cartouche carries the same
+  line. The internal `Epoch` type keeps its name.
+- State words are counts and nouns, lowercase: `3 files changed`,
+  `2 hops downstream`, `removed`, `added`, `1.0 → 1.2` (the arrow form is
+  unchanged). The queue's per-crate badges read `3 files` and `Cargo.toml`;
+  the focus panel reads `Cargo.toml changed — its dependency list`.
+- `EXT` is gone: an external crate carries its version (`v1.0.229`), as
+  `cargo tree` prints it. `DEV` / `BUILD` became `(dev)` / `(build)`, again
+  `cargo tree`'s own output, and the legend names the cargo tables that own
+  the dashes: `dev-dependencies — dashed · build-dependencies — dotted`.
+- The EDGES toggle is captioned `dependencies`, and its third reading is
+  `reverse deps` — it is `cargo tree -i`.
+- The fact sheet's `deps` row is `dependencies`.
+- The loading screen leads with what is actually running: "cargo metadata is
+  resolving the dependency graph".
+- Counts left the Garamond voice: the cartouche's subtitle and every state
+  line are mono, because Garamond never carries a count.
+
 **Furniture distilled (2026-08-18, same day):** the resting chart carried
 seven floating plates. Cut to four, without losing an affordance:
 
@@ -82,13 +105,14 @@ Living Chart" interaction notes and the Interaction and layout section.
   multi-selections stay shareable and back-button-retracable. Clicking a
   ring line itself selects every crate on that ring (`/ring/:hop`).
   Middle-click on any star still opens its solo focus in a new tab. An
-  EDGES toggle (depends on / used by / path to root) draws one reading of
+  edges toggle (depends on / used by / reverse deps) draws one reading of
   the selection's edges; manifest events are always drawn regardless. A
   multi-selection gets a roster panel (each crate removable), a ring
   selection gets the ring's roster; every edge carries an arrowhead
   pointing the way change travels — into the crate that uses the
   dependency.
-- Path to root (2026-08-18, same day): the third EDGES reading answers
+- Reverse deps (2026-08-18, same day; named "path to root" until the
+  2026-08-19 vocabulary rework): the third edges reading answers
   "why is this crate here?". It lights every route from the root down to
   the selection — what depends on it, then what depends on those, hop by
   hop until the chain runs out of users, which is where the root sits.

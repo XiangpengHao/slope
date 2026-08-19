@@ -13,7 +13,7 @@
 
 use std::collections::HashMap;
 
-use crate::api::{CodeGraph, ItemKind, ItemMark, Vis};
+use crate::api::{CodeGraph, ItemMark, Vis};
 
 /// The lowest container the reader can see: a file's block, or the gate of a
 /// folded directory standing in for everything inside it.
@@ -186,8 +186,8 @@ impl Block {
         match (self.quiet, self.private) {
             (0, 0) => None,
             (q, 0) => Some(format!("+ {q} quieter pub")),
-            (0, p) => Some(format!("+ {p} private folded")),
-            (q, p) => Some(format!("+ {q} quieter pub · {p} private folded")),
+            (0, p) => Some(format!("+ {p} private")),
+            (q, p) => Some(format!("+ {q} quieter pub · {p} private")),
         }
     }
 }
@@ -340,8 +340,8 @@ pub enum Dir {
     Uses,
 }
 
-/// One row of a focus column: a named item, or the italic line standing in
-/// for a container's folded private items.
+/// One row of a focus column: a named item, or the counted line standing in
+/// for a file's folded private items.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Row {
     /// `None` for the lifted-private line.
@@ -451,20 +451,10 @@ fn collect_groups(graph: &CodeGraph, acc: HashMap<(u32, Option<u32>), u32>) -> V
     groups
 }
 
-/// The glyph vocabulary reads types, not members; a member row borrows its
-/// parent's kind so fields and variants stay quiet dots.
-pub fn member_kind(parent: ItemKind) -> Option<ItemKind> {
-    match parent {
-        ItemKind::Struct | ItemKind::Union => Some(ItemKind::Struct),
-        ItemKind::Enum => Some(ItemKind::Enum),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{FileInfo, ItemEdge};
+    use crate::api::{FileInfo, ItemEdge, ItemKind};
 
     fn file(id: u32, path: &str) -> FileInfo {
         FileInfo {
@@ -494,7 +484,7 @@ mod tests {
             line: id + 1,
             parent,
             fan_in: 0,
-            traits: Vec::new(),
+            impls: Vec::new(),
         }
     }
 

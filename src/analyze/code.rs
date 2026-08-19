@@ -21,14 +21,16 @@ use ra_ap_ide_db::RootDatabase;
 use ra_ap_ide_db::base_db::EditionedFileId;
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
 use ra_ap_project_model::{CargoConfig, RustLibSource};
-use ra_ap_syntax::ast::{HasGenericParams, HasName, HasVisibility, VisibilityKind};
-use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, TextRange, TextSize, ast};
+use ra_ap_syntax::ast::{HasName, HasVisibility, VisibilityKind};
+use ra_ap_syntax::{
+    AstNode, Edition, SyntaxKind, SyntaxNode, SyntaxToken, TextRange, TextSize, ast,
+};
 use ra_ap_vfs::{FileId, Vfs};
 use tokio::sync::OnceCell;
 
 use crate::api::{
-    CodeGraph, FileDetail, FileInfo, FileRef, ItemEdge, ItemInfo, ItemKind, ItemMark, ItemMember,
-    ItemRef, ItemXRef, Vis,
+    CodeGraph, FileDetail, FileInfo, FileRef, ItemEdge, ItemInfo, ItemKind, ItemMark, ItemRef,
+    ItemSource, ItemXRef, Tok, Vis,
 };
 
 /// The whole survey, precomputed once: the shipped graph plus every file's
@@ -37,6 +39,9 @@ pub struct CodeIndex {
     pub graph: CodeGraph,
     /// Indexed by [`FileInfo::id`].
     pub details: Vec<FileDetail>,
+    /// Every surveyed file's source text, indexed by [`FileInfo::id`]. The
+    /// focus plate quotes it; it never crosses the wire whole.
+    pub sources: Vec<String>,
 }
 
 static INDEX: OnceCell<Result<Arc<CodeIndex>, String>> = OnceCell::const_new();
@@ -98,11 +103,6 @@ struct RawItem {
     /// impl block is attribution, not geometry: its items belong to the
     /// impl's self type, wherever that type is written.
     owner: Option<TextRange>,
-    /// Struct fields or enum variants, in source order.
-    members: Vec<ItemMember>,
-    /// A function's signature, without its body.
-    sig: Option<String>,
-    derives: Vec<String>,
 }
 
 /// One file being surveyed.
@@ -226,12 +226,17 @@ fn survey_attached(
         .collect();
 
     let mut starts: Vec<LineStarts> = Vec::with_capacity(raw.len());
+    // The text is read once here and kept: the focus plate quotes an item's
+    // own source, and re-reading the file later would risk quoting something
+    // the survey never saw.
+    let mut sources: Vec<String> = Vec::with_capacity(raw.len());
     for file in raw.iter_mut() {
         let source = sema.parse(file.efid);
         let text = source.syntax().text().to_string();
         let lines = LineStarts::new(&text);
         file.lines = lines.count();
         starts.push(lines);
+        sources.push(text);
         let mut items = Vec::new();
         collect_items(source.syntax(), &ItemCtx::root(), &mut items);
         items.sort_by_key(|i| (i.range.start(), std::cmp::Reverse(i.range.end())));
@@ -303,8 +308,8 @@ fn survey_attached(
                 continue;
             };
             impl_self.insert((fi as u32, li as u32), mark);
-            if let Some(t) = node.trait_() {
-                impl_traits.push((mark, compact(t.syntax().text())));
+            if node.trait_().is_some() {
+                impl_traits.push((mark, impl_header(node)));
             }
         }
     }
@@ -448,18 +453,18 @@ fn survey_attached(
         .collect();
     item_edges.sort_by_key(|e| (e.from_file, e.from, e.to_file, e.to));
 
-    // The landmarks themselves, with their traits gathered from every impl.
-    let mut traits_of: Vec<Vec<String>> = vec![Vec::new(); mark_at.len()];
-    for (mark, name) in impl_traits {
-        traits_of[mark as usize].push(name);
+    // The landmarks themselves, with the trait impls written for them
+    // anywhere in the workspace.
+    let mut impls_of: Vec<Vec<String>> = vec![Vec::new(); mark_at.len()];
+    for (mark, header) in impl_traits {
+        impls_of[mark as usize].push(header);
     }
     let mut items: Vec<ItemMark> = Vec::with_capacity(mark_at.len());
     for (id, &(fi, li)) in mark_at.iter().enumerate() {
         let item = &raw[fi as usize].items[li as usize];
-        let mut traits = std::mem::take(&mut traits_of[id]);
-        traits.extend(item.derives.iter().cloned());
-        traits.sort();
-        traits.dedup();
+        let mut impls = std::mem::take(&mut impls_of[id]);
+        impls.sort();
+        impls.dedup();
         items.push(ItemMark {
             id: id as u32,
             file: fi,
@@ -471,7 +476,7 @@ fn survey_attached(
             line: starts[fi as usize].line(item.range.start()),
             parent: parent_of[id],
             fan_in: fan_in[id],
-            traits,
+            impls,
         });
     }
 
@@ -546,9 +551,8 @@ fn survey_attached(
                         end_line: lines.line(it.range.end()),
                         vis: it.vis,
                         mark: mark_of[i][id],
-                        members: it.members.clone(),
-                        sig: it.sig.clone(),
-                        derives: it.derives.clone(),
+                        start: u32::from(it.range.start()),
+                        end: u32::from(it.range.end()),
                     })
                     .collect(),
                 item_refs: std::mem::take(&mut item_refs[i]),
@@ -562,8 +566,8 @@ fn survey_attached(
         "references are resolved semantically by rust-analyzer; only \
          references between workspace files are charted"
             .to_string(),
-        "references produced by derive macros are not counted; the traits a \
-         type derives are listed on its plate instead"
+        "references produced by derive macros are not counted; a type's \
+         derives stand in its own source, on its plate"
             .to_string(),
         "an `impl Trait for Type` counts as a reference from the type to the \
          trait — the impl block itself holds no ground"
@@ -593,6 +597,7 @@ fn survey_attached(
             notes,
         },
         details,
+        sources,
     })
 }
 
@@ -634,14 +639,12 @@ fn section_type(section: &str) -> &str {
         .unwrap_or(s)
 }
 
-/// Collapse whitespace and cap length, for impl headers used as names.
+/// Collapse whitespace and cap length, for impl headers used as names. The
+/// only place the survey rewrites source text: an impl header is a label,
+/// and a label is one line. Everything a reader reads as code — an item's
+/// definition — is quoted whole instead, by [`item_source`].
 fn compact(text: impl ToString) -> String {
-    compact_to(text, 48)
-}
-
-/// Collapse whitespace and cap length. Source text lands on plates, so it
-/// arrives on one line or not at all.
-fn compact_to(text: impl ToString, cap: usize) -> String {
+    const CAP: usize = 48;
     let text = text.to_string();
     let mut out = String::new();
     let mut last_ws = false;
@@ -656,8 +659,8 @@ fn compact_to(text: impl ToString, cap: usize) -> String {
             last_ws = false;
         }
     }
-    if out.len() > cap {
-        let mut cut = cap;
+    if out.len() > CAP {
+        let mut cut = CAP;
         while !out.is_char_boundary(cut) {
             cut -= 1;
         }
@@ -722,9 +725,6 @@ impl ItemCtx {
             range,
             vis,
             owner: self.owner,
-            members: Vec::new(),
-            sig: None,
-            derives: Vec::new(),
         }
     }
 
@@ -734,119 +734,6 @@ impl ItemCtx {
             declared => declared,
         }
     }
-}
-
-/// Struct fields or union fields, in source order. Tuple fields keep their
-/// index as their name — `.0` is what the reader writes.
-fn fields_of(list: Option<ast::FieldList>) -> Vec<ItemMember> {
-    match list {
-        Some(ast::FieldList::RecordFieldList(r)) => r
-            .fields()
-            .map(|f| ItemMember {
-                name: f.name().map(|n| n.text().to_string()).unwrap_or_default(),
-                ty: f
-                    .ty()
-                    .map(|t| compact_to(t.syntax().text(), 64))
-                    .unwrap_or_default(),
-                vis: vis_kind(f.visibility()),
-            })
-            .collect(),
-        Some(ast::FieldList::TupleFieldList(t)) => t
-            .fields()
-            .enumerate()
-            .map(|(i, f)| ItemMember {
-                name: format!(".{i}"),
-                ty: f
-                    .ty()
-                    .map(|t| compact_to(t.syntax().text(), 64))
-                    .unwrap_or_default(),
-                vis: vis_kind(f.visibility()),
-            })
-            .collect(),
-        None => Vec::new(),
-    }
-}
-
-/// Enum variants with their payloads. A variant is as visible as its enum.
-fn variants_of(list: Option<ast::VariantList>) -> Vec<ItemMember> {
-    list.map(|l| {
-        l.variants()
-            .map(|v| ItemMember {
-                name: v.name().map(|n| n.text().to_string()).unwrap_or_default(),
-                ty: v
-                    .field_list()
-                    .map(|f| compact_to(f.syntax().text(), 64))
-                    .unwrap_or_default(),
-                vis: Vis::Pub,
-            })
-            .collect()
-    })
-    .unwrap_or_default()
-}
-
-/// Derive names, read from the attribute's own text — derive arguments are
-/// plain paths, so the words are the badge.
-fn derives_of(node: &SyntaxNode) -> Vec<String> {
-    let mut out = Vec::new();
-    for attr in node.children().filter(|c| c.kind() == SyntaxKind::ATTR) {
-        let text = attr.text().to_string();
-        let Some(inner) = text
-            .trim()
-            .strip_prefix("#[derive(")
-            .and_then(|t| t.trim_end().strip_suffix(")]"))
-        else {
-            continue;
-        };
-        out.extend(
-            inner
-                .split(',')
-                .map(str::trim)
-                .filter(|n| !n.is_empty())
-                .map(|n| compact_to(n, 24)),
-        );
-    }
-    out
-}
-
-/// A function's signature without its body: what the focus plate engraves in
-/// place of fields.
-fn fn_signature(f: &ast::Fn, name: &str) -> String {
-    let mut sig = String::new();
-    if let Some(v) = f.visibility() {
-        sig.push_str(&compact(v.syntax().text()));
-        sig.push(' ');
-    }
-    for (token, word) in [
-        (f.default_token(), "default "),
-        (f.const_token(), "const "),
-        (f.async_token(), "async "),
-        (f.unsafe_token(), "unsafe "),
-    ] {
-        if token.is_some() {
-            sig.push_str(word);
-        }
-    }
-    if let Some(abi) = f.abi() {
-        sig.push_str(&compact(abi.syntax().text()));
-        sig.push(' ');
-    }
-    sig.push_str("fn ");
-    sig.push_str(name);
-    if let Some(g) = f.generic_param_list() {
-        sig.push_str(&compact_to(g.syntax().text(), 64));
-    }
-    if let Some(p) = f.param_list() {
-        sig.push_str(&compact_to(p.syntax().text(), 180));
-    }
-    if let Some(r) = f.ret_type() {
-        sig.push(' ');
-        sig.push_str(&compact_to(r.syntax().text(), 96));
-    }
-    if let Some(w) = f.where_clause() {
-        sig.push(' ');
-        sig.push_str(&compact_to(w.syntax().text(), 96));
-    }
-    sig
 }
 
 /// Collect the file's items in tree order. Inline modules contribute their
@@ -859,31 +746,19 @@ fn collect_items(node: &SyntaxNode, ctx: &ItemCtx, out: &mut Vec<RawItem>) {
 
         if let Some(f) = ast::Fn::cast(child.clone()) {
             if let Some(name) = name_of(f.name()) {
-                let mut item = ctx.item(&name, ItemKind::Fn, range, ctx.vis(f.visibility()));
-                item.sig = Some(fn_signature(&f, &name));
-                out.push(item);
+                out.push(ctx.item(&name, ItemKind::Fn, range, ctx.vis(f.visibility())));
             }
         } else if let Some(s) = ast::Struct::cast(child.clone()) {
             if let Some(name) = name_of(s.name()) {
-                let mut item = ctx.item(&name, ItemKind::Struct, range, ctx.vis(s.visibility()));
-                item.members = fields_of(s.field_list());
-                item.derives = derives_of(&child);
-                out.push(item);
+                out.push(ctx.item(&name, ItemKind::Struct, range, ctx.vis(s.visibility())));
             }
         } else if let Some(e) = ast::Enum::cast(child.clone()) {
             if let Some(name) = name_of(e.name()) {
-                let mut item = ctx.item(&name, ItemKind::Enum, range, ctx.vis(e.visibility()));
-                item.members = variants_of(e.variant_list());
-                item.derives = derives_of(&child);
-                out.push(item);
+                out.push(ctx.item(&name, ItemKind::Enum, range, ctx.vis(e.visibility())));
             }
         } else if let Some(u) = ast::Union::cast(child.clone()) {
             if let Some(name) = name_of(u.name()) {
-                let mut item = ctx.item(&name, ItemKind::Union, range, ctx.vis(u.visibility()));
-                item.members =
-                    fields_of(u.record_field_list().map(ast::FieldList::RecordFieldList));
-                item.derives = derives_of(&child);
-                out.push(item);
+                out.push(ctx.item(&name, ItemKind::Union, range, ctx.vis(u.visibility())));
             }
         } else if let Some(t) = ast::Trait::cast(child.clone()) {
             if let Some(name) = name_of(t.name()) {
@@ -1241,4 +1116,183 @@ fn target_at(
     let file = *file_of.get(&fid)?;
     let item = at.and_then(|off| item_at(&raw[file as usize].items, off));
     Some(RefTarget { file, item })
+}
+
+// ---------------------------------------------------------------------------
+// The definition plate: an item's own source, quoted.
+// ---------------------------------------------------------------------------
+
+/// Body lines a long definition keeps past its docs, attributes, and
+/// signature. Types, traits, consts, and statics are never cut: their whole
+/// text is the fact the reader came for.
+const BODY_LINES: usize = 60;
+
+/// One item's source text, dedented and lexed into coloured runs — what Go to
+/// Definition lands on. The plate quotes the file: nothing is rewritten, and
+/// whatever is cut says so and is counted.
+pub fn item_source(idx: &CodeIndex, file: u32, item: u32) -> Option<ItemSource> {
+    let info = idx.details.get(file as usize)?.items.get(item as usize)?;
+    let text = idx.sources.get(file as usize)?;
+    let path = idx.graph.files.get(file as usize)?.path.clone();
+
+    let (start, end) = (info.start as usize, info.end as usize);
+    if start > end
+        || end > text.len()
+        || !text.is_char_boundary(start)
+        || !text.is_char_boundary(end)
+    {
+        return None;
+    }
+
+    // A method inside an impl starts mid-line: give it back the indent its own
+    // line begins with before stripping what every line shares, or its first
+    // line hangs out to the left of its body.
+    let bol = text[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let indent = &text[bol..start];
+    let mut snippet = String::with_capacity(end - start + indent.len());
+    if !indent.is_empty() && indent.chars().all(char::is_whitespace) {
+        snippet.push_str(indent);
+    }
+    snippet.push_str(&text[start..end]);
+    let mut lines = lex_lines(&dedent(&snippet));
+
+    // A long body folds, and the fold counts what it holds back.
+    let mut elided = 0;
+    if matches!(info.kind, ItemKind::Fn | ItemKind::Mod | ItemKind::Macro) {
+        let head = lines
+            .iter()
+            .take_while(|line| {
+                line.iter()
+                    .all(|(_, t)| matches!(t, Tok::Doc | Tok::Comment | Tok::Attr | Tok::Space))
+            })
+            .count();
+        let keep = head + BODY_LINES;
+        if lines.len() > keep + 1 {
+            elided = (lines.len() - keep) as u32;
+            lines.truncate(keep);
+        }
+    }
+
+    Some(ItemSource {
+        path,
+        first_line: info.line,
+        lines,
+        elided,
+    })
+}
+
+/// Strip the indent every line shares, so a method quoted out of its impl
+/// block starts at the plate's left edge instead of four spaces into it.
+fn dedent(text: &str) -> String {
+    let common = text
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0);
+    if common == 0 {
+        return text.to_string();
+    }
+    text.lines()
+        .map(|line| line.get(common..).unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Lex a snippet into per-line runs. A fragment that does not parse as a whole
+/// file is fine: the parser always produces a tree, and the token stream is
+/// the source text either way.
+fn lex_lines(snippet: &str) -> Vec<Vec<(String, Tok)>> {
+    let parsed = ra_ap_syntax::SourceFile::parse(snippet, Edition::CURRENT);
+    let tokens: Vec<SyntaxToken> = parsed
+        .syntax_node()
+        .descendants_with_tokens()
+        .filter_map(|element| element.into_token())
+        .collect();
+
+    let mut lines: Vec<Vec<(String, Tok)>> = vec![Vec::new()];
+    for (i, token) in tokens.iter().enumerate() {
+        let class = classify(&tokens, i);
+        for (n, part) in token.text().split('\n').enumerate() {
+            if n > 0 {
+                lines.push(Vec::new());
+            }
+            let part = part.trim_end_matches('\r');
+            if !part.is_empty() {
+                lines
+                    .last_mut()
+                    .expect("a line is always open")
+                    .push((part.to_string(), class));
+            }
+        }
+    }
+    if lines.len() > 1 && lines.last().is_some_and(Vec::is_empty) {
+        lines.pop();
+    }
+    lines
+}
+
+/// The nearest token before `i` that is neither whitespace nor a comment.
+fn before(tokens: &[SyntaxToken], i: usize) -> Option<SyntaxKind> {
+    tokens[..i]
+        .iter()
+        .rev()
+        .map(SyntaxToken::kind)
+        .find(|kind| !kind.is_trivia())
+}
+
+/// The nearest token after `i` that is neither whitespace nor a comment.
+fn after(tokens: &[SyntaxToken], i: usize) -> Option<SyntaxKind> {
+    tokens[i + 1..]
+        .iter()
+        .map(SyntaxToken::kind)
+        .find(|kind| !kind.is_trivia())
+}
+
+/// What one token is, for colouring. Rust's own categories: the palette that
+/// draws them is the client's business.
+fn classify(tokens: &[SyntaxToken], i: usize) -> Tok {
+    let token = &tokens[i];
+    let kind = token.kind();
+    if kind == SyntaxKind::WHITESPACE {
+        return Tok::Space;
+    }
+    if kind == SyntaxKind::COMMENT {
+        let text = token.text();
+        let doc = ["///", "//!", "/**", "/*!"].iter().any(|p| text.starts_with(p));
+        return if doc { Tok::Doc } else { Tok::Comment };
+    }
+    // An attribute is one thing to a reader — `#[derive(Clone, Copy)]` reads
+    // as a unit — so everything inside it takes one class.
+    if token.parent_ancestors().any(|n| n.kind() == SyntaxKind::ATTR) {
+        return Tok::Attr;
+    }
+    if kind.is_literal() {
+        return match kind {
+            SyntaxKind::INT_NUMBER | SyntaxKind::FLOAT_NUMBER => Tok::Num,
+            _ => Tok::Str,
+        };
+    }
+    if kind == SyntaxKind::LIFETIME_IDENT {
+        return Tok::Lifetime;
+    }
+    if kind.is_keyword(Edition::CURRENT) {
+        return Tok::Kw;
+    }
+    if kind == SyntaxKind::IDENT {
+        if after(tokens, i) == Some(SyntaxKind::BANG) {
+            return Tok::Macro;
+        }
+        if before(tokens, i) == Some(SyntaxKind::FN_KW) {
+            return Tok::Fn;
+        }
+        if token.text().starts_with(char::is_uppercase) {
+            return Tok::Type;
+        }
+        return Tok::Ident;
+    }
+    if kind.is_punct() {
+        return Tok::Punct;
+    }
+    Tok::Ident
 }
