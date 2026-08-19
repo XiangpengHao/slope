@@ -146,6 +146,39 @@ pub enum ItemKind {
     Impl,
 }
 
+/// How widely an item is declared visible. `pub(crate)`, `pub(super)`, and
+/// `pub(in path)` are not `pub`: the altitude's interest bar reads them
+/// apart, and privacy is a permanent fold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Vis {
+    /// `pub` — visible outside its own crate.
+    Pub,
+    /// `pub(crate)`, `pub(super)`, `pub(in path)`.
+    Crate,
+    /// No `pub` at all. Never a mark on the map; its references lift.
+    Private,
+}
+
+impl Vis {
+    /// Weight the interest bar adds for visibility: the wider the door, the
+    /// more the map owes the reader a name.
+    pub fn weight(self) -> u32 {
+        match self {
+            Vis::Pub => 2,
+            Vis::Crate => 1,
+            Vis::Private => 0,
+        }
+    }
+
+    pub fn words(self) -> &'static str {
+        match self {
+            Vis::Pub => "pub",
+            Vis::Crate => "pub(crate)",
+            Vis::Private => "private",
+        }
+    }
+}
+
 /// One source file in the workspace.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileInfo {
@@ -155,6 +188,8 @@ pub struct FileInfo {
     pub path: String,
     /// Name of the crate this file belongs to.
     pub krate: String,
+    /// Touched between the epoch base and the working copy.
+    pub changed: bool,
     pub lines: u32,
     /// How many items the file defines (functions, types, traits, …).
     pub items: u32,
@@ -177,17 +212,79 @@ pub struct FileRef {
     pub count: u32,
 }
 
-/// The code-structure survey: every workspace source file and every resolved
-/// file-to-file reference. Item detail ships separately, per file, on unfold.
+/// One landmark the map may engrave: an item, seated in the containment tree
+/// (crate → directory → file → type → method), with the weight that decides
+/// whether it clears the altitude's bar.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemMark {
+    /// Index into [`CodeGraph::items`].
+    pub id: u32,
+    /// The file whose source defines it.
+    pub file: u32,
+    /// Index into that file's [`FileDetail::items`].
+    pub local: u32,
+    /// Display name, without any section prefix.
+    pub name: String,
+    /// The label this item selects by in a URL: `Type::method` inside a
+    /// section, the plain name otherwise.
+    pub label: String,
+    pub kind: ItemKind,
+    pub vis: Vis,
+    pub line: u32,
+    /// Semantic container: the type a method or associated item belongs to,
+    /// resolved through the impl's self type even when the impl sits in
+    /// another file. `None` for items the file itself contains.
+    pub parent: Option<u32>,
+    /// Item-level references reaching it from other files. Drives the
+    /// engraved weight of its mark.
+    pub fan_in: u32,
+    /// Traits this type derives or implements, from every impl anywhere in
+    /// the workspace. A lens on the type, never nesting.
+    pub traits: Vec<String>,
+}
+
+/// A reference between two items, aggregated per pair. Endpoints carry their
+/// file, so the client can lift an edge to whatever is visible at the current
+/// fold state without fetching item detail; a `None` item is a reference to a
+/// file as a whole (a `use` of its module).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemEdge {
+    pub from_file: u32,
+    pub from: Option<u32>,
+    pub to_file: u32,
+    pub to: Option<u32>,
+    pub count: u32,
+}
+
+/// The code-structure survey: every workspace source file, every resolved
+/// reference at both file and item precision, and every item the map can
+/// engrave. Item *bodies* — fields, variants, signatures — ship separately,
+/// per file, when a focus asks for them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CodeGraph {
     pub files: Vec<FileInfo>,
     pub refs: Vec<FileRef>,
+    /// Every chartable item, in (file, source) order. Impl blocks are not
+    /// here: they are attribution, not geometry.
+    pub items: Vec<ItemMark>,
+    /// Cross-file references at item precision, aggregated per pair.
+    pub item_edges: Vec<ItemEdge>,
     /// Names the survey could not resolve (type-inference limits). They are
     /// not on the chart; the words on the plate must say so.
     pub unresolved: u32,
     /// Fidelity notes, in plain words, for the legend.
     pub notes: Vec<String>,
+}
+
+/// One field of a struct, or one variant of an enum: the body the focus plate
+/// unfolds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemMember {
+    /// Field or variant name; the index for a tuple field.
+    pub name: String,
+    /// Field type or variant payload, as written. Empty when there is none.
+    pub ty: String,
+    pub vis: Vis,
 }
 
 /// One item inside a file.
@@ -204,8 +301,15 @@ pub struct ItemInfo {
     /// 1-based lines in the source file.
     pub line: u32,
     pub end_line: u32,
-    /// Declared with some form of `pub`.
-    pub public: bool,
+    pub vis: Vis,
+    /// Index into [`CodeGraph::items`]; `None` for impl blocks.
+    pub mark: Option<u32>,
+    /// Struct fields or enum variants, in source order.
+    pub members: Vec<ItemMember>,
+    /// A function's signature, without its body.
+    pub sig: Option<String>,
+    /// Derive names, for the plate's badges.
+    pub derives: Vec<String>,
 }
 
 /// A reference between two items of the same file.

@@ -1,15 +1,16 @@
 //! The file tree and its chart projection.
 //!
 //! The code map's organizing idea is the directory structure — the shape the
-//! reviewer already knows from their editor. This module builds that tree
-//! from the surveyed file paths and projects it onto the paper as an
-//! engraved **plan** growing downward: every directory a named street, its
-//! files as lots above the spine, subdirectories branching below.
+//! reviewer already knows from their editor. This module builds that tree from
+//! the surveyed file paths and projects it onto the paper as **nested
+//! territories**: every directory a bordered district with its name engraved
+//! on the border, every file a block inside it, every district inside its
+//! parent. Nesting is the only thing it means — belongs to.
 //!
-//! The layout is a pure function of (tree, disclosure): deterministic, no
-//! physics, and the same workspace always draws the same map. Directories
-//! past the disclosure depth fold to a single gate mark carrying its file
-//! count; opening a gate is a local toggle, never a re-layout of settled
+//! The layout is a pure function of (tree, disclosure, measured block sizes):
+//! deterministic, no physics, and the same workspace always draws the same
+//! map. Directories past the disclosure depth fold to a single gate carrying
+//! its counts; opening a gate is a local toggle, never a re-survey of settled
 //! ground.
 
 use std::collections::{HashMap, HashSet};
@@ -118,19 +119,28 @@ impl FileTree {
         let file_names: HashMap<u32, &str> = graph
             .files
             .iter()
-            .map(|f| (f.id, f.path.rsplit_once('/').map(|(_, n)| n).unwrap_or(&f.path)))
+            .map(|f| {
+                (
+                    f.id,
+                    f.path.rsplit_once('/').map(|(_, n)| n).unwrap_or(&f.path),
+                )
+            })
             .collect();
         for dir in &mut dirs {
-            dir.dirs.sort_by(|a, b| names[*a as usize].cmp(&names[*b as usize]));
-            dir.files
-                .sort_by(|a, b| file_names[a].cmp(file_names[b]));
+            dir.dirs
+                .sort_by(|a, b| names[*a as usize].cmp(&names[*b as usize]));
+            dir.files.sort_by(|a, b| file_names[a].cmp(file_names[b]));
         }
 
         // Subtree file counts, children before parents (children always have
         // larger ids than their parent, by construction).
         for i in (0..dirs.len()).rev() {
             let own = dirs[i].files.len() as u32;
-            let sub: u32 = dirs[i].dirs.iter().map(|&d| dirs[d as usize].file_count).sum();
+            let sub: u32 = dirs[i]
+                .dirs
+                .iter()
+                .map(|&d| dirs[d as usize].file_count)
+                .sum();
             dirs[i].file_count = own + sub;
             if dirs[i].file_count == 0 {
                 dirs[i].file_count = 0;
@@ -242,275 +252,252 @@ pub fn dir_key(id: u32) -> String {
     format!("d{id}")
 }
 
-/// One placed mark.
-#[derive(Clone, PartialEq, Debug)]
-pub struct PlacedMark {
-    pub point: Point,
+/// Block furniture, in flow units — one unit is one CSS pixel at zoom 1. The
+/// layout measures blocks itself, so the drawn plate must be handed exactly
+/// these numbers: a plate taller than its box would stand on its neighbor.
+pub const BLOCK_HEAD_H: f64 = 25.0;
+pub const BLOCK_ROW_H: f64 = 17.0;
+/// One wrapped line of a fold's words. A fold that clips its own count says
+/// nothing, so the box grows to fit the sentence.
+pub const BLOCK_FOLD_LINE: f64 = 11.0;
+pub const BLOCK_PAD_X: f64 = 9.0;
+/// Slack below the last row, so the frame never crowds the letters.
+pub const BLOCK_FOOT: f64 = 7.0;
+pub const BLOCK_MIN_W: f64 = 138.0;
+pub const BLOCK_MAX_W: f64 = 296.0;
+/// A folded directory's gate: one counted line, no rows.
+pub const GATE_H: f64 = 31.0;
+
+/// District furniture: inner padding, the band the engraved label sits in,
+/// and the gap between siblings.
+const D_PAD: f64 = 13.0;
+const D_LABEL_H: f64 = 14.0;
+const GAP: f64 = 11.0;
+
+/// One em of advance in the data face (JetBrains Mono is monospaced) and in
+/// the chart face's caps (EB Garamond, which sets wider than it measures).
+pub const MONO_ADVANCE: f64 = 0.6;
+pub const CAPS_ADVANCE: f64 = 0.68;
+
+/// Estimated width of mono text at a given size. The map would rather carry
+/// slack than clip a name.
+pub fn text_w(text: &str, px: f64) -> f64 {
+    tracked_w(text, px, MONO_ADVANCE, 0.0)
 }
 
-/// Estimated on-chart label width for a mono name, for collision budgets.
-/// The budget covers the mark's own box plus the name seated beside it.
-pub fn label_w(name: &str) -> f64 {
-    name.chars().count() as f64 * 6.8 + 46.0
+/// Estimated width of a tracked run of letters. The engraved labels are
+/// uppercase with heavy letter-spacing, and the tracking is most of what they
+/// measure — leaving it out is what makes a label collide with its neighbor.
+pub fn tracked_w(text: &str, px: f64, advance: f64, tracking_em: f64) -> f64 {
+    text.chars().count() as f64 * px * (advance + tracking_em)
 }
 
-// ---------------------------------------------------------------------------
-// The plan: every directory a street, every file a lot.
-// ---------------------------------------------------------------------------
-
-/// Vertical distance from a spine down to its child spines.
-const STUB_H: f64 = 44.0;
-/// Height of one row of lots above a spine.
-const LOT_ROW_H: f64 = 30.0;
-/// Gap between sibling blocks.
-const BLOCK_GAP: f64 = 48.0;
-/// Lots wrap to a new row past this width.
-const ROW_MAX: f64 = 460.0;
-/// Clearance between a spine's start and its first lot or child.
-const SPINE_PAD: f64 = 10.0;
-
-/// One street to engrave: a horizontal spine with its name lettered on it,
-/// and the stub connecting it to its parent street.
-#[derive(Clone, PartialEq, Debug)]
-pub struct Street {
-    pub dir: u32,
-    pub x0: f64,
-    pub x1: f64,
+/// One placed box on the paper.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct Placed {
+    pub x: f64,
     pub y: f64,
-    /// Stub from the parent spine: (x, y_top, y_bottom). None for the root.
-    pub stub: Option<(f64, f64, f64)>,
+    pub w: f64,
+    pub h: f64,
 }
 
+impl Placed {
+    pub fn center(&self) -> Point {
+        Point::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
+    }
+
+    fn shifted(self, dx: f64, dy: f64) -> Self {
+        Self {
+            x: self.x + dx,
+            y: self.y + dy,
+            ..self
+        }
+    }
+}
+
+/// One district frame: a bordered territory with its name on the border.
 #[derive(Clone, PartialEq, Debug)]
-pub struct PlanLayout {
-    pub pos: HashMap<String, PlacedMark>,
-    pub streets: Vec<Street>,
-    /// The whole plan's bounds (before centering), for tests.
+pub struct District {
+    pub dir: u32,
+    pub at: Placed,
+    pub depth: u32,
+}
+
+/// What the layout must be told about what it seats: the measured size of
+/// every file block and gate, and the width of every district's engraved
+/// label. Measuring belongs with the drawing, not with the geometry.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct Measures {
+    pub blocks: HashMap<u32, (f64, f64)>,
+    pub gates: HashMap<u32, (f64, f64)>,
+    pub labels: HashMap<u32, f64>,
+}
+
+/// The whole map, placed.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub struct MapLayout {
+    pub blocks: HashMap<u32, Placed>,
+    pub gates: HashMap<u32, Placed>,
+    /// Outermost first: districts paint in this order, so a nested tint lays
+    /// over its parent's.
+    pub districts: Vec<District>,
     pub size: (f64, f64),
 }
 
-struct Block {
-    width: f64,
-    height: f64,
-    /// The spine's y within the block.
-    spine_y: f64,
-    /// Marks at block-relative positions.
-    marks: Vec<(String, f64, f64)>,
-    streets: Vec<Street>,
-}
-
-/// Lay the visible tree as a town plan. The root street runs across the top;
-/// every open directory hangs its own street below its parent's, files as
-/// lots in rows above each spine. Everything is name-ordered: the same
-/// workspace always draws the same plan.
-pub fn plan_layout(
-    tree: &FileTree,
-    open: &HashSet<u32>,
-    file_names: &HashMap<u32, String>,
-) -> PlanLayout {
-    let mut block = layout_block(tree, open, file_names, ROOT);
-    // Center the plan on the flow origin.
-    let (w, h) = (block.width, block.height);
-    let (dx, dy) = (-w / 2.0, -h / 2.0);
-    let mut pos = HashMap::new();
-    for (key, x, y) in block.marks.drain(..) {
-        pos.insert(
-            key,
-            PlacedMark {
-                point: Point::new(x + dx, y + dy),
-            },
-        );
-    }
-    let streets = block
-        .streets
-        .into_iter()
-        .map(|s| Street {
-            x0: s.x0 + dx,
-            x1: s.x1 + dx,
-            y: s.y + dy,
-            stub: s.stub.map(|(x, y0, y1)| (x + dx, y0 + dy, y1 + dy)),
-            ..s
-        })
-        .collect();
-    PlanLayout {
-        pos,
-        streets,
-        size: (w, h),
+/// Lay the visible tree as nested territories, centered on the flow origin.
+/// Files come before subdirectories inside a district — the reading order of
+/// a directory listing — and everything is name-ordered, so the same
+/// workspace always draws the same map.
+pub fn map_layout(tree: &FileTree, open: &HashSet<u32>, m: &Measures) -> MapLayout {
+    let packed = pack_dir(tree, open, m, ROOT);
+    let (dx, dy) = (-packed.w / 2.0, -packed.h / 2.0);
+    // The root's own frame carries the workspace; every other district paints
+    // over it, in the order they were packed — an ancestor always first.
+    let root = District {
+        dir: ROOT,
+        at: Placed {
+            x: dx,
+            y: dy,
+            w: packed.w,
+            h: packed.h,
+        },
+        depth: 0,
+    };
+    MapLayout {
+        blocks: packed
+            .blocks
+            .into_iter()
+            .map(|(id, at)| (id, at.shifted(dx, dy)))
+            .collect(),
+        gates: packed
+            .gates
+            .into_iter()
+            .map(|(id, at)| (id, at.shifted(dx, dy)))
+            .collect(),
+        districts: std::iter::once(root)
+            .chain(packed.districts.into_iter().map(|d| District {
+                at: d.at.shifted(dx, dy),
+                ..d
+            }))
+            .collect(),
+        size: (packed.w, packed.h),
     }
 }
 
-fn layout_block(
-    tree: &FileTree,
-    open: &HashSet<u32>,
-    file_names: &HashMap<u32, String>,
-    dir: u32,
-) -> Block {
+struct Packed {
+    w: f64,
+    h: f64,
+    blocks: Vec<(u32, Placed)>,
+    gates: Vec<(u32, Placed)>,
+    districts: Vec<District>,
+}
+
+enum Kid {
+    File(u32),
+    Gate(u32),
+    Dir(u32, Packed),
+}
+
+fn pack_dir(tree: &FileTree, open: &HashSet<u32>, m: &Measures, dir: u32) -> Packed {
     let node = &tree.dirs[dir as usize];
-
-    // Lots: files in name order, wrapped into rows.
-    let mut rows: Vec<Vec<(u32, f64)>> = vec![Vec::new()];
-    let mut row_w = 0.0f64;
-    for &f in &node.files {
-        let w = label_w(file_names.get(&f).map(String::as_str).unwrap_or("?"));
-        if row_w + w > ROW_MAX && !rows.last().unwrap().is_empty() {
-            rows.push(Vec::new());
-            row_w = 0.0;
-        }
-        rows.last_mut().unwrap().push((f, w));
-        row_w += w;
+    let mut kids: Vec<(Kid, f64, f64)> = Vec::new();
+    for &file in &node.files {
+        let (w, h) = m
+            .blocks
+            .get(&file)
+            .copied()
+            .unwrap_or((BLOCK_MIN_W, BLOCK_HEAD_H + BLOCK_FOOT));
+        kids.push((Kid::File(file), w, h));
     }
-    let lots_h = if node.files.is_empty() {
-        0.0
-    } else {
-        rows.len() as f64 * LOT_ROW_H
-    };
-    let lots_w: f64 = rows
-        .iter()
-        .map(|r| r.iter().map(|(_, w)| *w).sum::<f64>())
-        .fold(0.0, f64::max);
-
-    // Child blocks: open dirs as full streets, closed dirs as gates.
-    struct ChildSlot {
-        name: String,
-        gate: Option<u32>,
-        block: Option<Block>,
-    }
-    let mut slots: Vec<ChildSlot> = Vec::new();
     for &child in &node.dirs {
-        let name = tree.dirs[child as usize].name.clone();
         if open.contains(&child) {
-            slots.push(ChildSlot {
-                name,
-                gate: None,
-                block: Some(layout_block(tree, open, file_names, child)),
-            });
+            let packed = pack_dir(tree, open, m, child);
+            let (w, h) = (packed.w, packed.h);
+            kids.push((Kid::Dir(child, packed), w, h));
         } else {
-            slots.push(ChildSlot {
-                name,
-                gate: Some(child),
-                block: None,
-            });
-        }
-    }
-    slots.sort_by(|a, b| a.name.cmp(&b.name));
-
-    let spine_y = lots_h;
-    let mut marks: Vec<(String, f64, f64)> = Vec::new();
-    let mut streets: Vec<Street> = Vec::new();
-
-    // Place lots above the spine, oldest row nearest it. The first lot
-    // clears the directory's own mark at the street start.
-    for (ri, row) in rows.iter().enumerate() {
-        let y = spine_y - (ri as f64 + 0.5) * LOT_ROW_H;
-        let mut x = SPINE_PAD + 18.0;
-        for (f, w) in row {
-            marks.push((file_key(*f), x + 9.0, y));
-            x += w;
+            let (w, h) = m
+                .gates
+                .get(&child)
+                .copied()
+                .unwrap_or((BLOCK_MIN_W, GATE_H));
+            kids.push((Kid::Gate(child), w, h));
         }
     }
 
-    // Place children below.
-    let child_top = spine_y + STUB_H;
-    let mut x = SPINE_PAD + 14.0;
-    let mut max_child_h = 0.0f64;
-    // Where the street's engraved line must still reach: the last stub that
-    // hangs from it. Past that, a line is bare rule to nowhere.
-    let mut last_stub_x = 0.0f64;
-    for slot in &mut slots {
-        match (&slot.gate, &mut slot.block) {
-            (Some(gate), _) => {
-                let w = label_w(&slot.name) + 18.0;
-                marks.push((dir_key(*gate), x + 9.0, child_top + 10.0));
-                streets.push(Street {
-                    dir: *gate,
-                    x0: x + 9.0,
-                    x1: x + 9.0,
-                    y: child_top + 10.0,
-                    stub: Some((x + 9.0, spine_y, child_top + 10.0 - 12.0)),
+    // Shelves aiming for a landscape district — the shape of the paper it
+    // will be read on — and never narrower than its widest child. A district
+    // that grew tall and thin would read as a column of unrelated plates.
+    let widest = kids.iter().map(|(_, w, _)| *w).fold(0.0, f64::max);
+    let area: f64 = kids.iter().map(|(_, w, h)| (w + GAP) * (h + GAP)).sum();
+    let target = widest.max((area * 2.6).sqrt());
+
+    let mut blocks: Vec<(u32, Placed)> = Vec::new();
+    let mut gates: Vec<(u32, Placed)> = Vec::new();
+    let mut districts: Vec<District> = Vec::new();
+    let (mut x, mut y, mut row_h, mut content_w) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    for (kid, w, h) in kids {
+        if x > 0.0 && x + w > target {
+            y += row_h + GAP;
+            x = 0.0;
+            row_h = 0.0;
+        }
+        let at = Placed { x, y, w, h };
+        match kid {
+            Kid::File(file) => blocks.push((file, at)),
+            Kid::Gate(child) => gates.push((child, at)),
+            Kid::Dir(child, packed) => {
+                districts.push(District {
+                    dir: child,
+                    at,
+                    depth: tree.dirs[child as usize].depth,
                 });
-                last_stub_x = last_stub_x.max(x + 9.0);
-                max_child_h = max_child_h.max(20.0 + 10.0);
-                x += w + BLOCK_GAP;
+                blocks.extend(
+                    packed
+                        .blocks
+                        .into_iter()
+                        .map(|(id, p)| (id, p.shifted(x, y))),
+                );
+                gates.extend(
+                    packed
+                        .gates
+                        .into_iter()
+                        .map(|(id, p)| (id, p.shifted(x, y))),
+                );
+                districts.extend(packed.districts.into_iter().map(|d| District {
+                    at: d.at.shifted(x, y),
+                    ..d
+                }));
             }
-            (None, Some(block)) => {
-                let child_dir = block.streets.last().map(|s| s.dir);
-                // Shift the child block into place.
-                for (key, mx, my) in block.marks.drain(..) {
-                    marks.push((key, mx + x, my + child_top));
-                }
-                let child_spine_y = child_top + block.spine_y;
-                for s in block.streets.drain(..) {
-                    streets.push(Street {
-                        x0: s.x0 + x,
-                        x1: s.x1 + x,
-                        y: s.y + child_top,
-                        stub: s.stub.map(|(sx, y0, y1)| (sx + x, y0 + child_top, y1 + child_top)),
-                        ..s
-                    });
-                }
-                let _ = child_dir;
-                // The stub connecting the parent spine to the child spine.
-                streets.push(Street {
-                    dir: u32::MAX, // stub-only entry
-                    x0: x + SPINE_PAD,
-                    x1: x + SPINE_PAD,
-                    y: child_spine_y,
-                    stub: Some((x + SPINE_PAD, spine_y, child_spine_y)),
-                });
-                last_stub_x = last_stub_x.max(x + SPINE_PAD);
-                max_child_h = max_child_h.max(block.height);
-                x += block.width + BLOCK_GAP;
-            }
-            _ => unreachable!(),
         }
+        x += w + GAP;
+        content_w = content_w.max(x - GAP);
+        row_h = row_h.max(h);
     }
-    let children_w = if slots.is_empty() {
-        0.0
-    } else {
-        x - BLOCK_GAP + SPINE_PAD
-    };
+    let content_h = y + row_h;
 
-    let spine_w = lots_w
-        .max(children_w)
-        .max(label_w(&tree.dirs[dir as usize].name) + 30.0)
-        .max(60.0)
-        + SPINE_PAD;
-
-    // The engraved line ends where its content does — at the last lot or
-    // the last hanging stub — never running on as bare rule.
-    let lots_end = if node.files.is_empty() {
-        0.0
-    } else {
-        SPINE_PAD + 18.0 + lots_w
-    };
-    let street_end = lots_end
-        .max(last_stub_x + 14.0)
-        .max(label_w(&tree.dirs[dir as usize].name) + 30.0)
-        .max(60.0)
-        .min(spine_w);
-
-    // The directory's own mark sits at the start of its street.
-    marks.push((dir_key(dir), 0.0, spine_y));
-    streets.push(Street {
-        dir,
-        x0: 0.0,
-        x1: street_end,
-        y: spine_y,
-        stub: None,
-    });
-
-    let height = spine_y
-        + if slots.is_empty() {
-            18.0
-        } else {
-            STUB_H + max_child_h + 8.0
-        };
-    Block {
-        width: spine_w.max(children_w),
-        height,
-        spine_y,
-        marks,
-        streets,
+    // The frame around them, with room on the border for the engraved label.
+    let label = m.labels.get(&dir).copied().unwrap_or(0.0) + 30.0;
+    let w = (content_w + D_PAD * 2.0).max(label).max(BLOCK_MIN_W);
+    let h = content_h + D_PAD * 2.0 + D_LABEL_H;
+    let (dx, dy) = (D_PAD, D_PAD + D_LABEL_H);
+    Packed {
+        w,
+        h,
+        blocks: blocks
+            .into_iter()
+            .map(|(id, at)| (id, at.shifted(dx, dy)))
+            .collect(),
+        gates: gates
+            .into_iter()
+            .map(|(id, at)| (id, at.shifted(dx, dy)))
+            .collect(),
+        districts: districts
+            .into_iter()
+            .map(|d| District {
+                at: d.at.shifted(dx, dy),
+                ..d
+            })
+            .collect(),
     }
 }
 
@@ -524,6 +511,7 @@ mod tests {
             id,
             path: path.to_string(),
             krate: "test".to_string(),
+            changed: false,
             lines: 10,
             items: 1,
             fns: 1,
@@ -542,24 +530,31 @@ mod tests {
                 .map(|(i, p)| file(i as u32, p))
                 .collect(),
             refs: Vec::new(),
+            items: Vec::new(),
+            item_edges: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
         }
     }
 
-    fn names(g: &CodeGraph) -> HashMap<u32, String> {
-        g.files
-            .iter()
-            .map(|f| {
-                (
-                    f.id,
-                    f.path
-                        .rsplit_once('/')
-                        .map(|(_, n)| n.to_string())
-                        .unwrap_or_else(|| f.path.clone()),
-                )
-            })
-            .collect()
+    /// Every file the same modest block; the geometry is what is under test.
+    fn measures(g: &CodeGraph, tree: &FileTree) -> Measures {
+        Measures {
+            blocks: g.files.iter().map(|f| (f.id, (160.0, 60.0))).collect(),
+            gates: tree.dirs.iter().map(|d| (d.id, (150.0, GATE_H))).collect(),
+            labels: tree.dirs.iter().map(|d| (d.id, 80.0)).collect(),
+        }
+    }
+
+    fn overlaps(a: &Placed, b: &Placed) -> bool {
+        a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    }
+
+    fn contains(outer: &Placed, inner: &Placed) -> bool {
+        outer.x <= inner.x
+            && outer.y <= inner.y
+            && outer.x + outer.w >= inner.x + inner.w
+            && outer.y + outer.h >= inner.y + inner.h
     }
 
     #[test]
@@ -591,9 +586,7 @@ mod tests {
     fn disclosure_respects_budget() {
         // 40 files spread across 8 deep directories.
         let paths: Vec<String> = (0..8)
-            .flat_map(|d| {
-                (0..5).map(move |f| format!("a{d}/b/c/file{f}.rs"))
-            })
+            .flat_map(|d| (0..5).map(move |f| format!("a{d}/b/c/file{f}.rs")))
             .collect();
         let refs: Vec<&str> = paths.iter().map(String::as_str).collect();
         let g = graph(&refs);
@@ -618,12 +611,7 @@ mod tests {
     fn toggling_a_gate_opens_it() {
         let g = graph(&["a/b/one.rs", "a/b/two.rs", "a/top.rs"]);
         let tree = FileTree::build(&g);
-        let b = tree
-            .dirs
-            .iter()
-            .find(|d| d.path == "a/b")
-            .unwrap()
-            .id;
+        let b = tree.dirs.iter().find(|d| d.path == "a/b").unwrap().id;
         let closed = open_dirs(&tree, 1, &HashSet::new());
         assert!(!closed.contains(&b));
         let mut toggled = HashSet::new();
@@ -633,7 +621,7 @@ mod tests {
     }
 
     #[test]
-    fn plan_blocks_do_not_overlap() {
+    fn territories_nest_and_never_overlap() {
         let g = graph(&[
             "a/one.rs",
             "a/two.rs",
@@ -643,32 +631,54 @@ mod tests {
         ]);
         let tree = FileTree::build(&g);
         let open = open_dirs(&tree, 9, &HashSet::new());
-        let layout = plan_layout(&tree, &open, &names(&g));
-        // Marks never coincide.
-        let pts: Vec<(i64, i64)> = layout
-            .pos
-            .values()
-            .map(|m| ((m.point.x * 10.0) as i64, (m.point.y * 10.0) as i64))
-            .collect();
-        let mut dedup = pts.clone();
-        dedup.sort();
-        dedup.dedup();
-        assert_eq!(pts.len(), dedup.len());
-        // Sibling streets a and b do not overlap horizontally.
-        let street = |path: &str| {
+        let layout = map_layout(&tree, &open, &measures(&g, &tree));
+
+        // No two blocks share paper.
+        let placed: Vec<Placed> = layout.blocks.values().copied().collect();
+        for (i, a) in placed.iter().enumerate() {
+            for b in &placed[i + 1..] {
+                assert!(!overlaps(a, b), "blocks overlap: {a:?} {b:?}");
+            }
+        }
+
+        let district = |path: &str| {
             let id = tree.dirs.iter().find(|d| d.path == path).unwrap().id;
-            layout
-                .streets
-                .iter()
-                .find(|s| s.dir == id)
-                .unwrap()
-                .clone()
+            layout.districts.iter().find(|d| d.dir == id).unwrap().at
         };
-        let (a, b) = (street("a"), street("b"));
-        assert!(a.x1 <= b.x0 || b.x1 <= a.x0, "sibling streets overlap");
-        // Deeper streets sit lower.
-        let sub = street("b/sub");
-        assert!(sub.y > b.y);
-        assert!(b.y > street("").y);
+        // Every file sits inside its own district, and a nested district
+        // sits inside its parent.
+        let (a, b, sub) = (district("a"), district("b"), district("b/sub"));
+        assert!(contains(&b, &sub), "b/sub escapes b");
+        assert!(!overlaps(&a, &b), "sibling districts overlap");
+        let by_path = |path: &str| {
+            let id = g.files.iter().find(|f| f.path == path).unwrap().id;
+            layout.blocks[&id]
+        };
+        assert!(contains(&a, &by_path("a/one.rs")));
+        assert!(contains(&sub, &by_path("b/sub/four.rs")));
+        // Districts paint ancestors first, so a nested tint lays over its
+        // parent's.
+        let order: Vec<u32> = layout.districts.iter().map(|d| d.dir).collect();
+        assert_eq!(order[0], ROOT);
+        for (i, d) in layout.districts.iter().enumerate() {
+            if let Some(parent) = tree.dirs[d.dir as usize].parent {
+                let at = order.iter().position(|&x| x == parent).unwrap();
+                assert!(at < i, "district {} paints before its parent", d.dir);
+            }
+        }
+    }
+
+    #[test]
+    fn a_gate_takes_the_place_of_its_district() {
+        let g = graph(&["a/one.rs", "a/deep/two.rs"]);
+        let tree = FileTree::build(&g);
+        let deep = tree.dirs.iter().find(|d| d.path == "a/deep").unwrap().id;
+        let open = open_dirs(&tree, 1, &HashSet::new());
+        let layout = map_layout(&tree, &open, &measures(&g, &tree));
+        assert!(layout.gates.contains_key(&deep));
+        assert!(!layout.districts.iter().any(|d| d.dir == deep));
+        // The folded directory's file holds no ground of its own.
+        let inner = g.files.iter().find(|f| f.path == "a/deep/two.rs").unwrap();
+        assert!(!layout.blocks.contains_key(&inner.id));
     }
 }

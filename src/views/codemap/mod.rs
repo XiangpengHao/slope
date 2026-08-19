@@ -1,13 +1,15 @@
-//! The code altitude: the workspace's files charted on the paper.
+//! The code altitude: the workspace's code charted as nested territory.
 //!
-//! Files are the stars at this altitude, seated by the directory structure —
-//! the shape the reviewer already knows. References are the edges, resolved
-//! semantically by rust-analyzer on the server, and drawn only for the
-//! selection. The tree is projected as an engraved town plan of streets.
-//! Every focus is a URL; the cutaway unfolds a file in place.
+//! One containment tree — crate → directory → file → type → member — drawn as
+//! districts holding blocks holding landmark rows. References are resolved
+//! semantically by rust-analyzer on the server and always drawn between the
+//! lowest containers the reader can see, summed. Selecting anything replaces
+//! the ambient map with a focus plate at item precision. Every focus is a URL.
 
 pub(crate) mod chrome;
+pub(crate) mod ego;
 pub(crate) mod map;
+pub(crate) mod model;
 pub mod tree;
 
 use std::collections::{HashMap, HashSet};
@@ -15,21 +17,10 @@ use std::collections::{HashMap, HashSet};
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, FileDetail, code_graph, file_detail};
-use crate::views::codemap::chrome::{
-    CodeCartouche, CodeLegend, CodeSearch, CratePanel, FilePanel, RefsToggle,
-};
+use crate::api::{CodeGraph, FileDetail, code_graph};
+use crate::views::codemap::chrome::{CodeCartouche, CodeLegend, CodeSearch, CratePanel};
+use crate::views::codemap::ego::EgoPlate;
 use crate::views::codemap::map::CodeChart;
-
-/// Which of the selection's references the chart draws.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum RefDir {
-    /// What the selection uses (its outgoing references).
-    #[default]
-    Uses,
-    /// What uses the selection.
-    UsedBy,
-}
 
 /// What the route selects on the code map.
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -43,23 +34,20 @@ pub enum CodeSel {
 
 // Session state that must survive route-variant remounts, like the dep
 // chart's globals.
-static REF_DIR: GlobalSignal<RefDir> = Signal::global(RefDir::default);
 /// Directories the reviewer folded or unfolded by hand, as flips against
 /// the default disclosure depth.
 static TOGGLED: GlobalSignal<HashSet<u32>> = Signal::global(HashSet::new);
-/// Cutaway details already fetched, by file id.
+/// File details already fetched, by file id: item bodies for the focus plate.
 static DETAILS: GlobalSignal<HashMap<u32, FileDetail>> = Signal::global(HashMap::new);
 
 #[derive(Clone, Copy)]
 pub struct CodeState {
-    pub ref_dir: Signal<RefDir>,
     pub toggled: Signal<HashSet<u32>>,
     pub details: Signal<HashMap<u32, FileDetail>>,
 }
 
 pub fn use_code() -> CodeState {
     CodeState {
-        ref_dir: REF_DIR.signal(),
         toggled: TOGGLED.signal(),
         details: DETAILS.signal(),
     }
@@ -99,9 +87,10 @@ pub fn item_route(path: &str, item: &str) -> Route {
     }
 }
 
-/// The code shell: loads the survey, gates its loading and error states,
-/// and lays the code furniture over the chart. Mounted by the atlas shell
-/// for every `/code` route; the chart survives route changes within them.
+/// The code shell: loads the survey, gates its loading and error states, and
+/// lays the code furniture over whichever altitude the route asks for — the
+/// ambient map, or one selection's focus plate. Mounted by the atlas shell for
+/// every `/code` route.
 #[component]
 pub fn CodeShell(workspace: String, epoch_line: String) -> Element {
     let resource: CodeResource = use_resource(code_graph);
@@ -109,29 +98,9 @@ pub fn CodeShell(workspace: String, epoch_line: String) -> Element {
 
     let route = use_route::<Route>();
     let sel = route_selection(&route);
-
-    // Fetch the cutaway for the selected file once per file.
-    let code = use_code();
-    let graph = {
-        let state = resource.read();
-        state.as_ref().and_then(|r| r.as_ref().ok()).cloned()
-    };
-    let sel_file_id = graph.as_ref().and_then(|g| match &sel {
-        CodeSel::File(path, _) => g.files.iter().find(|f| &f.path == path).map(|f| f.id),
-        _ => None,
-    });
-    use_effect(use_reactive((&sel_file_id,), move |(sel_file_id,)| {
-        let Some(id) = sel_file_id else { return };
-        if code.details.peek().contains_key(&id) {
-            return;
-        }
-        spawn(async move {
-            if let Ok(detail) = file_detail(id).await {
-                let mut details = code.details;
-                details.write().insert(id, detail);
-            }
-        });
-    }));
+    // A file or item focus replaces the map with its own plate; the map's
+    // cartouche and legend are map furniture and go with it.
+    let focused = matches!(sel, CodeSel::File(_, _));
 
     let state = resource.read();
     rsx! {
@@ -143,38 +112,40 @@ pub fn CodeShell(workspace: String, epoch_line: String) -> Element {
                 CodeSurveyFailed { message: err.to_string(), resource }
             },
             Some(Ok(graph)) => rsx! {
-                CodeChart {
-                    graph: graph.clone(),
-                    sel: sel.clone(),
-                    workspace: workspace.clone(),
+                if !focused {
+                    CodeChart {
+                        graph: graph.clone(),
+                        sel: sel.clone(),
+                        workspace: workspace.clone(),
+                    }
                 }
                 Outlet::<Route> {}
-                div { class: "pointer-events-none absolute bottom-3 left-3 top-3 z-10 hidden w-64 flex-col gap-2 sm:flex",
-                    CodeCartouche {
-                        graph: graph.clone(),
-                        workspace: workspace.clone(),
-                        epoch_line: epoch_line.clone(),
+                if !focused {
+                    div { class: "pointer-events-none absolute bottom-3 left-3 top-3 z-10 hidden w-64 flex-col gap-2 sm:flex",
+                        CodeCartouche {
+                            graph: graph.clone(),
+                            workspace: workspace.clone(),
+                            epoch_line: epoch_line.clone(),
+                        }
+                        div { class: "mt-auto",
+                            CodeLegend { graph: graph.clone(), start_open: true }
+                        }
                     }
-                    div { class: "mt-auto",
-                        CodeLegend { graph: graph.clone(), start_open: true }
+                    // Phone: everything stacks under the cartouche.
+                    div { class: "pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-col gap-2 sm:hidden",
+                        CodeCartouche {
+                            graph: graph.clone(),
+                            workspace: workspace.clone(),
+                            epoch_line: epoch_line.clone(),
+                        }
+                        CodeSearch { graph: graph.clone() }
+                    }
+                    div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
+                        CodeLegend { graph: graph.clone(), start_open: false }
                     }
                 }
                 div { class: "pointer-events-none absolute right-3 top-3 z-10 hidden w-56 flex-col gap-2 sm:flex",
                     CodeSearch { graph: graph.clone() }
-                    RefsToggle {}
-                }
-                // Phone: everything stacks under the cartouche.
-                div { class: "pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-col gap-2 sm:hidden",
-                    CodeCartouche {
-                        graph: graph.clone(),
-                        workspace: workspace.clone(),
-                        epoch_line: epoch_line.clone(),
-                    }
-                    CodeSearch { graph: graph.clone() }
-                    RefsToggle {}
-                }
-                div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
-                    CodeLegend { graph: graph.clone(), start_open: false }
                 }
             },
         }
@@ -202,8 +173,9 @@ pub fn CodeCrate(name: String) -> Element {
     }
 }
 
-/// `/code/file/:..path` — one file selected and cut away; `?item=` selects
-/// one item inside it.
+/// `/code/file/:..path` — one file in focus; `?item=` focuses one item inside
+/// it. Either way the map steps aside for the focus plate. The key carries the
+/// whole selection, so re-centering starts every plate's folds closed.
 #[component]
 pub fn CodeFile(path: Vec<String>, item: String) -> Element {
     let Some(graph) = use_code_graph() else {
@@ -211,13 +183,11 @@ pub fn CodeFile(path: Vec<String>, item: String) -> Element {
     };
     let joined = path.join("/");
     rsx! {
-        div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-auto z-10 flex items-end sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:items-start sm:p-3 sm:pt-[168px]",
-            FilePanel {
-                key: "{joined}",
-                graph,
-                path: joined.clone(),
-                item,
-            }
+        EgoPlate {
+            key: "{joined}|{item}",
+            graph,
+            path: joined.clone(),
+            item,
         }
     }
 }

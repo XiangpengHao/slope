@@ -12,7 +12,7 @@
 //! rustc sees them), but not omniscient: names that type inference cannot
 //! settle are counted and reported in words, never silently invented.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
@@ -21,13 +21,14 @@ use ra_ap_ide_db::RootDatabase;
 use ra_ap_ide_db::base_db::EditionedFileId;
 use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at};
 use ra_ap_project_model::{CargoConfig, RustLibSource};
-use ra_ap_syntax::ast::{HasName, HasVisibility};
+use ra_ap_syntax::ast::{HasGenericParams, HasName, HasVisibility, VisibilityKind};
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, TextRange, TextSize, ast};
 use ra_ap_vfs::{FileId, Vfs};
 use tokio::sync::OnceCell;
 
 use crate::api::{
-    CodeGraph, FileDetail, FileInfo, FileRef, ItemInfo, ItemKind, ItemRef, ItemXRef,
+    CodeGraph, FileDetail, FileInfo, FileRef, ItemEdge, ItemInfo, ItemKind, ItemMark, ItemMember,
+    ItemRef, ItemXRef, Vis,
 };
 
 /// The whole survey, precomputed once: the shipped graph plus every file's
@@ -92,7 +93,16 @@ struct RawItem {
     section: String,
     kind: ItemKind,
     range: TextRange,
-    public: bool,
+    vis: Vis,
+    /// The impl or trait block this item sits inside, by source range. An
+    /// impl block is attribution, not geometry: its items belong to the
+    /// impl's self type, wherever that type is written.
+    owner: Option<TextRange>,
+    /// Struct fields or enum variants, in source order.
+    members: Vec<ItemMember>,
+    /// A function's signature, without its body.
+    sig: Option<String>,
+    derives: Vec<String>,
 }
 
 /// One file being surveyed.
@@ -152,7 +162,9 @@ pub fn survey(dir: &std::path::Path) -> Result<CodeIndex, String> {
 
     // The new trait solver reads the database through a thread-local; every
     // Semantics call must run with it attached or inference panics.
-    ra_ap_hir::attach_db(&db, || survey_attached(dir, &db, &vfs, proc_macro.is_some()))
+    ra_ap_hir::attach_db(&db, || {
+        survey_attached(dir, &db, &vfs, proc_macro.is_some())
+    })
 }
 
 fn survey_attached(
@@ -213,15 +225,88 @@ fn survey_attached(
         .map(|(i, f)| (f.efid.file_id(db), i as u32))
         .collect();
 
-    for file in &mut raw {
+    let mut starts: Vec<LineStarts> = Vec::with_capacity(raw.len());
+    for file in raw.iter_mut() {
         let source = sema.parse(file.efid);
         let text = source.syntax().text().to_string();
         let lines = LineStarts::new(&text);
         file.lines = lines.count();
+        starts.push(lines);
         let mut items = Vec::new();
-        collect_items(source.syntax(), "", "", &mut items);
+        collect_items(source.syntax(), &ItemCtx::root(), &mut items);
         items.sort_by_key(|i| (i.range.start(), std::cmp::Reverse(i.range.end())));
         file.items = items;
+    }
+
+    // ---- Pass A½: attribution. -------------------------------------------
+
+    // Global mark ids: every item but the impl blocks, in (file, source)
+    // order. An impl block is attribution, not geometry — it never gets a
+    // mark of its own.
+    let mut mark_of: Vec<Vec<Option<u32>>> = Vec::with_capacity(raw.len());
+    let mut mark_at: Vec<(u32, u32)> = Vec::new();
+    for (fi, file) in raw.iter().enumerate() {
+        let mut per_file = Vec::with_capacity(file.items.len());
+        for (li, item) in file.items.iter().enumerate() {
+            if item.kind == ItemKind::Impl {
+                per_file.push(None);
+                continue;
+            }
+            per_file.push(Some(mark_at.len() as u32));
+            mark_at.push((fi as u32, li as u32));
+        }
+        mark_of.push(per_file);
+    }
+
+    // Every impl block's self type, resolved semantically: the methods under
+    // it belong to that type even when the impl sits in another file. The
+    // trait it implements rides along as a lens on the type, never as
+    // nesting.
+    let mut impl_self: HashMap<(u32, u32), u32> = HashMap::new();
+    let mut impl_traits: Vec<(u32, String)> = Vec::new();
+    for (fi, file) in raw.iter().enumerate() {
+        if !file.items.iter().any(|i| i.kind == ItemKind::Impl) {
+            continue;
+        }
+        let source = sema.parse(file.efid);
+        let impls: HashMap<TextRange, ast::Impl> = source
+            .syntax()
+            .descendants()
+            .filter_map(ast::Impl::cast)
+            .map(|i| (i.syntax().text_range(), i))
+            .collect();
+        for (li, item) in file.items.iter().enumerate() {
+            if item.kind != ItemKind::Impl {
+                continue;
+            }
+            let Some(node) = impls.get(&item.range) else {
+                continue;
+            };
+            let Some(imp) = sema.to_impl_def(node) else {
+                continue;
+            };
+            // Only a workspace type can hold territory on this map; an impl
+            // for a foreign or unnameable type keeps its items on the file's
+            // own shelf.
+            let target = imp
+                .self_ty(db)
+                .as_adt()
+                .and_then(|adt| def_target(&sema, db, vfs, &root, &file_of, &raw, adt.into()));
+            let Some(RefTarget {
+                file: ty_file,
+                item: Some(ty_item),
+            }) = target
+            else {
+                continue;
+            };
+            let Some(Some(mark)) = mark_of[ty_file as usize].get(ty_item as usize).copied() else {
+                continue;
+            };
+            impl_self.insert((fi as u32, li as u32), mark);
+            if let Some(t) = node.trait_() {
+                impl_traits.push((mark, compact(t.syntax().text())));
+            }
+        }
     }
 
     // ---- Pass B: resolve references. --------------------------------------
@@ -250,10 +335,42 @@ fn survey_attached(
 
     // ---- Assemble the wire model. -----------------------------------------
 
+    // Containment: an item's parent is the type its impl names, or the trait
+    // that declares it. Inline modules are not containers at this altitude.
+    let mut parent_of: Vec<Option<u32>> = vec![None; mark_at.len()];
+    for (fi, file) in raw.iter().enumerate() {
+        let by_range: HashMap<TextRange, u32> = file
+            .items
+            .iter()
+            .enumerate()
+            .map(|(li, it)| (it.range, li as u32))
+            .collect();
+        for (li, item) in file.items.iter().enumerate() {
+            let (Some(mark), Some(owner)) = (
+                mark_of[fi][li],
+                item.owner.and_then(|r| by_range.get(&r).copied()),
+            ) else {
+                continue;
+            };
+            let parent = match file.items[owner as usize].kind {
+                ItemKind::Impl => impl_self.get(&(fi as u32, owner)).copied(),
+                // A trait declares its own items; nothing else nests.
+                _ => mark_of[fi][owner as usize],
+            };
+            if parent != Some(mark) {
+                parent_of[mark as usize] = parent;
+            }
+        }
+    }
+
     let mut file_pair: HashMap<(u32, u32), u32> = HashMap::new();
     let mut item_refs: Vec<Vec<ItemRef>> = vec![Vec::new(); raw.len()];
     let mut refs_out: Vec<Vec<ItemXRef>> = vec![Vec::new(); raw.len()];
     let mut refs_in: Vec<Vec<ItemXRef>> = vec![Vec::new(); raw.len()];
+    // Cross-file references at item precision, aggregated per pair. Several
+    // impl blocks for one type collapse onto the same endpoint, so the pairs
+    // must be summed, not pushed.
+    let mut edge_acc: HashMap<(u32, Option<u32>, u32, Option<u32>), u32> = HashMap::new();
 
     let mut ordered: Vec<(RefSource, u32)> = acc.into_iter().collect();
     ordered.sort_by_key(|((f, i, t), _)| (*f, *i, t.file, t.item));
@@ -293,6 +410,69 @@ fn survey_attached(
                 count,
             });
         }
+
+        // The same edge at item precision, for the map's lifting. A reference
+        // written inside an impl block belongs to the type that impl names —
+        // which is how `impl Trait for Type` becomes a type → trait tie.
+        let from = src_item.and_then(|l| {
+            mark_of[src_file as usize][l as usize]
+                .or_else(|| impl_self.get(&(src_file, l)).copied())
+        });
+        let to = target
+            .item
+            .and_then(|l| mark_of[target.file as usize][l as usize]);
+        // An impl's mention of its own self type is not a reference to it.
+        if from.is_some() && from == to {
+            continue;
+        }
+        *edge_acc
+            .entry((src_file, from, target.file, to))
+            .or_default() += count;
+    }
+
+    let mut fan_in: Vec<u32> = vec![0; mark_at.len()];
+    let mut item_edges: Vec<ItemEdge> = edge_acc
+        .into_iter()
+        .map(|((from_file, from, to_file, to), count)| {
+            if let Some(to) = to {
+                fan_in[to as usize] += count;
+            }
+            ItemEdge {
+                from_file,
+                from,
+                to_file,
+                to,
+                count,
+            }
+        })
+        .collect();
+    item_edges.sort_by_key(|e| (e.from_file, e.from, e.to_file, e.to));
+
+    // The landmarks themselves, with their traits gathered from every impl.
+    let mut traits_of: Vec<Vec<String>> = vec![Vec::new(); mark_at.len()];
+    for (mark, name) in impl_traits {
+        traits_of[mark as usize].push(name);
+    }
+    let mut items: Vec<ItemMark> = Vec::with_capacity(mark_at.len());
+    for (id, &(fi, li)) in mark_at.iter().enumerate() {
+        let item = &raw[fi as usize].items[li as usize];
+        let mut traits = std::mem::take(&mut traits_of[id]);
+        traits.extend(item.derives.iter().cloned());
+        traits.sort();
+        traits.dedup();
+        items.push(ItemMark {
+            id: id as u32,
+            file: fi,
+            local: li,
+            name: item.name.clone(),
+            label: item_label(item),
+            kind: item.kind,
+            vis: item.vis,
+            line: starts[fi as usize].line(item.range.start()),
+            parent: parent_of[id],
+            fan_in: fan_in[id],
+            traits,
+        });
     }
 
     let mut in_files: HashMap<u32, u32> = HashMap::new();
@@ -301,6 +481,12 @@ fn survey_attached(
         *out_files.entry(from).or_default() += 1;
         *in_files.entry(to).or_default() += 1;
     }
+
+    // The epoch's touch, by path — the same diff the crate altitude reads.
+    let changed: HashSet<String> = super::vcs::detect_diff(dir)
+        .changed_files
+        .into_iter()
+        .collect();
 
     let files: Vec<FileInfo> = raw
         .iter()
@@ -313,8 +499,13 @@ fn survey_attached(
                 id: i as u32,
                 path: f.path.clone(),
                 krate: f.krate.clone(),
+                changed: changed.contains(&f.path),
                 lines: f.lines,
-                items: f.items.iter().filter(|it| it.kind != ItemKind::Impl).count() as u32,
+                items: f
+                    .items
+                    .iter()
+                    .filter(|it| it.kind != ItemKind::Impl)
+                    .count() as u32,
                 fns: count(&[ItemKind::Fn]),
                 types: count(&[
                     ItemKind::Struct,
@@ -339,7 +530,7 @@ fn survey_attached(
         .iter()
         .enumerate()
         .map(|(i, f)| {
-            let lines = LineStarts::new(&sema.parse(f.efid).syntax().text().to_string());
+            let lines = &starts[i];
             FileDetail {
                 file: i as u32,
                 items: f
@@ -353,12 +544,16 @@ fn survey_attached(
                         kind: it.kind,
                         line: lines.line(it.range.start()),
                         end_line: lines.line(it.range.end()),
-                        public: it.public,
+                        vis: it.vis,
+                        mark: mark_of[i][id],
+                        members: it.members.clone(),
+                        sig: it.sig.clone(),
+                        derives: it.derives.clone(),
                     })
                     .collect(),
-                item_refs: std::mem::take(&mut item_refs[i].clone()),
-                refs_out: refs_out[i].clone(),
-                refs_in: refs_in[i].clone(),
+                item_refs: std::mem::take(&mut item_refs[i]),
+                refs_out: std::mem::take(&mut refs_out[i]),
+                refs_in: std::mem::take(&mut refs_in[i]),
             }
         })
         .collect();
@@ -367,7 +562,12 @@ fn survey_attached(
         "references are resolved semantically by rust-analyzer; only \
          references between workspace files are charted"
             .to_string(),
-        "references produced by derive macros are not counted".to_string(),
+        "references produced by derive macros are not counted; the traits a \
+         type derives are listed on its plate instead"
+            .to_string(),
+        "an `impl Trait for Type` counts as a reference from the type to the \
+         trait — the impl block itself holds no ground"
+            .to_string(),
     ];
     if !proc_macros {
         notes.push(
@@ -387,6 +587,8 @@ fn survey_attached(
         graph: CodeGraph {
             files,
             refs,
+            items,
+            item_edges,
             unresolved,
             notes,
         },
@@ -434,6 +636,12 @@ fn section_type(section: &str) -> &str {
 
 /// Collapse whitespace and cap length, for impl headers used as names.
 fn compact(text: impl ToString) -> String {
+    compact_to(text, 48)
+}
+
+/// Collapse whitespace and cap length. Source text lands on plates, so it
+/// arrives on one line or not at all.
+fn compact_to(text: impl ToString, cap: usize) -> String {
     let text = text.to_string();
     let mut out = String::new();
     let mut last_ws = false;
@@ -448,8 +656,8 @@ fn compact(text: impl ToString) -> String {
             last_ws = false;
         }
     }
-    if out.len() > 48 {
-        let mut cut = 48;
+    if out.len() > cap {
+        let mut cut = cap;
         while !out.is_char_boundary(cut) {
             cut -= 1;
         }
@@ -457,6 +665,17 @@ fn compact(text: impl ToString) -> String {
         out.push('…');
     }
     out
+}
+
+/// Visibility as declared. `pub(crate)`, `pub(super)`, and `pub(in path)`
+/// stop at the crate boundary and must not read as `pub`; `pub(self)` is no
+/// wider than no `pub` at all.
+fn vis_kind(vis: Option<ast::Visibility>) -> Vis {
+    match vis.map(|v| v.kind()) {
+        None | Some(VisibilityKind::PubSelf) => Vis::Private,
+        Some(VisibilityKind::Pub) => Vis::Pub,
+        Some(_) => Vis::Crate,
+    }
 }
 
 fn impl_header(i: &ast::Impl) -> String {
@@ -470,135 +689,275 @@ fn impl_header(i: &ast::Impl) -> String {
     }
 }
 
-/// Collect the file's items in tree order. `prefix` carries inline-module
-/// paths (`tests::`); `section` carries the enclosing impl/trait header.
-fn collect_items(node: &SyntaxNode, prefix: &str, section: &str, out: &mut Vec<RawItem>) {
+/// What the item walk carries down the tree.
+struct ItemCtx {
+    /// Inline-module path (`tests::`).
+    prefix: String,
+    /// The enclosing impl or trait header, for display.
+    section: String,
+    /// Source range of the enclosing impl or trait item.
+    owner: Option<TextRange>,
+    /// Visibility items inherit when they declare none: a trait's items are
+    /// as visible as the trait. An impl's items keep what they declare —
+    /// a trait impl's methods read as private and fold into their type,
+    /// which is exactly where the reader looks for them.
+    inherited: Option<Vis>,
+}
+
+impl ItemCtx {
+    fn root() -> Self {
+        Self {
+            prefix: String::new(),
+            section: String::new(),
+            owner: None,
+            inherited: None,
+        }
+    }
+
+    fn item(&self, name: &str, kind: ItemKind, range: TextRange, vis: Vis) -> RawItem {
+        RawItem {
+            name: format!("{}{name}", self.prefix),
+            section: self.section.clone(),
+            kind,
+            range,
+            vis,
+            owner: self.owner,
+            members: Vec::new(),
+            sig: None,
+            derives: Vec::new(),
+        }
+    }
+
+    fn vis(&self, vis: Option<ast::Visibility>) -> Vis {
+        match vis_kind(vis) {
+            Vis::Private => self.inherited.unwrap_or(Vis::Private),
+            declared => declared,
+        }
+    }
+}
+
+/// Struct fields or union fields, in source order. Tuple fields keep their
+/// index as their name — `.0` is what the reader writes.
+fn fields_of(list: Option<ast::FieldList>) -> Vec<ItemMember> {
+    match list {
+        Some(ast::FieldList::RecordFieldList(r)) => r
+            .fields()
+            .map(|f| ItemMember {
+                name: f.name().map(|n| n.text().to_string()).unwrap_or_default(),
+                ty: f
+                    .ty()
+                    .map(|t| compact_to(t.syntax().text(), 64))
+                    .unwrap_or_default(),
+                vis: vis_kind(f.visibility()),
+            })
+            .collect(),
+        Some(ast::FieldList::TupleFieldList(t)) => t
+            .fields()
+            .enumerate()
+            .map(|(i, f)| ItemMember {
+                name: format!(".{i}"),
+                ty: f
+                    .ty()
+                    .map(|t| compact_to(t.syntax().text(), 64))
+                    .unwrap_or_default(),
+                vis: vis_kind(f.visibility()),
+            })
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Enum variants with their payloads. A variant is as visible as its enum.
+fn variants_of(list: Option<ast::VariantList>) -> Vec<ItemMember> {
+    list.map(|l| {
+        l.variants()
+            .map(|v| ItemMember {
+                name: v.name().map(|n| n.text().to_string()).unwrap_or_default(),
+                ty: v
+                    .field_list()
+                    .map(|f| compact_to(f.syntax().text(), 64))
+                    .unwrap_or_default(),
+                vis: Vis::Pub,
+            })
+            .collect()
+    })
+    .unwrap_or_default()
+}
+
+/// Derive names, read from the attribute's own text — derive arguments are
+/// plain paths, so the words are the badge.
+fn derives_of(node: &SyntaxNode) -> Vec<String> {
+    let mut out = Vec::new();
+    for attr in node.children().filter(|c| c.kind() == SyntaxKind::ATTR) {
+        let text = attr.text().to_string();
+        let Some(inner) = text
+            .trim()
+            .strip_prefix("#[derive(")
+            .and_then(|t| t.trim_end().strip_suffix(")]"))
+        else {
+            continue;
+        };
+        out.extend(
+            inner
+                .split(',')
+                .map(str::trim)
+                .filter(|n| !n.is_empty())
+                .map(|n| compact_to(n, 24)),
+        );
+    }
+    out
+}
+
+/// A function's signature without its body: what the focus plate engraves in
+/// place of fields.
+fn fn_signature(f: &ast::Fn, name: &str) -> String {
+    let mut sig = String::new();
+    if let Some(v) = f.visibility() {
+        sig.push_str(&compact(v.syntax().text()));
+        sig.push(' ');
+    }
+    for (token, word) in [
+        (f.default_token(), "default "),
+        (f.const_token(), "const "),
+        (f.async_token(), "async "),
+        (f.unsafe_token(), "unsafe "),
+    ] {
+        if token.is_some() {
+            sig.push_str(word);
+        }
+    }
+    if let Some(abi) = f.abi() {
+        sig.push_str(&compact(abi.syntax().text()));
+        sig.push(' ');
+    }
+    sig.push_str("fn ");
+    sig.push_str(name);
+    if let Some(g) = f.generic_param_list() {
+        sig.push_str(&compact_to(g.syntax().text(), 64));
+    }
+    if let Some(p) = f.param_list() {
+        sig.push_str(&compact_to(p.syntax().text(), 180));
+    }
+    if let Some(r) = f.ret_type() {
+        sig.push(' ');
+        sig.push_str(&compact_to(r.syntax().text(), 96));
+    }
+    if let Some(w) = f.where_clause() {
+        sig.push(' ');
+        sig.push_str(&compact_to(w.syntax().text(), 96));
+    }
+    sig
+}
+
+/// Collect the file's items in tree order. Inline modules contribute their
+/// path to item names but are not containers at this altitude: their items
+/// stay on the file's own shelf.
+fn collect_items(node: &SyntaxNode, ctx: &ItemCtx, out: &mut Vec<RawItem>) {
     for child in node.children() {
-        let public = |vis: Option<ast::Visibility>| vis.is_some();
         let name_of = |n: Option<ast::Name>| n.map(|n| n.text().to_string());
+        let range = child.text_range();
 
         if let Some(f) = ast::Fn::cast(child.clone()) {
             if let Some(name) = name_of(f.name()) {
-                out.push(RawItem {
-                    name: format!("{prefix}{name}"),
-                    section: section.to_string(),
-                    kind: ItemKind::Fn,
-                    range: child.text_range(),
-                    public: public(f.visibility()),
-                });
+                let mut item = ctx.item(&name, ItemKind::Fn, range, ctx.vis(f.visibility()));
+                item.sig = Some(fn_signature(&f, &name));
+                out.push(item);
             }
         } else if let Some(s) = ast::Struct::cast(child.clone()) {
             if let Some(name) = name_of(s.name()) {
-                out.push(RawItem {
-                    name: format!("{prefix}{name}"),
-                    section: section.to_string(),
-                    kind: ItemKind::Struct,
-                    range: child.text_range(),
-                    public: public(s.visibility()),
-                });
+                let mut item = ctx.item(&name, ItemKind::Struct, range, ctx.vis(s.visibility()));
+                item.members = fields_of(s.field_list());
+                item.derives = derives_of(&child);
+                out.push(item);
             }
         } else if let Some(e) = ast::Enum::cast(child.clone()) {
             if let Some(name) = name_of(e.name()) {
-                out.push(RawItem {
-                    name: format!("{prefix}{name}"),
-                    section: section.to_string(),
-                    kind: ItemKind::Enum,
-                    range: child.text_range(),
-                    public: public(e.visibility()),
-                });
+                let mut item = ctx.item(&name, ItemKind::Enum, range, ctx.vis(e.visibility()));
+                item.members = variants_of(e.variant_list());
+                item.derives = derives_of(&child);
+                out.push(item);
             }
         } else if let Some(u) = ast::Union::cast(child.clone()) {
             if let Some(name) = name_of(u.name()) {
-                out.push(RawItem {
-                    name: format!("{prefix}{name}"),
-                    section: section.to_string(),
-                    kind: ItemKind::Union,
-                    range: child.text_range(),
-                    public: public(u.visibility()),
-                });
+                let mut item = ctx.item(&name, ItemKind::Union, range, ctx.vis(u.visibility()));
+                item.members =
+                    fields_of(u.record_field_list().map(ast::FieldList::RecordFieldList));
+                item.derives = derives_of(&child);
+                out.push(item);
             }
         } else if let Some(t) = ast::Trait::cast(child.clone()) {
             if let Some(name) = name_of(t.name()) {
-                let header = format!("trait {prefix}{name}");
-                out.push(RawItem {
-                    name: format!("{prefix}{name}"),
-                    section: section.to_string(),
-                    kind: ItemKind::Trait,
-                    range: child.text_range(),
-                    public: public(t.visibility()),
-                });
+                let vis = ctx.vis(t.visibility());
+                out.push(ctx.item(&name, ItemKind::Trait, range, vis));
                 if let Some(list) = t.assoc_item_list() {
-                    collect_items(list.syntax(), prefix, &header, out);
+                    let inner = ItemCtx {
+                        prefix: ctx.prefix.clone(),
+                        section: format!("trait {}{name}", ctx.prefix),
+                        owner: Some(range),
+                        inherited: Some(vis),
+                    };
+                    collect_items(list.syntax(), &inner, out);
                 }
             }
         } else if let Some(a) = ast::TypeAlias::cast(child.clone()) {
             if let Some(name) = name_of(a.name()) {
-                out.push(RawItem {
-                    name: format!("{prefix}{name}"),
-                    section: section.to_string(),
-                    kind: ItemKind::TypeAlias,
-                    range: child.text_range(),
-                    public: public(a.visibility()),
-                });
+                let vis = ctx.vis(a.visibility());
+                out.push(ctx.item(&name, ItemKind::TypeAlias, range, vis));
             }
         } else if let Some(c) = ast::Const::cast(child.clone()) {
             let name = name_of(c.name()).unwrap_or_else(|| "_".to_string());
-            out.push(RawItem {
-                name: format!("{prefix}{name}"),
-                section: section.to_string(),
-                kind: ItemKind::Const,
-                range: child.text_range(),
-                public: public(c.visibility()),
-            });
+            let vis = ctx.vis(c.visibility());
+            out.push(ctx.item(&name, ItemKind::Const, range, vis));
         } else if let Some(s) = ast::Static::cast(child.clone()) {
             if let Some(name) = name_of(s.name()) {
-                out.push(RawItem {
-                    name: format!("{prefix}{name}"),
-                    section: section.to_string(),
-                    kind: ItemKind::Static,
-                    range: child.text_range(),
-                    public: public(s.visibility()),
-                });
+                let vis = ctx.vis(s.visibility());
+                out.push(ctx.item(&name, ItemKind::Static, range, vis));
             }
         } else if let Some(m) = ast::MacroRules::cast(child.clone()) {
             if let Some(name) = name_of(m.name()) {
-                out.push(RawItem {
-                    name: format!("{prefix}{name}"),
-                    section: section.to_string(),
-                    kind: ItemKind::Macro,
-                    range: child.text_range(),
-                    public: false,
-                });
+                // `macro_rules!` carries no `pub`; `#[macro_export]` is what
+                // opens it, and that is an attribute, not a visibility.
+                let exported = child
+                    .children()
+                    .filter(|c| c.kind() == SyntaxKind::ATTR)
+                    .any(|a| a.text().to_string().contains("macro_export"));
+                let vis = if exported { Vis::Pub } else { Vis::Private };
+                out.push(ctx.item(&name, ItemKind::Macro, range, vis));
             }
         } else if let Some(m) = ast::Module::cast(child.clone()) {
             if let Some(name) = name_of(m.name()) {
-                out.push(RawItem {
-                    name: format!("{prefix}{name}"),
-                    section: section.to_string(),
-                    kind: ItemKind::Mod,
-                    range: child.text_range(),
-                    public: public(m.visibility()),
-                });
+                let vis = ctx.vis(m.visibility());
+                out.push(ctx.item(&name, ItemKind::Mod, range, vis));
                 if let Some(list) = m.item_list() {
-                    collect_items(list.syntax(), &format!("{prefix}{name}::"), section, out);
+                    let inner = ItemCtx {
+                        prefix: format!("{}{name}::", ctx.prefix),
+                        section: ctx.section.clone(),
+                        owner: ctx.owner,
+                        inherited: ctx.inherited,
+                    };
+                    collect_items(list.syntax(), &inner, out);
                 }
             }
         } else if let Some(i) = ast::Impl::cast(child.clone()) {
             let header = impl_header(&i);
-            out.push(RawItem {
-                name: header.clone(),
-                section: section.to_string(),
-                kind: ItemKind::Impl,
-                range: child.text_range(),
-                public: false,
-            });
+            let mut item = ctx.item(&header, ItemKind::Impl, range, Vis::Private);
+            // The header names the impl whole; the inline-module prefix on it
+            // would say nothing a reader wants.
+            item.name = header.clone();
+            out.push(item);
             if let Some(list) = i.assoc_item_list() {
-                collect_items(list.syntax(), prefix, &header, out);
+                let inner = ItemCtx {
+                    prefix: ctx.prefix.clone(),
+                    section: header,
+                    owner: Some(range),
+                    inherited: None,
+                };
+                collect_items(list.syntax(), &inner, out);
             }
         } else if let Some(x) = ast::ExternBlock::cast(child.clone())
             && let Some(list) = x.extern_item_list()
         {
-            collect_items(list.syntax(), prefix, section, out);
+            collect_items(list.syntax(), ctx, out);
         }
     }
 }
@@ -711,10 +1070,7 @@ fn scan_refs(
             SyntaxKind::PATH => {
                 // Only the outermost path of `a::b::c` resolves; its
                 // qualifiers are children of the same PATH node.
-                if desc
-                    .parent()
-                    .is_some_and(|p| p.kind() == SyntaxKind::PATH)
-                {
+                if desc.parent().is_some_and(|p| p.kind() == SyntaxKind::PATH) {
                     continue;
                 }
                 let Some(path) = ast::Path::cast(desc.clone()) else {
@@ -757,16 +1113,17 @@ fn scan_refs(
                         // resolved: expressions, types, and use trees.
                         // Attribute paths and macro fragments miss for
                         // reasons that are not type inference's fault.
-                        let countable = desc.ancestors().any(|a| {
-                            matches!(
-                                a.kind(),
-                                SyntaxKind::PATH_EXPR
-                                    | SyntaxKind::PATH_TYPE
-                                    | SyntaxKind::USE_TREE
-                                    | SyntaxKind::RECORD_EXPR
-                                    | SyntaxKind::PATH_PAT
-                            )
-                        }) && !desc.ancestors().any(|a| a.kind() == SyntaxKind::ATTR);
+                        let countable =
+                            desc.ancestors().any(|a| {
+                                matches!(
+                                    a.kind(),
+                                    SyntaxKind::PATH_EXPR
+                                        | SyntaxKind::PATH_TYPE
+                                        | SyntaxKind::USE_TREE
+                                        | SyntaxKind::RECORD_EXPR
+                                        | SyntaxKind::PATH_PAT
+                                )
+                            }) && !desc.ancestors().any(|a| a.kind() == SyntaxKind::ATTR);
                         if countable {
                             *unresolved += 1;
                         }
