@@ -53,6 +53,22 @@ pub struct CrateInfo {
     /// Only present as the target of a removed dependency; no longer in the
     /// resolved graph.
     pub ghost: bool,
+    /// The manifest's own words about itself, when it has any.
+    pub description: Option<String>,
+    /// SPDX license expression from the manifest.
+    pub license: Option<String>,
+    /// Declared source repository, the link a reviewer wants most.
+    pub repository: Option<String>,
+    pub homepage: Option<String>,
+    /// Declared docs URL; externals from crates.io get a docs.rs link even
+    /// without one.
+    pub documentation: Option<String>,
+    /// Resolved from crates.io, so the registry and docs.rs both have a page
+    /// for this exact version.
+    pub crates_io: bool,
+    /// A member's directory, relative to the workspace root — where to look
+    /// for the change on disk. `None` for externals.
+    pub rel_path: Option<String>,
 }
 
 /// A dependency edge: `from` depends on `to`. Both reference [`CrateInfo::id`].

@@ -119,6 +119,35 @@ struct Built {
     names: Vec<String>,
 }
 
+/// Every crate on a route from the root down to the selection: the crates
+/// that depend on it, then the crates that depend on those, hop by hop
+/// until the chain runs out of users — which is where the root sits. The
+/// selection itself is in the set, so an edge is one hop of some route
+/// exactly when its dependency end is in here. Removed dependencies are no
+/// longer routes; the epoch already cut them.
+fn uphill_from<'g>(graph: &'g WorkspaceGraph, sel_ids: &HashSet<&'g str>) -> HashSet<&'g str> {
+    let mut users: HashMap<&'g str, Vec<&'g str>> = HashMap::new();
+    for link in &graph.links {
+        if link.event == Some(DepEvent::Removed) {
+            continue;
+        }
+        users
+            .entry(link.to.as_str())
+            .or_default()
+            .push(link.from.as_str());
+    }
+    let mut seen: HashSet<&'g str> = sel_ids.clone();
+    let mut queue: Vec<&'g str> = sel_ids.iter().copied().collect();
+    while let Some(id) = queue.pop() {
+        for &user in users.get(id).into_iter().flatten() {
+            if seen.insert(user) {
+                queue.push(user);
+            }
+        }
+    }
+    seen
+}
+
 /// Derive the drawn chart. Every placed crate is always on the chart as a
 /// star; what changes with the selection is which edges are drawn, which
 /// stars carry the focal ring, and which are named at rest.
@@ -138,10 +167,18 @@ fn build_chart(
         .map(|c| c.id.as_str())
         .collect();
 
-    // The edge set: the selection's own edges in the toggled direction,
-    // plus every manifest event (always drawn). Everything else stays
-    // undrawn — the whole resolved graph at once is exactly the hairball
-    // this chart exists to refuse.
+    // "Path to root" draws a whole chain of crates, so it needs the
+    // transitive closure first; the other two readings only ever look at
+    // the selection's own edges.
+    let uphill: HashSet<&str> = match dir {
+        DirFilter::PathToRoot => uphill_from(graph, &sel_ids),
+        _ => HashSet::new(),
+    };
+
+    // The edge set: the selection's own edges in the toggled direction (or
+    // every hop of its routes to the root), plus every manifest event
+    // (always drawn). Everything else stays undrawn — the whole resolved
+    // graph at once is exactly the hairball this chart exists to refuse.
     let mut pairs: HashMap<(&str, &str), (Role, DepKind, Option<DepEvent>)> = HashMap::new();
     for link in &graph.links {
         let (from, to) = (link.from.as_str(), link.to.as_str());
@@ -150,13 +187,21 @@ fn build_chart(
         }
         let from_sel = sel_ids.contains(from);
         let to_sel = sel_ids.contains(to);
-        let wanted = (from_sel && dir != DirFilter::Users) || (to_sel && dir != DirFilter::Deps);
+        let wanted = match dir {
+            DirFilter::Deps => from_sel,
+            DirFilter::Users => to_sel,
+            // An edge is one hop of a route to the selection exactly when
+            // its dependency end still reaches the selection.
+            DirFilter::PathToRoot => uphill.contains(to),
+        };
         if !wanted && link.event.is_none() {
             continue;
         }
+        // Every hop of a route runs the dependents way, so it reads in the
+        // dependents grammar: hairline, arrow pointing at the user.
         let role = if from_sel {
             Role::Dep
-        } else if to_sel {
+        } else if to_sel || wanted {
             Role::User
         } else {
             Role::Event
@@ -232,6 +277,17 @@ fn build_chart(
         named.insert(c.id.as_str());
     }
 
+    // A crate name can resolve to several versions at once (cargo keeps a
+    // 1.x and a 2.x side by side), and each version is its own star on its
+    // own ring. Those stars must say which version they are, or one crate
+    // looks like it was drawn twice.
+    let mut seen_names: HashMap<&str, u32> = HashMap::new();
+    for c in graph.crates.iter().filter(|c| !c.ghost) {
+        if layout.placed.contains_key(&c.id) {
+            *seen_names.entry(c.name.as_str()).or_default() += 1;
+        }
+    }
+
     let mut stars: Vec<FlowNode<StarData>> = graph
         .crates
         .iter()
@@ -256,6 +312,9 @@ fn build_chart(
                         uy,
                         focal,
                         named: named.contains(c.id.as_str()),
+                        versioned: seen_names
+                            .get(c.name.as_str())
+                            .is_some_and(|n| *n > 1),
                     },
                 )
                 .size(Size::new(b, b))
@@ -367,85 +426,39 @@ fn radial_edge(seat: &HashMap<String, (Point, f64)>, ctx: &EdgeViewCtx) -> Eleme
     }
 }
 
-/// The engraved ring guides: one hairline circle per hop. On a virtual
-/// workspace (no root crate) the center carries a small workspace medallion
-/// instead of a star.
+/// The engraved ring guides — and the ring control itself: each hairline
+/// circle is a link that selects every crate on its ring, so the ring needs
+/// no caption of its own. On a virtual workspace (no root crate) the center
+/// carries a small workspace medallion instead of a star.
+///
+/// The canvas is a fixed two-pixel box drawn with `overflow: visible`, so the
+/// circles are laid out in flow coordinates around the origin. Only their
+/// radii change when the outermost band expands, which is what lets the
+/// guides glide outward with the stars instead of jumping.
 #[component]
-fn RingCircles(radii: Vec<f64>, hub: Option<String>) -> Element {
-    let Some(&max) = radii.last() else {
-        return rsx! {};
-    };
-    let pad = 60.0;
-    let c = max + pad;
-    let side = 2.0 * c;
-    let offset = -c;
-    rsx! {
-        svg {
-            width: "{side}",
-            height: "{side}",
-            view_box: "0 0 {side} {side}",
-            style: "position: absolute; left: {offset}px; top: {offset}px;",
-            "aria-hidden": "true",
-            for r in radii.iter().copied().skip(1) {
-                circle {
-                    cx: "{c}",
-                    cy: "{c}",
-                    r: "{r}",
-                    fill: "none",
-                    stroke: "var(--color-ink-line)",
-                    stroke_width: "0.75",
-                    opacity: "0.45",
-                }
-            }
-            if let Some(name) = &hub {
-                circle { cx: "{c}", cy: "{c}", r: "5", fill: "var(--color-ink)" }
-                circle {
-                    cx: "{c}",
-                    cy: "{c}",
-                    r: "9",
-                    fill: "none",
-                    stroke: "var(--color-ink)",
-                    stroke_width: "0.7",
-                }
-                text {
-                    class: "hub-caption",
-                    x: "{c}",
-                    y: "{c + 24.0}",
-                    text_anchor: "middle",
-                    "{name}"
-                }
-            }
-        }
-    }
-}
-
-/// The ring captions at twelve o'clock, drawn above the chart. Each is a
-/// real control: it selects every crate on its ring. When distances past
-/// the cap share the outermost ring, its caption says so: "N+ hops".
-#[component]
-fn RingCaptions(radii: Vec<f64>, selected: Option<u32>, collapsed: bool) -> Element {
+fn RingCircles(
+    radii: Vec<f64>,
+    hub: Option<String>,
+    selected: Option<u32>,
+    collapsed: bool,
+) -> Element {
     let nav = use_navigator();
-    let Some(&max) = radii.last() else {
+    if radii.is_empty() {
         return rsx! {};
-    };
-    let pad = 60.0;
-    let c = max + pad;
-    let side = 2.0 * c;
-    let offset = -c;
+    }
+    // Ring zero is the center itself, radius zero: never a guide, never a
+    // control.
     let last = radii.len() - 1;
     rsx! {
         svg {
-            width: "{side}",
-            height: "{side}",
-            view_box: "0 0 {side} {side}",
-            style: "position: absolute; left: {offset}px; top: {offset}px;",
+            width: "2",
+            height: "2",
+            style: "position: absolute; left: 0; top: 0; overflow: visible;",
             for (k , r) in radii.iter().copied().enumerate().skip(1) {
-                text {
-                    class: "ring-caption",
+                g {
+                    key: "{k}",
+                    class: "ring-guide",
                     class: if selected == Some(k as u32) { "is-selected" },
-                    x: "{c}",
-                    y: "{c - r - 18.0}",
-                    text_anchor: "middle",
                     tabindex: "0",
                     role: "link",
                     "aria-label": if collapsed && k == last { "select every crate {k} or more hops from the center" } else { "select every crate {k} hops from the center" },
@@ -457,15 +470,30 @@ fn RingCaptions(radii: Vec<f64>, selected: Option<u32>, collapsed: bool) -> Elem
                             nav.push(crate::Route::RingSel { hop: k as u32 });
                         }
                     },
-                    title { "select every crate on this ring" }
-                    if collapsed && k == last {
-                        "{k}+ hops"
-                    } else if k == 1 {
-                        "1 hop"
-                    } else {
-                        "{k} hops"
+                    title {
+                        if collapsed && k == last {
+                            "ring {k}+ · select every crate {k} or more hops out"
+                        } else if k == 1 {
+                            "ring 1 · select every crate 1 hop out"
+                        } else {
+                            "ring {k} · select every crate {k} hops out"
+                        }
                     }
+                    circle { class: "ring-guide-hit", cx: "0", cy: "0", r: "{r}" }
+                    circle { class: "ring-guide-line", cx: "0", cy: "0", r: "{r}" }
                 }
+            }
+            if let Some(name) = &hub {
+                circle { cx: "0", cy: "0", r: "5", fill: "var(--color-ink)" }
+                circle {
+                    cx: "0",
+                    cy: "0",
+                    r: "9",
+                    fill: "none",
+                    stroke: "var(--color-ink)",
+                    stroke_width: "0.7",
+                }
+                text { class: "hub-caption", x: "0", y: "24", text_anchor: "middle", "{name}" }
             }
         }
     }
@@ -474,10 +502,11 @@ fn RingCaptions(radii: Vec<f64>, selected: Option<u32>, collapsed: bool) -> Elem
 /// The chart furniture's screen space, per side: (top, right, bottom, left).
 fn chrome_insets(narrow: bool, focused: bool) -> (f64, f64, f64, f64) {
     if narrow {
-        (240.0, 20.0, if focused { 380.0 } else { 70.0 }, 12.0)
+        (195.0, 20.0, if focused { 400.0 } else { 70.0 }, 12.0)
     } else {
-        // The cartouche, changes queue, and legend own the left column.
-        (56.0, if focused { 330.0 } else { 20.0 }, 20.0, 284.0)
+        // The title block and the key own the left column; search alone
+        // sits top-right, and a selection's panel claims the right column.
+        (52.0, if focused { 330.0 } else { 20.0 }, 20.0, 284.0)
     }
 }
 
@@ -594,6 +623,12 @@ window.__slopifyKeys = (e) => {
 document.addEventListener('keydown', window.__slopifyKeys);
 "#;
 
+/// The ring cap the chart last painted. This is a global because the router
+/// remounts the layout when the route variant changes (`/` ↔ `/crate/:name`),
+/// which throws the chart's DOM away: without a memory of the geometry the
+/// reader was just looking at, an expansion can only be drawn as a jump.
+static DRAWN_CAP: GlobalSignal<Option<u32>> = Signal::global(|| None);
+
 /// The rings chart, mounted once for the whole session.
 #[component]
 pub fn Chart(graph: WorkspaceGraph) -> Element {
@@ -642,11 +677,39 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
             },
         }
     });
+    // The cap the chart is drawing right now. It starts at whatever the last
+    // paint used — including across a remount — and then slides to the target
+    // one frame later, so the stars and ring guides have a position to travel
+    // from and the expansion is drawn as a move.
+    let drawn = use_signal(|| DRAWN_CAP.peek().unwrap_or(*cap.peek()));
+    use_effect(move || {
+        let target = cap();
+        let mut drawn = drawn;
+        if *drawn.peek() == target {
+            if *DRAWN_CAP.peek() != Some(target) {
+                *DRAWN_CAP.write() = Some(target);
+            }
+            return;
+        }
+        if prefers_reduced_motion() {
+            drawn.set(target);
+            *DRAWN_CAP.write() = Some(target);
+            return;
+        }
+        spawn(async move {
+            // One frame at the old radii is what gives the CSS transition its
+            // starting point; without the wait both paints coalesce into one.
+            #[cfg(target_arch = "wasm32")]
+            gloo_timers::future::TimeoutFuture::new(32).await;
+            drawn.set(target);
+            *DRAWN_CAP.write() = Some(target);
+        });
+    });
     // The geometry: angles are cap-independent, so a cap change only slides
     // collapsed stars radially — nothing ever swings sideways.
     let layout = use_memo({
         let graph = graph.clone();
-        move || radial_layout(&graph, cap())
+        move || radial_layout(&graph, drawn())
     });
     // The default selection: the crate at the center.
     let center_name = use_memo({
@@ -732,6 +795,11 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
         }
         nodes.set(b.stars);
         edges.set(b.lines);
+        // While the rings are still sliding to the new cap, the bounds belong
+        // to the geometry being left behind: frame once, when it settles.
+        if drawn() != cap() {
+            return;
+        }
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -844,13 +912,11 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
                     }
                 }
                 WorldLayer { class: "ring-guides",
-                    RingCircles { radii: layout.read().radii.clone(), hub }
-                }
-                WorldLayer { class: "ring-captions",
-                    RingCaptions {
+                    RingCircles {
                         radii: layout.read().radii.clone(),
+                        hub,
                         selected: ring_sel,
-                        collapsed: layout.read().max_hops > cap(),
+                        collapsed: layout.read().max_hops > drawn(),
                     }
                 }
                 Controls {}
@@ -859,39 +925,12 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
     }
 }
 
-/// `/` — the whole chart, edges drawn for the center crate. The chart itself
-/// lives in the shell; this route adds the first-visit hint.
+/// `/` — the whole chart, edges drawn for the center crate. The chart lives
+/// in the shell and the key names the rings, so this route adds nothing: the
+/// overview is the chart, unobstructed.
 #[component]
 pub fn Overview() -> Element {
-    let Some(graph) = use_graph() else {
-        return rsx! {};
-    };
-    let atlas = use_atlas();
-    let any_changed = graph.crates.iter().any(|c| c.changed);
-
-    rsx! {
-        if !(atlas.bloomed)() {
-            div { class: "pointer-events-none absolute bottom-3 left-72 right-0 z-10 hidden justify-center sm:flex",
-                div { class: "plate pointer-events-auto flex items-center gap-3 px-4 py-2",
-                    p { class: "font-data text-[10px] tracking-[0.12em] uppercase text-ink",
-                        if any_changed {
-                            "Rings are dependency hops — click a flared star to chart its blast radius"
-                        } else {
-                            "Rings are dependency hops from the center — click any star to draw its edges"
-                        }
-                    }
-                    button {
-                        class: "font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
-                        onclick: move |_| {
-                            let mut bloomed = atlas.bloomed;
-                            bloomed.set(true);
-                        },
-                        "dismiss"
-                    }
-                }
-            }
-        }
-    }
+    rsx! {}
 }
 
 /// `/crate/:name` — the selection's edges are drawn on the rings and this
@@ -903,7 +942,7 @@ pub fn Focus(name: String) -> Element {
         return rsx! {};
     };
     rsx! {
-        div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-auto z-10 flex max-h-[44%] items-end sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:max-h-full sm:items-start sm:p-3 sm:pt-[104px]",
+        div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-auto z-10 flex items-end sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:items-start sm:p-3 sm:pt-[58px]",
             if name.contains('+') {
                 crate::views::chrome::MultiPanel { key: "{name}", graph: graph.clone(), joined: name }
             } else {
@@ -921,8 +960,135 @@ pub fn RingSel(hop: u32) -> Element {
         return rsx! {};
     };
     rsx! {
-        div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-auto z-10 flex max-h-[44%] items-end sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:max-h-full sm:items-start sm:p-3 sm:pt-[104px]",
+        div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-auto z-10 flex items-end sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:items-start sm:p-3 sm:pt-[58px]",
             crate::views::chrome::RingPanel { key: "{hop}", graph: graph.clone(), hop }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::api::{DepLink, Epoch};
+
+    fn krate(id: &str) -> CrateInfo {
+        CrateInfo {
+            id: id.to_string(),
+            name: id.split('@').next().unwrap().to_string(),
+            version: "1.0.0".to_string(),
+            is_member: false,
+            changed: false,
+            changed_files: 0,
+            manifest_changed: false,
+            affected_dist: None,
+            dependents: 0,
+            direct_deps: 0,
+            external_deps: 0,
+            ghost: false,
+            description: None,
+            license: None,
+            repository: None,
+            homepage: None,
+            documentation: None,
+            crates_io: false,
+            rel_path: None,
+        }
+    }
+
+    fn link(from: &str, to: &str, event: Option<DepEvent>) -> DepLink {
+        DepLink {
+            from: from.to_string(),
+            to: to.to_string(),
+            kind: DepKind::Normal,
+            event,
+        }
+    }
+
+    fn graph(names: &[&str], links: Vec<DepLink>) -> WorkspaceGraph {
+        WorkspaceGraph {
+            name: "test".into(),
+            root: "/test".into(),
+            root_crate: Some("root@1.0.0".into()),
+            epoch: Epoch {
+                vcs: None,
+                base: "base".into(),
+                target: "working copy".into(),
+                clean: true,
+                note: None,
+            },
+            crates: names.iter().map(|n| krate(n)).collect(),
+            links,
+        }
+    }
+
+    /// Edge ids, sorted. Lines run from the dependency into its user, so an
+    /// id reads `dependency->user`.
+    fn drawn(graph: &WorkspaceGraph, sel: &str, dir: DirFilter) -> Vec<String> {
+        let layout = radial_layout(graph, DEFAULT_CAP);
+        let built = build_chart(graph, &layout, vec![sel.to_string()], dir, true, None);
+        let mut ids: Vec<String> = built.lines.iter().map(|e| e.id.clone()).collect();
+        ids.sort();
+        ids
+    }
+
+    /// A diamond: both routes from the root down to the shared dependency
+    /// are drawn whole, and nothing off those routes is.
+    #[test]
+    fn path_to_root_draws_every_route() {
+        let g = graph(
+            &[
+                "root@1.0.0",
+                "a@1.0.0",
+                "b@1.0.0",
+                "shared@1.0.0",
+                "other@1.0.0",
+            ],
+            vec![
+                link("root@1.0.0", "a@1.0.0", None),
+                link("root@1.0.0", "b@1.0.0", None),
+                link("root@1.0.0", "other@1.0.0", None),
+                link("a@1.0.0", "shared@1.0.0", None),
+                link("b@1.0.0", "shared@1.0.0", None),
+            ],
+        );
+        assert_eq!(
+            drawn(&g, "shared", DirFilter::PathToRoot),
+            [
+                "a@1.0.0->root@1.0.0",
+                "b@1.0.0->root@1.0.0",
+                "shared@1.0.0->a@1.0.0",
+                "shared@1.0.0->b@1.0.0",
+            ]
+        );
+        // The other two readings still see only the selection's own edges.
+        assert_eq!(
+            drawn(&g, "shared", DirFilter::Users),
+            ["shared@1.0.0->a@1.0.0", "shared@1.0.0->b@1.0.0"]
+        );
+        assert!(drawn(&g, "shared", DirFilter::Deps).is_empty());
+    }
+
+    /// A dependency the epoch removed is no longer a route: the crate that
+    /// dropped it does not light up the chain above it. The removed edge
+    /// itself still draws, as every manifest event does.
+    #[test]
+    fn removed_dependencies_are_not_routes() {
+        let g = graph(
+            &["root@1.0.0", "x@1.0.0", "y@1.0.0", "sel@1.0.0"],
+            vec![
+                link("root@1.0.0", "x@1.0.0", None),
+                link("root@1.0.0", "y@1.0.0", None),
+                link("x@1.0.0", "sel@1.0.0", Some(DepEvent::Removed)),
+                link("y@1.0.0", "sel@1.0.0", None),
+            ],
+        );
+        assert_eq!(
+            drawn(&g, "sel", DirFilter::PathToRoot),
+            [
+                "sel@1.0.0->x@1.0.0",
+                "sel@1.0.0->y@1.0.0",
+                "y@1.0.0->root@1.0.0",
+            ]
+        );
     }
 }

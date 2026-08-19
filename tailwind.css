@@ -53,18 +53,20 @@ body {
     0 1px 4px color-mix(in srgb, var(--color-ink) 14%, transparent);
 }
 
-details.plate > summary {
+/* A foldable section, on a plate or inside one: typographic marker, no
+   chevron glyph and no browser triangle. */
+details.fold > summary {
   list-style: none;
 }
-details.plate > summary::-webkit-details-marker {
+details.fold > summary::-webkit-details-marker {
   display: none;
 }
-details.plate > summary::after {
+details.fold > summary::after {
   content: "–";
   float: right;
   color: var(--color-ink-soft);
 }
-details.plate:not([open]) > summary::after {
+details.fold:not([open]) > summary::after {
   content: "+";
 }
 
@@ -110,10 +112,45 @@ details.plate:not([open]) > summary::after {
   stroke: var(--color-flare);
 }
 
-/* Ring captions and the virtual-workspace medallion, in the data voice with
-   a paper halo so they stay legible under crossing lines. Each hop caption
-   is a real control: clicking it selects its whole ring. */
-.atlas .ring-caption,
+/* Each ring is its own control: the hairline is the target, so no caption is
+   needed to say which ring you are selecting. The hit band is a wide
+   invisible stroke over the same circle, and only the stroke is hittable, so
+   the ring's whole interior stays open paper. */
+.atlas .ring-guide {
+  pointer-events: auto;
+  cursor: pointer;
+}
+.atlas .ring-guide-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 16;
+  pointer-events: stroke;
+}
+.atlas .ring-guide-line {
+  fill: none;
+  stroke: var(--color-ink-line);
+  stroke-width: 0.75;
+  opacity: 0.45;
+  pointer-events: none;
+}
+.atlas .ring-guide:hover .ring-guide-line,
+.atlas .ring-guide:focus-visible .ring-guide-line,
+.atlas .ring-guide.is-selected .ring-guide-line {
+  stroke: var(--color-ink);
+  stroke-width: 1.1;
+  opacity: 1;
+}
+.atlas .ring-guide.is-selected .ring-guide-line {
+  stroke-dasharray: 7 4;
+}
+/* The focus ring would be a screen-space box around a whole circle; the
+   hairline going to full ink says it better. */
+.atlas .ring-guide:focus-visible {
+  outline: none;
+}
+
+/* The virtual-workspace medallion's caption, in the data voice with a paper
+   halo so it stays legible under crossing lines. */
 .atlas .hub-caption {
   font-family: var(--font-data);
   font-size: 10px;
@@ -124,17 +161,38 @@ details.plate:not([open]) > summary::after {
   stroke: var(--color-paper);
   stroke-width: 3px;
 }
-.atlas .ring-caption {
-  pointer-events: auto;
-  cursor: pointer;
+
+/* Expanding the outermost band (and folding it back) only ever slides stars
+   and guides radially, so the move is drawn instead of jumped — matched to
+   the camera's own 400ms ease so plate and camera travel together. */
+.atlas .df-node {
+  transition: transform 400ms cubic-bezier(0.65, 0, 0.35, 1);
 }
-.atlas .ring-caption:hover,
-.atlas .ring-caption:focus-visible,
-.atlas .ring-caption.is-selected {
-  fill: var(--color-ink);
+.atlas .ring-guide circle {
+  transition:
+    r 400ms cubic-bezier(0.65, 0, 0.35, 1),
+    stroke 120ms ease-out,
+    stroke-width 120ms ease-out,
+    opacity 120ms ease-out;
 }
-.atlas .ring-caption.is-selected {
-  font-weight: 500;
+/* The selection's lines are redrawn at the new radii at once, so they ink in
+   over the same beat rather than snapping taut across a moving chart. */
+.atlas .df-edge {
+  animation: edge-ink 400ms ease-out;
+}
+@keyframes edge-ink {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .atlas .df-node,
+  .atlas .ring-guide circle {
+    transition: none;
+  }
+  .atlas .df-edge {
+    animation: none;
+  }
 }
 
 /* The lib's overlays, re-ruled as paper plates: square corners, ink frame. */
@@ -203,6 +261,11 @@ details.plate:not([open]) > summary::after {
 }
 .atlas .star-node.is-ghost .star-label {
   text-decoration-line: none;
+}
+/* When two versions of one crate are both on the chart, the version rides
+   with the name, a shade quieter than it. */
+.atlas .star-version {
+  color: var(--color-ink-line);
 }
 .atlas .star-label.lab-e {
   left: 100%;

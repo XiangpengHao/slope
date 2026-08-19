@@ -2,6 +2,35 @@
 
 Confirmed via /impeccable shape, 2026-08-18. Built the same day.
 
+**Furniture distilled (2026-08-18, same day):** the resting chart carried
+seven floating plates. Cut to four, without losing an affordance:
+
+- The cartouche and the changes queue are one plate. They were always one
+  thought — what this workspace is, and what changed in it — and stating
+  the epoch twice (once as a title-block line, once as the queue's
+  clean-epoch message) said nothing the second time. The changed count
+  lives in the "Changes (n)" heading, the affected count in the queue's
+  footer beside the seen ratio, and each fact appears once.
+- The bottom hint plate is gone. Every sentence it carried was already on
+  the key, and the flag that dismissed it is gone with it.
+- The EDGES toggle moved out of its standing plate and into the selection's
+  own panel. It has nothing to act on without a selection, and on the
+  overview two of its three readings are dead — the root has no dependents
+  and no path to itself.
+- The key lost its gesture manual. Clicking a star, clicking a ring,
+  dragging and scrolling are learned by doing, and the ring and toggle
+  already carry tooltips; what stayed is what nothing on the plate reveals:
+  ctrl-click, and the keys (`/`, `n`/`p`, `f`, esc). The paragraph that
+  restated the two line samples above it is gone. The key now takes the
+  left column's leftover height instead of a guessed cap that clipped its
+  own last line.
+- The panels trade three ways of saying where you came from — a back
+  button, a "whole chart" link, and a trail line — for one breadcrumb:
+  `← whole chart → a → b`, every step a link. The panel's heading names
+  where the review stands, so the trail never repeats it.
+- A selection panel on a phone is capped on the plate itself, not on a
+  wrapper that never clipped it.
+
 **Layout rework (2026-08-18, "Dependency Rings"):** the bloom/column chart
 below was replaced by a radial chart. This section supersedes the "One
 Living Chart" interaction notes and the Interaction and layout section.
@@ -41,25 +70,67 @@ Living Chart" interaction notes and the Interaction and layout section.
   Selecting a crate inside the band expands exact rings down to its true
   depth (the cap follows the deepest selected crate); deselecting folds
   them back. Angles never depend on the cap, so expansion only slides
-  stars radially outward — nothing swings sideways. The band's caption
-  reads "4+ hops" and selects the whole band; tooltips always tell a
+  stars radially outward — nothing swings sideways. Tooltips always tell a
   star's true distance.
 - Camera (same day): deselecting never moves the camera — the reviewer
   keeps the view they had. Only the first paint and selections frame.
 - The edge toggle defaults to "depends on" (the compact reading);
-  dependents and both are one press away.
+  dependents and the path to the root are one press away.
 - Selection extensions (2026-08-18, same day): the selection is a set.
   Ctrl / cmd / shift-click toggles a star in or out of it; the whole set
   is the URL (`/crate/a+b+c` — `+` cannot appear in a crate name), so
   multi-selections stay shareable and back-button-retracable. Clicking a
-  ring's hop caption selects every crate on that ring (`/ring/:hop`).
+  ring line itself selects every crate on that ring (`/ring/:hop`).
   Middle-click on any star still opens its solo focus in a new tab. An
-  EDGES toggle (depends on / both / used by) draws only one direction of
+  EDGES toggle (depends on / used by / path to root) draws one reading of
   the selection's edges; manifest events are always drawn regardless. A
   multi-selection gets a roster panel (each crate removable), a ring
   selection gets the ring's roster; every edge carries an arrowhead
   pointing the way change travels — into the crate that uses the
   dependency.
+- Path to root (2026-08-18, same day): the third EDGES reading answers
+  "why is this crate here?". It lights every route from the root down to
+  the selection — what depends on it, then what depends on those, hop by
+  hop until the chain runs out of users, which is where the root sits.
+  Every hop draws in the dependents grammar (hairline, arrow into the
+  user), so a long chain stays quiet on the paper, and every crate on a
+  route is named at rest. A dependency the epoch removed is not a route:
+  it still draws as a manifest event, but the crate that dropped it does
+  not light the chain above it. This reading replaced "both", which was
+  only the two other readings at once and said nothing they did not.
+- Ring as control (2026-08-18, same day): the hop captions ("1 hop", "4+
+  hops") are gone. The ring hairline is the control — hovering or focusing
+  it raises the line to full ink, selecting dashes it, and its tooltip
+  names the ring and what clicking does. A wide invisible stroke over the
+  same circle is the target, so the ring's interior stays open paper and
+  panning that starts on a ring still pans. The captions were furniture
+  that said what the ring's own geometry already says; the reader's
+  distance question is answered by every star's tooltip and by the ring
+  roster's heading.
+- Expanding and folding are drawn, not jumped (2026-08-18, same day): the
+  router remounts the chart when the route variant changes, which threw
+  the old geometry away and made a cap change land as a jump. The chart
+  now remembers the cap it last painted, paints that geometry for one
+  frame, then slides to the new one — stars glide radially and ring radii
+  ease over 400ms, the same beat and curve as the camera. Edges are
+  redrawn at the settled geometry and ink in over the same beat instead of
+  snapping taut. `prefers-reduced-motion` skips straight to the new
+  geometry.
+- Several versions of one crate (2026-08-18, same day): cargo can resolve
+  a 1.x and a 2.x of the same crate at once, and each is its own star on
+  the ring of its own distance. Those stars carry their version beside the
+  name — otherwise one crate reads as the same star drawn twice. The same
+  rule holds in the panels: a roster row shows its version whenever
+  another row in that list shares its name, and the focus panel names
+  every resolved version, since selection is by name and holds all of
+  them.
+- Crate fact sheet (2026-08-18, same day): the focus panel carries what
+  the manifest says about the crate — its own one-line description, its
+  license, a member's directory relative to the workspace root, and its
+  direct / external dependency counts — plus the pages it has elsewhere:
+  repository, crates.io, docs (docs.rs for a crates.io crate that names
+  no docs URL of its own), and homepage when it is not one of those. Each
+  opens in its own tab so the review never loses its place.
 - Names are engraved at rest for members, the diff (changed / affected),
   the selection's neighborhood, and the ~20 biggest externals; every
   other star names itself on hover or keyboard focus.

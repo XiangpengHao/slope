@@ -317,6 +317,13 @@ mod tests {
             direct_deps: 0,
             external_deps: 0,
             ghost: false,
+            description: None,
+            license: None,
+            repository: None,
+            homepage: None,
+            documentation: None,
+            crates_io: false,
+            rel_path: None,
         }
     }
 

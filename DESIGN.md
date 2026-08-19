@@ -63,7 +63,7 @@ components:
     textColor: "{colors.ink}"
     typography: "{typography.data-name}"
     padding: "2px 4px"
-  hop-toggle-active:
+  edge-toggle-active:
     backgroundColor: "transparent"
     textColor: "{colors.ink}"
     typography: "{typography.data-body}"
@@ -158,11 +158,13 @@ Square corners everywhere: `border-radius: 0` on plates, inputs, buttons, and th
 
 ## Components
 
-### Plates (Cartouche, Legend, Focus Panel, error plate)
+### Plates (Title Block, Legend, selection panels, error plate)
 - **Corner Style:** square (0px).
 - **Background:** paper (#f6f4ed); **Border:** 1px ink + inner hairline (see Shapes); **Shadow:** plate contact only.
 - **Internal Padding:** 16px horizontal, 8–12px vertical; sections divided by ink-line hairline rules.
-- The Legend is a `<details>` plate whose summary shows a typographic `–`/`+` marker in ink-soft — no chevron glyph. Legend samples are rendered by the same `StarMark`/`LineSample` code as the chart, so key and chart cannot drift.
+- A foldable section carries the class `fold`, whether it is the plate itself (the Legend) or a section inside one (the Title Block's changes list). Its summary shows a typographic `–`/`+` marker in ink-soft — no chevron glyph. Legend samples are rendered by the same `StarMark`/`LineSample` code as the chart, so key and chart cannot drift.
+- The Title Block is one plate carrying two sections divided by a hairline rule: the workspace's identity and epoch, then the foldable list of what changed. Each fact is stated once — the changed count in the section heading, the affected count in its footer.
+- A selection panel opens with the breadcrumb, then names the selection. It caps at 44dvh on a phone and at the column height on a desktop, scrolling its lists inside.
 
 ### The Star Mark (signature)
 The unit of the whole system, reused by chart, legend, search results, and list rows. Radius encodes magnitude — `4 + √dependents × 1.3`, capped at 11px. Grammar: workspace member = solid ink disc with a 0.6px orbit ring; external crate = open paper circle with 1.3px ink stroke; CHANGED = flare-filled with eight amber rays; AFFECTED = amber halo ring whose opacity fades with hop distance (0.85 − 0.22/hop, floor 0.3); REMOVED = dashed ink-soft outline only; focal = double ink ring with four compass ticks. Node labels: mono 500 name (ink for members, ink-soft for externals) with an underline that appears in ink-line on hover and ink when selected; state words beneath in 9.5px tracked caps.
@@ -176,10 +178,10 @@ Hairline ink-line strokes (1.1px), arrows pointing the way change travels (depen
 - **Results:** a plate popover of rows (star mark + mono name + `EXT` tag), hover `bg-ink/5`; Enter focuses the top hit, Escape clears.
 
 ### Buttons / Rows
-No filled button exists. Actions are typographic: mono spaced-caps links with underline-offset (e.g. "← WHOLE CHART", ink-soft rising to ink on hover), full-width list rows whose hover is a 5% ink wash, and the hop toggle (1/2/3) where the active state is a 1px ink border, not a fill.
+No filled button exists. Actions are typographic: mono spaced-caps links with underline-offset (e.g. "← WHOLE CHART", ink-soft rising to ink on hover), full-width list rows whose hover is a 5% ink wash, and the EDGES toggle where the active segment wears a 1px ink border, not a fill.
 
 ### Navigation
-Navigation is the chart (reworked 2026-08-18 to dependency rings — see `spec/dependency-viewer.md`): the crate under review sits at the center and every ring outward is one dependency hop; stars never move. Clicking a star selects it and pushes `/crate/:name` — the chart draws that crate's edges; clicking the selected star (or back / Esc) returns to `/`. Ctrl / cmd / shift-click toggles stars in a multi-selection (`/crate/a+b`), a ring's hop caption selects the whole ring (`/ring/:hop`), and the EDGES toggle (depends on / both / used by) draws one direction of the selection's edges; every edge's arrowhead points the way change travels. Search, queue, and list rows are real links to the same routes. There is no navbar or sidebar — the URL, the back button, and the trail line in the focus panel are the trail.
+Navigation is the chart (reworked 2026-08-18 to dependency rings — see `spec/dependency-viewer.md`): the crate under review sits at the center and every ring outward is one dependency hop; stars never move. Clicking a star selects it and pushes `/crate/:name` — the chart draws that crate's edges; clicking the selected star (or back / Esc) returns to `/`. Ctrl / cmd / shift-click toggles stars in a multi-selection (`/crate/a+b`), clicking a ring line selects the whole ring (`/ring/:hop`), and the EDGES toggle (depends on / used by / path to root) draws one reading of the selection's edges — the last lights every route from the root down to the selection; every edge's arrowhead points the way change travels. The EDGES toggle rides inside the selection's own panel, because it has nothing to act on without one. Search, changes, and list rows are real links to the same routes. There is no navbar or sidebar — the URL, the back button, and the panel's breadcrumb (`← whole chart → a → b`, every step a link) are the trail.
 
 ## Do's and Don'ts
 

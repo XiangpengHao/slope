@@ -24,6 +24,9 @@ pub struct StarData {
     pub focal: bool,
     /// Label engraved at rest; unnamed stars reveal theirs on hover/focus.
     pub named: bool,
+    /// Another version of this same crate is on the chart, so the label has
+    /// to carry the version or the two stars read as one crate drawn twice.
+    pub versioned: bool,
 }
 
 /// Star radius from magnitude (how many crates depend on this one).
@@ -207,6 +210,7 @@ pub fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
         uy,
         focal,
         named,
+        versioned,
     } = ctx.node.data.clone();
     let box_px = star_box(&info);
 
@@ -289,6 +293,9 @@ pub fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
             class: "star-label {side} font-data",
             class: if info.is_member && !info.ghost { "font-medium text-ink" } else { "text-ink-soft" },
             "{info.name}"
+            if versioned {
+                span { class: "star-version", " v{info.version}" }
+            }
         }
     };
 

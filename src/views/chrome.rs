@@ -1,5 +1,5 @@
-//! Chart furniture: cartouche, changes queue, legend, search, and the focus
-//! panel. All of it is drawn in the same engraved ink as the chart itself.
+//! Chart furniture: the title block, the key, search, and the selection
+//! panels. All of it is drawn in the same engraved ink as the chart itself.
 
 use std::collections::HashSet;
 
@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 use crate::Route;
 use crate::api::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
 use crate::views::radial::{DEFAULT_CAP, radial_layout};
-use crate::views::shell::{DirFilter, history_back, use_atlas};
+use crate::views::shell::{DirFilter, step_ring, use_atlas};
 use crate::views::star::StarMark;
 
 /// A synthetic crate for legend samples, so the key is drawn by the exact
@@ -27,6 +27,13 @@ fn sample(dependents: u32, is_member: bool) -> CrateInfo {
         direct_deps: 0,
         external_deps: 0,
         ghost: false,
+        description: None,
+        license: None,
+        repository: None,
+        homepage: None,
+        documentation: None,
+        crates_io: false,
+        rel_path: None,
     }
 }
 
@@ -38,16 +45,21 @@ fn plural(n: usize, word: &str) -> String {
     }
 }
 
-/// The chart's title block: workspace name, epoch, and the change count.
+/// The title block and the review agenda in one plate: what workspace this
+/// is, which epoch it is charted against, and every crate that changed in
+/// it. One plate, because the epoch and its changes are one thought.
 #[component]
-pub fn Cartouche(graph: WorkspaceGraph) -> Element {
+pub fn TitleBlock(
+    graph: WorkspaceGraph,
+    #[props(default = true)] changes_open: bool,
+) -> Element {
+    let atlas = use_atlas();
     let members = graph.crates.iter().filter(|c| c.is_member).count();
     let externals = graph
         .crates
         .iter()
         .filter(|c| !c.is_member && !c.ghost)
         .count();
-    let changed = graph.crates.iter().filter(|c| c.changed).count();
     let affected = graph
         .crates
         .iter()
@@ -55,41 +67,6 @@ pub fn Cartouche(graph: WorkspaceGraph) -> Element {
         .count();
     let epoch = &graph.epoch;
 
-    rsx! {
-        section { class: "plate pointer-events-auto px-4 py-3",
-            h1 { class: "font-chart text-[19px] leading-tight tracking-[0.18em] uppercase text-ink",
-                "{graph.name}"
-            }
-            p { class: "mt-0.5 font-chart text-[12px] italic text-ink-soft",
-                "dependency atlas · {plural(members, \"workspace crate\")} · {externals} external"
-            }
-            div { class: "mt-2 border-t border-ink-line pt-2 font-data text-[10.5px] leading-relaxed text-ink",
-                p {
-                    span { class: "text-ink-soft", "epoch " }
-                    "{epoch.base} → {epoch.target}"
-                }
-                if let Some(note) = &epoch.note {
-                    p { class: "mt-1 text-ink-soft", "{note}" }
-                } else if epoch.clean {
-                    p { class: "mt-1", "Epoch clean — the working copy matches {epoch.base}." }
-                } else {
-                    p { class: "mt-1",
-                        span { class: "font-medium text-flare", "{changed} changed" }
-                        span { class: "text-ink-soft", " · " }
-                        span { "{affected} affected downstream" }
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// The review queue: every changed crate, each a link to its blast radius,
-/// each marked SEEN once visited. This is the agenda the chart serves.
-#[component]
-pub fn ChangesQueue(graph: WorkspaceGraph, #[props(default = true)] start_open: bool) -> Element {
-    let atlas = use_atlas();
-    let epoch = graph.epoch.clone();
     let mut changed: Vec<CrateInfo> = graph.crates.iter().filter(|c| c.changed).cloned().collect();
     changed.sort_by(|a, b| a.name.cmp(&b.name));
     let visited = atlas.visited.read();
@@ -101,59 +78,64 @@ pub fn ChangesQueue(graph: WorkspaceGraph, #[props(default = true)] start_open: 
     let focus = atlas.trail.read().current_focus();
 
     rsx! {
-        details { class: "plate pointer-events-auto w-full open:pb-3", open: start_open,
-            summary { class: "cursor-pointer select-none px-4 py-2 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
-                "Changes ({total})"
+        section { class: "plate pointer-events-auto w-full",
+            div { class: "px-4 pt-3",
+                h1 { class: "font-chart text-[19px] leading-tight tracking-[0.18em] uppercase text-ink",
+                    "{graph.name}"
+                }
+                p { class: "mt-0.5 font-chart text-[12px] italic text-ink-soft",
+                    "{plural(members, \"workspace crate\")} · {externals} external"
+                }
+                p { class: "mt-2 border-t border-ink-line pt-2 pb-2 font-data text-[10.5px] leading-relaxed text-ink",
+                    span { class: "text-ink-soft", "epoch " }
+                    "{epoch.base} → {epoch.target}"
+                }
             }
-            if let Some(note) = &epoch.note {
-                p { class: "px-4 font-data text-[10px] leading-relaxed text-ink-soft", "{note}" }
-            } else if total == 0 {
-                p { class: "px-4 font-data text-[10px] leading-relaxed text-ink",
-                    "NOTHING CHANGED"
+            details { class: "fold border-t border-ink-line open:pb-3", open: changes_open,
+                summary { class: "cursor-pointer select-none px-4 py-2 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
+                    "Changes ({total})"
                 }
-                p { class: "px-4 pt-0.5 font-data text-[10px] leading-relaxed text-ink-soft",
-                    "the working copy matches {epoch.base}; the chart shows the whole workspace"
-                }
-            } else {
-                ul { class: "max-h-56 overflow-y-auto px-2.5",
-                    for info in changed {
-                        li {
-                            Link {
-                                to: Route::Focus { name: info.name.clone() },
-                                class: if focus.as_deref() == Some(info.name.as_str()) {
-                                    "flex w-full items-center gap-1.5 px-1.5 py-0.5 bg-ink/5"
-                                } else {
-                                    "flex w-full items-center gap-1.5 px-1.5 py-0.5 hover:bg-ink/5"
-                                },
-                                StarMark { info: info.clone(), focal: false, box_px: 20.0 }
-                                span { class: "truncate font-data text-[11px] font-medium text-ink",
-                                    "{info.name}"
-                                }
-                                span { class: "shrink-0 font-data text-[9px] tracking-[0.1em] text-flare",
-                                    if info.changed_files == 1 { "1 FILE" } else { "{info.changed_files} FILES" }
-                                }
-                                if info.manifest_changed {
-                                    span { class: "shrink-0 font-data text-[9px] tracking-[0.1em] text-flare",
-                                        "MANIFEST"
+                if let Some(note) = &epoch.note {
+                    p { class: "px-4 font-data text-[10px] leading-relaxed text-ink-soft", "{note}" }
+                } else if total == 0 {
+                    p { class: "px-4 font-data text-[10px] leading-relaxed text-ink",
+                        "the working copy matches {epoch.base} — the chart shows the whole workspace"
+                    }
+                } else {
+                    ul { class: "max-h-56 overflow-y-auto px-2.5",
+                        for info in changed {
+                            li {
+                                Link {
+                                    to: Route::Focus { name: info.name.clone() },
+                                    class: if focus.as_deref() == Some(info.name.as_str()) {
+                                        "flex w-full items-center gap-1.5 px-1.5 py-0.5 bg-ink/5"
+                                    } else {
+                                        "flex w-full items-center gap-1.5 px-1.5 py-0.5 hover:bg-ink/5"
+                                    },
+                                    StarMark { info: info.clone(), focal: false, box_px: 20.0 }
+                                    span { class: "truncate font-data text-[11px] font-medium text-ink",
+                                        "{info.name}"
                                     }
-                                }
-                                if visited.contains(&info.name) {
-                                    span { class: "ml-auto shrink-0 font-data text-[9px] tracking-[0.12em] text-ink-soft",
-                                        "SEEN"
+                                    span { class: "shrink-0 font-data text-[9px] tracking-[0.1em] text-flare",
+                                        if info.changed_files == 1 { "1 FILE" } else { "{info.changed_files} FILES" }
+                                    }
+                                    if info.manifest_changed {
+                                        span { class: "shrink-0 font-data text-[9px] tracking-[0.1em] text-flare",
+                                            "MANIFEST"
+                                        }
+                                    }
+                                    if visited.contains(&info.name) {
+                                        span { class: "ml-auto shrink-0 font-data text-[9px] tracking-[0.12em] text-ink-soft",
+                                            "SEEN"
+                                        }
                                     }
                                 }
                             }
                         }
                     }
-                }
-                div { class: "mx-4 mt-2 border-t border-ink-line pt-2 font-data text-[9.5px] tracking-[0.1em] uppercase",
-                    if seen == total {
-                        p { class: "text-ink", "ALL {total} SEEN" }
-                    } else {
-                        p { class: "text-ink", "{seen} OF {total} SEEN" }
-                    }
-                    p { class: "mt-1 normal-case tracking-normal text-ink-soft",
-                        "changed crates flare on the rings — open one to chart what its change can reach"
+                    p { class: "mx-4 mt-2 border-t border-ink-line pt-2 font-data text-[9.5px] tracking-[0.1em] uppercase text-ink",
+                        if seen == total { "all {total} seen" } else { "{seen} of {total} seen" }
+                        span { class: "text-ink-soft", " · {affected} affected" }
                     }
                 }
             }
@@ -161,19 +143,20 @@ pub fn ChangesQueue(graph: WorkspaceGraph, #[props(default = true)] start_open: 
     }
 }
 
-/// The edge-direction toggle: which side of the selection's edges the chart
-/// draws. Manifest events are always drawn regardless. Active segment wears
-/// a 1px ink border — no fills on this plate, ever.
+/// Which of the selection's edges the chart draws. It rides inside the
+/// selection's own panel, because it has nothing to act on without one.
+/// Active segment wears a 1px ink border — no fills on this plate, ever.
 #[component]
 pub fn DirectionToggle() -> Element {
     let atlas = use_atlas();
     let current = *atlas.dir.read();
-    let seg = |label: &'static str, val: DirFilter| {
+    let seg = |label: &'static str, hint: &'static str, val: DirFilter| {
         rsx! {
             button {
                 class: "flex-1 whitespace-nowrap border px-1 py-0.5 font-data text-[9px] tracking-[0.08em] uppercase",
                 class: if current == val { "border-ink text-ink" } else { "border-transparent text-ink-soft hover:text-ink" },
                 "aria-pressed": if current == val { "true" } else { "false" },
+                title: hint,
                 onclick: move |_| {
                     let mut dir = atlas.dir;
                     dir.set(val);
@@ -183,13 +166,24 @@ pub fn DirectionToggle() -> Element {
         }
     };
     rsx! {
-        div { class: "plate pointer-events-auto flex items-center gap-0.5 px-2 py-1",
-            span { class: "shrink-0 pr-1.5 font-chart text-[10px] tracking-[0.18em] uppercase text-ink",
-                "Edges"
+        div {
+            class: "flex items-center gap-2 border-t border-ink-line px-4 py-1.5",
+            role: "group",
+            "aria-label": "which of the selection's edges the chart draws",
+            span { class: "shrink-0 font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
+                "edges"
             }
-            {seg("depends on", DirFilter::Deps)}
-            {seg("both", DirFilter::Both)}
-            {seg("used by", DirFilter::Users)}
+            div { class: "flex flex-1 items-stretch gap-0.5",
+                {seg("depends on", "what the selection depends on", DirFilter::Deps)}
+                {seg("used by", "what depends on the selection, one hop out", DirFilter::Users)}
+                {
+                    seg(
+                        "path to root",
+                        "every route from the root down to the selection — what depends on it, and what depends on those, all the way up",
+                        DirFilter::PathToRoot,
+                    )
+                }
+            }
         }
     }
 }
@@ -238,19 +232,6 @@ fn RingsSample() -> Element {
     }
 }
 
-/// One row of the legend's "using this chart" section.
-#[component]
-fn UsageRow(gesture: &'static str, effect: &'static str) -> Element {
-    rsx! {
-        div { class: "flex items-baseline gap-2",
-            span { class: "shrink-0 font-data text-[9.5px] tracking-[0.1em] uppercase text-ink",
-                "{gesture}"
-            }
-            span { class: "text-ink-soft", "{effect}" }
-        }
-    }
-}
-
 /// The key. Every state the chart can draw, named in words — and every
 /// gesture the chart answers to, taught in the same plate.
 #[component]
@@ -270,28 +251,42 @@ pub fn Legend(#[props(default = true)] start_open: bool, center: String) -> Elem
     };
 
     rsx! {
-        details { class: "plate pointer-events-auto w-full open:pb-3 sm:w-64", open: start_open,
+        details {
+            class: "plate fold pointer-events-auto w-full open:pb-3 sm:flex sm:max-h-full sm:w-64 sm:flex-col",
+            open: start_open,
             summary {
-                class: "cursor-pointer select-none px-4 py-2 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
+                class: "shrink-0 cursor-pointer select-none px-4 py-2 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
                 "Reading this chart"
             }
-            div { class: "space-y-2.5 px-4 font-data text-[10px] leading-snug text-ink sm:max-h-[38dvh] sm:overflow-y-auto",
+            div { class: "max-h-[60dvh] space-y-2.5 overflow-y-auto px-4 font-data text-[10px] leading-snug text-ink sm:max-h-none sm:min-h-0",
                 div { class: "flex items-center gap-2",
                     RingsSample {}
                     span {
                         span { class: "font-medium", "{center}" }
-                        " sits at the center; each ring outward is one more dependency hop — the outermost ring gathers everything farther, and expands as you select into it"
+                        " sits at the center; each ring outward is one dependency hop — the outermost gathers everything farther, and expands as you select into it"
                     }
                 }
                 div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
-                    UsageRow { gesture: "click a star", effect: "select it — the chart draws its edges" }
-                    UsageRow { gesture: "ctrl-click", effect: "add or remove a star from the selection" }
-                    UsageRow { gesture: "hop label", effect: "select every crate on that ring" }
-                    UsageRow { gesture: "edges toggle", effect: "draw one direction of the selection's edges" }
-                    UsageRow { gesture: "back / esc", effect: "deselect, back to the whole chart" }
-                    UsageRow { gesture: "drag · scroll", effect: "pan the paper · zoom" }
-                    UsageRow { gesture: "n / p", effect: "next / previous changed crate" }
-                    UsageRow { gesture: "/ · f", effect: "find a crate · refit the chart" }
+                    div { class: "flex items-baseline gap-2",
+                        span { class: "shrink-0 font-data text-[9.5px] tracking-[0.1em] uppercase text-ink",
+                            "ctrl-click"
+                        }
+                        span { class: "text-ink-soft", "add or remove a star from the selection" }
+                    }
+                    div { class: "flex flex-wrap items-baseline gap-x-3 gap-y-1",
+                        for (key , what) in [
+                            ("/", "find"),
+                            ("n p", "walk changes"),
+                            ("f", "refit"),
+                            ("esc", "deselect"),
+                        ]
+                        {
+                            span { key: "{key}", class: "whitespace-nowrap",
+                                span { class: "font-medium uppercase tracking-[0.1em] text-ink", "{key}" }
+                                span { class: "text-ink-soft", " {what}" }
+                            }
+                        }
+                    }
                 }
                 div { class: "flex items-center gap-2 border-t border-ink-line pt-2.5",
                     div { class: "flex items-end",
@@ -299,7 +294,7 @@ pub fn Legend(#[props(default = true)] start_open: bool, center: String) -> Elem
                         StarMark { info: sample(9, true), focal: false, box_px: 22.0 }
                         StarMark { info: sample(60, true), focal: false, box_px: 28.0 }
                     }
-                    span { "stars are sized by how many crates depend on them" }
+                    span { "size — how many crates depend on it" }
                 }
                 div { class: "flex items-center gap-2",
                     StarMark { info: sample(4, true), focal: false, box_px: 20.0 }
@@ -314,14 +309,14 @@ pub fn Legend(#[props(default = true)] start_open: bool, center: String) -> Elem
                         StarMark { info: changed, focal: false, box_px: 26.0 }
                         span {
                             span { class: "font-medium text-flare", "CHANGED" }
-                            " — its files were edited in this epoch"
+                            " — edited in this epoch"
                         }
                     }
                     div { class: "flex items-center gap-2",
                         StarMark { info: affected, focal: false, box_px: 26.0 }
                         span {
                             span { class: "font-medium", "AFFECTED" }
-                            " — depends on a change; the ring fades with distance"
+                            " — downstream of a change; the halo fades with distance"
                         }
                     }
                     div { class: "flex items-center gap-2",
@@ -335,11 +330,11 @@ pub fn Legend(#[props(default = true)] start_open: bool, center: String) -> Elem
                 div { class: "border-t border-ink-line pt-2.5 space-y-1.5",
                     div { class: "flex items-center gap-2",
                         LineSample { dasharray: "", stroke: "var(--color-ink)", width: 1.25 }
-                        span { "ink, arrow in: the selected crate depends on it" }
+                        span { "ink: the selected crate depends on it" }
                     }
                     div { class: "flex items-center gap-2",
                         LineSample { dasharray: "", stroke: "var(--color-ink-line)", width: 1.1 }
-                        span { "hairline, arrow out: it depends on the selected crate" }
+                        span { "hairline: it depends on the selected crate" }
                     }
                     div { class: "flex items-center gap-2",
                         LineSample { dasharray: "6 4", stroke: "var(--color-ink-line)" }
@@ -350,7 +345,7 @@ pub fn Legend(#[props(default = true)] start_open: bool, center: String) -> Elem
                         span { "manifest event — added, removed, or bumped" }
                     }
                     p { class: "pt-1 text-ink-soft",
-                        "arrows point the way change travels — into the crate that uses the dependency; edges are drawn for the selected crate only, manifest events always show"
+                        "only the selection's edges are drawn; arrows point the way change travels"
                     }
                 }
             }
@@ -461,6 +456,20 @@ pub fn SearchBox(graph: WorkspaceGraph) -> Element {
     }
 }
 
+/// Names that appear more than once in a list, because cargo resolved
+/// several versions of the same crate. Rows and stars for these have to carry
+/// their version; everything else stays a bare name.
+fn repeated_names<'a>(crates: impl Iterator<Item = &'a CrateInfo>) -> HashSet<String> {
+    let mut seen: HashSet<&str> = HashSet::new();
+    let mut twice: HashSet<String> = HashSet::new();
+    for c in crates {
+        if !seen.insert(c.name.as_str()) {
+            twice.insert(c.name.clone());
+        }
+    }
+    twice
+}
+
 /// What one dependency row says about its edge.
 fn kind_words(kind: DepKind) -> Option<&'static str> {
     match kind {
@@ -481,10 +490,23 @@ fn event_words(event: &DepEvent) -> String {
 /// One row in the focus panel's dependency lists. Live crates are links; a
 /// removed crate has no neighborhood left to visit and stays plain text.
 #[component]
-fn CrateRow(info: CrateInfo, kind: DepKind, event: Option<DepEvent>) -> Element {
+fn CrateRow(
+    info: CrateInfo,
+    kind: DepKind,
+    event: Option<DepEvent>,
+    /// The list holds another version of this crate, so the row has to say
+    /// which one it is.
+    #[props(default = false)]
+    versioned: bool,
+) -> Element {
     let row = rsx! {
         StarMark { info: info.clone(), focal: false, box_px: 18.0 }
-        span { class: "truncate font-data text-[11px] text-ink", "{info.name}" }
+        span { class: "truncate font-data text-[11px] text-ink",
+            "{info.name}"
+            if versioned {
+                span { class: "text-ink-line", " v{info.version}" }
+            }
+        }
         if let Some(k) = kind_words(kind) {
             span { class: "font-data text-[9px] tracking-[0.12em] text-ink-soft", "{k}" }
         }
@@ -517,11 +539,17 @@ fn CrateList(rows: Vec<(CrateInfo, DepKind, Option<DepEvent>)>) -> Element {
     let mut all = use_signal(|| false);
     let total = rows.len();
     let shown = if all() { total } else { CHUNK.min(total) };
+    let repeated = repeated_names(rows.iter().map(|(c, _, _)| c));
 
     rsx! {
         ul { class: "mt-1",
             for (info , kind , event) in rows.into_iter().take(shown) {
-                CrateRow { info, kind, event }
+                CrateRow {
+                    versioned: repeated.contains(info.name.as_str()),
+                    info,
+                    kind,
+                    event,
+                }
             }
         }
         if total > shown {
@@ -534,20 +562,167 @@ fn CrateList(rows: Vec<(CrateInfo, DepKind, Option<DepEvent>)>) -> Element {
     }
 }
 
-/// The focused crate's fact sheet: the way back, identity, state, and both
+/// Where a crate lives off the plate. A crate resolved from crates.io always
+/// has a registry page and a docs.rs build, even when its manifest names
+/// neither; everything else is only as good as what the manifest declared.
+fn out_links(info: &CrateInfo) -> Vec<(&'static str, String)> {
+    let url = |s: &Option<String>| {
+        s.as_deref()
+            .filter(|u| u.starts_with("http"))
+            .map(str::to_string)
+    };
+    let mut links: Vec<(&'static str, String)> = Vec::new();
+    if let Some(repo) = url(&info.repository) {
+        links.push(("repo", repo));
+    }
+    if info.crates_io {
+        links.push((
+            "crates.io",
+            format!("https://crates.io/crates/{}", info.name),
+        ));
+    }
+    match url(&info.documentation) {
+        Some(docs) => links.push(("docs", docs)),
+        None if info.crates_io => links.push((
+            "docs.rs",
+            format!("https://docs.rs/{}/{}", info.name, info.version),
+        )),
+        None => {}
+    }
+    if let Some(home) = url(&info.homepage)
+        && !links.iter().any(|(_, u)| *u == home)
+    {
+        links.push(("homepage", home));
+    }
+    links
+}
+
+/// One labelled fact in a crate's fact sheet.
+#[component]
+fn FactRow(label: &'static str, value: String) -> Element {
+    rsx! {
+        div { class: "flex items-baseline gap-2",
+            span { class: "w-[52px] shrink-0 font-data text-[9.5px] tracking-[0.1em] uppercase text-ink-soft",
+                "{label}"
+            }
+            span { class: "min-w-0 break-words font-data text-[10px] text-ink", "{value}" }
+        }
+    }
+}
+
+/// A link off the plate, opened in its own tab so the review never loses its
+/// place. The arrow says the reader is leaving.
+#[component]
+fn OutLink(label: &'static str, href: String) -> Element {
+    rsx! {
+        a {
+            href: "{href}",
+            target: "_blank",
+            rel: "noreferrer",
+            class: "font-data text-[10px] tracking-[0.06em] text-ink underline decoration-ink-line underline-offset-4 hover:decoration-ink",
+            title: "{href}",
+            "{label} ↗"
+        }
+    }
+}
+
+/// What the manifest says about one crate: its own words, its license, where
+/// it sits on disk, and every page it has elsewhere.
+#[component]
+fn CrateFacts(info: CrateInfo) -> Element {
+    let links = out_links(&info);
+    if info.description.is_none()
+        && info.license.is_none()
+        && info.rel_path.is_none()
+        && links.is_empty()
+    {
+        return rsx! {};
+    }
+    rsx! {
+        div { class: "mt-3 space-y-1.5 border-b border-ink-line pb-3",
+            if let Some(desc) = info.description.clone() {
+                p { class: "font-chart text-[12px] italic leading-snug text-ink", "{desc}" }
+            }
+            div { class: "space-y-0.5",
+                if let Some(license) = info.license.clone() {
+                    FactRow { label: "license", value: license }
+                }
+                if let Some(path) = info.rel_path.clone() {
+                    FactRow { label: "path", value: path }
+                }
+                FactRow {
+                    label: "deps",
+                    value: "{info.direct_deps} direct · {info.external_deps} external",
+                }
+            }
+            if !links.is_empty() {
+                div { class: "flex flex-wrap gap-x-3 gap-y-1",
+                    for (label , href) in links {
+                        OutLink { key: "{label}", label, href }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// How one trail step reads in the breadcrumb: a ring, a lone crate, or a
+/// multi-selection too wide to spell out.
+fn step_label(step: &str) -> String {
+    if let Some(hop) = step_ring(step) {
+        return format!("ring {hop}");
+    }
+    match step.split('+').count() {
+        1 => step.to_string(),
+        n => format!("{n} crates"),
+    }
+}
+
+fn step_route(step: &str) -> Route {
+    match step_ring(step) {
+        Some(hop) => Route::RingSel { hop },
+        None => Route::Focus {
+            name: step.to_string(),
+        },
+    }
+}
+
+/// The review trail as one line: the whole chart, then every step behind the
+/// current one, each a link back to it. The panel's own heading names where
+/// the review stands now, so the trail never repeats it.
+#[component]
+fn Breadcrumb() -> Element {
+    let atlas = use_atlas();
+    let mut walked = atlas.trail.read().walked();
+    walked.pop();
+
+    rsx! {
+        nav {
+            class: "flex flex-wrap items-baseline gap-x-1.5 font-data text-[10px] tracking-[0.12em] uppercase text-ink-soft",
+            "aria-label": "review trail",
+            Link {
+                class: "underline-offset-4 hover:text-ink hover:underline",
+                to: Route::Overview {},
+                "← whole chart"
+            }
+            for step in walked {
+                span { key: "{step}", class: "flex items-baseline gap-x-1.5",
+                    span { class: "text-ink-line", "→" }
+                    Link {
+                        class: "max-w-36 truncate underline-offset-4 hover:text-ink hover:underline",
+                        to: step_route(&step),
+                        "{step_label(&step)}"
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The focused crate's fact sheet: the trail, identity, state, and both
 /// directions of its neighborhood as clickable lists.
 #[component]
 pub fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
-    let atlas = use_atlas();
-    let trail = atlas.trail.read();
-    let can_go_back = trail.at > 0;
-    let back_label = match trail.previous() {
-        Some(Some(prev)) => format!("← back · {prev}"),
-        Some(None) => "← back · whole chart".to_string(),
-        None => String::new(),
-    };
-    let walked = trail.walked();
-
     let Some(focal) = graph
         .crates
         .iter()
@@ -575,6 +750,21 @@ pub fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
         .filter(|c| c.name == name && !c.ghost)
         .map(|c| c.id.as_str())
         .collect();
+    // Cargo can resolve several versions of one crate at once; each is its
+    // own star on its own ring, and the selection holds all of them.
+    let mut versions: Vec<&str> = graph
+        .crates
+        .iter()
+        .filter(|c| c.name == name && !c.ghost)
+        .map(|c| c.version.as_str())
+        .collect();
+    versions.sort_unstable();
+    versions.dedup();
+    let version_line = versions
+        .iter()
+        .map(|v| format!("v{v}"))
+        .collect::<Vec<_>>()
+        .join(" · ");
 
     let mut depends_on: Vec<(CrateInfo, DepKind, Option<DepEvent>)> = Vec::new();
     let mut used_by: Vec<(CrateInfo, DepKind, Option<DepEvent>)> = Vec::new();
@@ -611,39 +801,20 @@ pub fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
     };
 
     rsx! {
-        section { class: "plate pointer-events-auto flex max-h-full w-full flex-col overflow-hidden sm:w-72",
-            div { class: "px-4 pt-3",
-                div { class: "flex items-baseline justify-between gap-2",
-                    if can_go_back {
-                        button {
-                            class: "font-data text-[10px] tracking-[0.12em] uppercase text-ink-soft underline-offset-4 hover:text-ink hover:underline",
-                            onclick: move |_| history_back(),
-                            "{back_label}"
-                        }
-                        Link {
-                            class: "shrink-0 font-data text-[10px] tracking-[0.12em] uppercase text-ink-soft underline-offset-4 hover:text-ink hover:underline",
-                            to: Route::Overview {},
-                            "whole chart"
-                        }
-                    } else {
-                        Link {
-                            class: "font-data text-[10px] tracking-[0.12em] uppercase text-ink-soft underline-offset-4 hover:text-ink hover:underline",
-                            to: Route::Overview {},
-                            "← whole chart"
-                        }
-                    }
-                }
-                if walked.len() > 1 {
-                    p { class: "mt-1 truncate font-data text-[9.5px] tracking-[0.08em] text-ink-soft",
-                        "trail · {walked.join(\" → \")}"
-                    }
-                }
+        section { class: "plate pointer-events-auto flex max-h-[44dvh] w-full flex-col overflow-hidden sm:max-h-full sm:w-72",
+            div { class: "px-4 pt-3 pb-2",
+                Breadcrumb {}
                 h2 { class: "mt-1.5 break-all font-data text-[15px] font-semibold text-ink",
                     "{focal.name}"
                 }
                 p { class: "font-data text-[10.5px] text-ink-soft",
-                    "v{focal.version} · "
+                    "{version_line} · "
                     if focal.is_member { "workspace member" } else { "external crate" }
+                }
+                if versions.len() > 1 {
+                    p { class: "mt-0.5 font-data text-[10px] leading-snug text-ink-soft",
+                        "resolved {versions.len()} times — one star each, all selected"
+                    }
                 }
                 if let Some(state) = state {
                     p { class: "mt-1.5 font-data text-[10px] tracking-[0.08em] text-flare", "{state}" }
@@ -654,7 +825,9 @@ pub fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
                     }
                 }
             }
+            DirectionToggle {}
             div { class: "min-h-0 flex-1 overflow-y-auto px-4 pb-3",
+                CrateFacts { info: focal.clone() }
                 h3 { class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
                     "Used by ({used_by.len()})"
                 }
@@ -704,20 +877,17 @@ pub fn MultiPanel(graph: WorkspaceGraph, joined: String) -> Element {
     }
 
     rsx! {
-        section { class: "plate pointer-events-auto flex max-h-full w-full flex-col overflow-hidden sm:w-72",
-            div { class: "px-4 pt-3",
-                Link {
-                    class: "font-data text-[10px] tracking-[0.12em] uppercase text-ink-soft underline-offset-4 hover:text-ink hover:underline",
-                    to: Route::Overview {},
-                    "← whole chart"
-                }
-                h2 { class: "mt-1.5 font-chart text-[13px] tracking-[0.22em] uppercase text-ink",
+        section { class: "plate pointer-events-auto flex max-h-[44dvh] w-full flex-col overflow-hidden sm:max-h-full sm:w-72",
+            div { class: "px-4 pt-3 pb-2",
+                Breadcrumb {}
+                h2 { class: "mt-1.5 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
                     "Selection ({names.len()})"
                 }
                 p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
                     "together they depend on {deps.len()} crates · {users.len()} depend on them"
                 }
             }
+            DirectionToggle {}
             div { class: "min-h-0 flex-1 overflow-y-auto px-4 pb-3",
                 ul { class: "mt-2",
                     for name in names.clone() {
@@ -754,9 +924,6 @@ pub fn MultiPanel(graph: WorkspaceGraph, joined: String) -> Element {
                         }
                     }
                 }
-                p { class: "mt-2 border-t border-ink-line pt-2 font-data text-[10px] leading-relaxed text-ink-soft",
-                    "ctrl-click stars on the chart to add or remove them"
-                }
             }
         }
     }
@@ -792,16 +959,13 @@ pub fn RingPanel(graph: WorkspaceGraph, hop: u32) -> Element {
     let total = crates.len();
     const CHUNK: usize = 14;
     let shown = if all() { total } else { CHUNK.min(total) };
+    let repeated = repeated_names(crates.iter());
 
     rsx! {
-        section { class: "plate pointer-events-auto flex max-h-full w-full flex-col overflow-hidden sm:w-72",
-            div { class: "px-4 pt-3",
-                Link {
-                    class: "font-data text-[10px] tracking-[0.12em] uppercase text-ink-soft underline-offset-4 hover:text-ink hover:underline",
-                    to: Route::Overview {},
-                    "← whole chart"
-                }
-                h2 { class: "mt-1.5 font-chart text-[13px] tracking-[0.22em] uppercase text-ink",
+        section { class: "plate pointer-events-auto flex max-h-[44dvh] w-full flex-col overflow-hidden sm:max-h-full sm:w-72",
+            div { class: "px-4 pt-3 pb-2",
+                Breadcrumb {}
+                h2 { class: "mt-1.5 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
                     if collapsed { "Ring {hop}+ ({total})" } else { "Ring {hop} ({total})" }
                 }
                 p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
@@ -810,6 +974,7 @@ pub fn RingPanel(graph: WorkspaceGraph, hop: u32) -> Element {
                     else { "every crate {hop} hops from the center" }
                 }
             }
+            DirectionToggle {}
             div { class: "min-h-0 flex-1 overflow-y-auto px-4 pb-3",
                 ul { class: "mt-2",
                     for info in crates.into_iter().take(shown) {
@@ -818,7 +983,12 @@ pub fn RingPanel(graph: WorkspaceGraph, hop: u32) -> Element {
                                 to: Route::Focus { name: info.name.clone() },
                                 class: "flex w-full items-center gap-1.5 px-1 py-0.5 hover:bg-ink/5",
                                 StarMark { info: info.clone(), focal: false, box_px: 18.0 }
-                                span { class: "truncate font-data text-[11px] text-ink", "{info.name}" }
+                                span { class: "truncate font-data text-[11px] text-ink",
+                                    "{info.name}"
+                                    if repeated.contains(info.name.as_str()) {
+                                        span { class: "text-ink-line", " v{info.version}" }
+                                    }
+                                }
                                 if !info.is_member {
                                     span { class: "ml-auto shrink-0 font-data text-[9.5px] tracking-[0.12em] text-ink-soft",
                                         "EXT"
@@ -834,9 +1004,6 @@ pub fn RingPanel(graph: WorkspaceGraph, hop: u32) -> Element {
                         onclick: move |_| all.set(true),
                         "show all {total}"
                     }
-                }
-                p { class: "mt-2 border-t border-ink-line pt-2 font-data text-[10px] leading-relaxed text-ink-soft",
-                    "ctrl-click a star to carve a smaller selection out of the ring"
                 }
             }
         }

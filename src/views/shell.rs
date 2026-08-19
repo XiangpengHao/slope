@@ -9,7 +9,7 @@ use dioxus::prelude::*;
 use crate::Route;
 use crate::api::{WorkspaceGraph, workspace_graph};
 use crate::views::atlas::Chart;
-use crate::views::chrome::{Cartouche, ChangesQueue, DirectionToggle, Legend, SearchBox};
+use crate::views::chrome::{Legend, SearchBox, TitleBlock};
 
 type GraphResource = Resource<Result<WorkspaceGraph, ServerFnError>>;
 
@@ -31,21 +31,23 @@ pub fn step_ring(step: &str) -> Option<u32> {
     step.strip_prefix("ring:")?.parse().ok()
 }
 
-/// Which direction of the selection's edges the chart draws. Manifest
-/// events are always drawn regardless. Defaults to dependencies only: the
-/// compact reading; dependents are one toggle away.
+/// Which of the selection's edges the chart draws. Manifest events are
+/// always drawn regardless. Defaults to dependencies only: the compact
+/// reading; the other two readings are one toggle away.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum DirFilter {
     /// What the selection depends on.
     #[default]
     Deps,
-    Both,
     /// What depends on the selection.
     Users,
+    /// Every route from the root to the selection: what depends on it, then
+    /// what depends on those, hop by hop until the chain reaches the top.
+    PathToRoot,
 }
 
-/// The review trail, kept in step with the browser history. Every focus is a
-/// URL; back closes the most recent bloom, forward reopens it.
+/// The review trail, kept in step with the browser history. Every selection
+/// is a URL; back retraces the review, forward replays it.
 #[derive(Clone, Default, PartialEq)]
 pub struct Trail {
     pub steps: Vec<TrailStep>,
@@ -83,11 +85,6 @@ impl Trail {
         self.steps.get(self.at).cloned().flatten()
     }
 
-    /// The step behind the current one — what back would return to.
-    pub fn previous(&self) -> Option<&TrailStep> {
-        self.at.checked_sub(1).and_then(|i| self.steps.get(i))
-    }
-
     /// The crates this stretch of the trail walked through since it last
     /// passed the whole chart, in visiting order — the review's breadcrumb.
     pub fn walked(&self) -> Vec<String> {
@@ -117,7 +114,6 @@ impl Trail {
 // trail must outlive every remount.
 static TRAIL: GlobalSignal<Trail> = Signal::global(Trail::default);
 static VISITED: GlobalSignal<HashSet<String>> = Signal::global(HashSet::new);
-static BLOOMED: GlobalSignal<bool> = Signal::global(|| false);
 static ANNOUNCE: GlobalSignal<String> = Signal::global(String::new);
 static DIR: GlobalSignal<DirFilter> = Signal::global(DirFilter::default);
 static SELECTED: GlobalSignal<Vec<String>> = Signal::global(Vec::new);
@@ -128,8 +124,6 @@ static SELECTED: GlobalSignal<Vec<String>> = Signal::global(Vec::new);
 pub struct AtlasState {
     pub trail: Signal<Trail>,
     pub visited: Signal<HashSet<String>>,
-    /// A selection happened this session; dismisses the first-visit hint.
-    pub bloomed: Signal<bool>,
     pub announce: Signal<String>,
     /// Which direction of the selection's edges the chart draws.
     pub dir: Signal<DirFilter>,
@@ -143,14 +137,13 @@ pub fn use_atlas() -> AtlasState {
     AtlasState {
         trail: TRAIL.signal(),
         visited: VISITED.signal(),
-        bloomed: BLOOMED.signal(),
         announce: ANNOUNCE.signal(),
         dir: DIR.signal(),
         selected: SELECTED.signal(),
     }
 }
 
-/// The browser's back button, from code: the un-bloom gesture.
+/// The browser's back button, from code: one step back along the trail.
 pub fn history_back() {
     #[cfg(target_arch = "wasm32")]
     if let Some(window) = web_sys::window()
@@ -187,8 +180,6 @@ pub fn AtlasShell() -> Element {
         trail.write().note(step.clone());
         match &step {
             Some(step) => {
-                let mut bloomed = atlas.bloomed;
-                bloomed.set(true);
                 if let Some(hop) = step_ring(step) {
                     announce.set(format!(
                         "Selected ring {hop}: every crate {hop} hops from the center."
@@ -235,25 +226,21 @@ pub fn AtlasShell() -> Element {
                         Chart { graph: graph.clone() }
                         Outlet::<Route> {}
                         // Desktop: the left column is the reading order of a
-                        // review — title block, the changes queue, then the key.
-                        div { class: "pointer-events-none absolute bottom-3 left-3 top-3 z-10 hidden w-64 flex-col gap-2 sm:flex",
-                            Cartouche { graph: graph.clone() }
-                            ChangesQueue { graph: graph.clone(), start_open: true }
-                            div { class: "mt-auto",
+                        // review — what this is and what changed, then the key.
+                        div { class: "pointer-events-none absolute bottom-3 left-3 top-3 z-10 hidden w-64 flex-col sm:flex",
+                            TitleBlock { graph: graph.clone() }
+                            div { class: "mt-auto min-h-0 pt-2",
                                 Legend { start_open: true, center: center.clone() }
                             }
                         }
-                        div { class: "pointer-events-none absolute right-3 top-3 z-10 hidden w-56 flex-col gap-2 sm:flex",
+                        div { class: "pointer-events-none absolute right-3 top-3 z-10 hidden w-56 sm:block",
                             SearchBox { graph: graph.clone() }
-                            DirectionToggle {}
                         }
-                        // Phone: everything stacks under the cartouche; the
-                        // queue and legend fold closed.
+                        // Phone: the title block stacks over search, its
+                        // changes folded away; the key waits at the foot.
                         div { class: "pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-col gap-2 sm:hidden",
-                            Cartouche { graph: graph.clone() }
+                            TitleBlock { graph: graph.clone(), changes_open: false }
                             SearchBox { graph: graph.clone() }
-                            DirectionToggle {}
-                            ChangesQueue { graph: graph.clone(), start_open: false }
                         }
                         div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
                             Legend { start_open: false, center }

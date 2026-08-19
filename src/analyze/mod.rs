@@ -163,6 +163,15 @@ pub fn analyze() -> Result<WorkspaceGraph, String> {
                             direct_deps: 0,
                             external_deps: 0,
                             ghost: true,
+                            description: None,
+                            license: None,
+                            repository: None,
+                            homepage: None,
+                            documentation: None,
+                            // A removed dependency's manifest is gone with
+                            // it; the name is all we know.
+                            crates_io: false,
+                            rel_path: None,
                         });
                     }
                     // Point at the live crate when one still exists (another
@@ -257,6 +266,17 @@ pub fn analyze() -> Result<WorkspaceGraph, String> {
         .map(|pkg| {
             let id = node_id[&pkg.id].clone();
             let is_member = members.contains(&pkg.id);
+            // Members carry their directory so the reviewer knows where on
+            // disk the crate lives; externals live in the registry cache,
+            // which is no help to anyone.
+            let rel_path = is_member
+                .then(|| pkg.manifest_path.parent())
+                .flatten()
+                .and_then(|dir| dir.as_std_path().strip_prefix(&root).ok())
+                .map(|rel| {
+                    let rel = rel.display().to_string();
+                    if rel.is_empty() { ".".to_string() } else { rel }
+                });
             CrateInfo {
                 changed: changed_files.contains_key(&pkg.id),
                 changed_files: changed_files.get(&pkg.id).copied().unwrap_or(0),
@@ -269,6 +289,13 @@ pub fn analyze() -> Result<WorkspaceGraph, String> {
                 version: pkg.version.to_string(),
                 is_member,
                 ghost: false,
+                description: pkg.description.clone(),
+                license: pkg.license.clone(),
+                repository: pkg.repository.clone(),
+                homepage: pkg.homepage.clone(),
+                documentation: pkg.documentation.clone(),
+                crates_io: pkg.source.as_ref().is_some_and(|s| s.is_crates_io()),
+                rel_path,
                 id,
             }
         })
