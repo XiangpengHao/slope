@@ -154,6 +154,23 @@ pub fn history_back() {
     }
 }
 
+/// Arrow keys retrace the review: every focus is a URL, so left and right
+/// are the browser's back and forward on every route. Acts entirely in JS
+/// and installs once — the guard keeps remounts from stacking listeners.
+/// Typing fields keep their caret keys.
+const NAV_KEYS_JS: &str = r#"
+if (!window.__slopifyNavKeys) {
+    window.__slopifyNavKeys = (e) => {
+        if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+        const t = e.target, tag = t && t.tagName;
+        if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+        if (e.key === 'ArrowLeft') { e.preventDefault(); history.back(); }
+        else if (e.key === 'ArrowRight') { e.preventDefault(); history.forward(); }
+    };
+    document.addEventListener('keydown', window.__slopifyNavKeys);
+}
+"#;
+
 /// Wraps every page.
 #[component]
 pub fn AtlasShell() -> Element {
@@ -161,6 +178,12 @@ pub fn AtlasShell() -> Element {
     use_context_provider(|| resource);
 
     let atlas = use_atlas();
+
+    // The back/forward keys live on the shell, not the views: they must
+    // survive every route change, and they never need a channel back.
+    use_effect(|| {
+        document::eval(NAV_KEYS_JS);
+    });
 
     // Keep the trail in step with the URL. An effect, not a render-time
     // write: writes during the hydration render do not stick, which would

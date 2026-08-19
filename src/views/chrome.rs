@@ -282,6 +282,7 @@ pub fn Legend(#[props(default = true)] start_open: bool, center: String) -> Elem
                             ("n p", "walk changes"),
                             ("f", "refit"),
                             ("esc", "deselect"),
+                            ("← →", "back · forward"),
                         ]
                         {
                             span { key: "{key}", class: "whitespace-nowrap",

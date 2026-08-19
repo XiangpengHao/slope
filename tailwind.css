@@ -648,10 +648,12 @@ details.fold:not([open]) > summary::after {
 
 /* The quoted definition: the item's own source, as the reviewer's editor
    would show it. The gutter counts from the item's first line in the real
-   file and stays put while the code scrolls under it. */
+   file and stays put while the code scrolls under it. Long definitions
+   scroll inside the pane rather than being cut. */
 .atlas .ego-code {
   margin: 0;
-  overflow-x: auto;
+  max-height: 70vh;
+  overflow: auto;
   border: 1px solid var(--color-ink-line);
   background: var(--color-paper);
   padding: 7px 0;
@@ -688,14 +690,36 @@ details.fold:not([open]) > summary::after {
   -webkit-user-select: text;
   padding-right: 12px;
 }
-/* A fold states what it holds back, here as everywhere. */
-.atlas .ego-elided {
+/* A row's definition unfolded in place: the same quoted pane, seated under
+   its row and capped shorter than the plate's own quotation, so an outline
+   stays an outline. The step deeper is the footer link. */
+.atlas .ego-expand {
+  margin: 2px 0 6px;
+}
+.atlas .ego-expand .ego-code {
+  max-height: 40vh;
+}
+.atlas .ego-expand-foot {
   margin-top: 3px;
   font-family: var(--font-data);
   font-size: 9.5px;
   color: var(--color-ink-soft);
 }
-
+.atlas .ego-expand-foot a {
+  color: inherit;
+  text-decoration: none;
+}
+.atlas .ego-expand-foot a:hover {
+  color: var(--color-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* The pane before its source arrives: one honest line. */
+.atlas .ego-expand-load {
+  font-family: var(--font-data);
+  font-size: 9.5px;
+  color: var(--color-ink-soft);
+}
 /* Token classes. Colour lives inside a code pane and nowhere else, and says
    one thing: what kind of token this is. Every hue clears 4.5:1 on paper, and
    none of them is the flare — amber still means CHANGED, here as everywhere. */
@@ -730,6 +754,17 @@ details.fold:not([open]) > summary::after {
 }
 .atlas .ego-code .tok-ident {
   color: var(--color-ink);
+}
+/* A resolved run is a link: it keeps its token's colour, and a quiet
+   underline alone says it goes somewhere — firmer under the pointer. */
+.atlas .ego-code .tok-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 30%, transparent);
+  text-underline-offset: 3px;
+}
+.atlas .ego-code .tok-link:hover {
+  text-decoration-color: currentColor;
 }
 
 /* The impl section: what the source cannot show, because it is written

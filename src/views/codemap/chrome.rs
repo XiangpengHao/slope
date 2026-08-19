@@ -8,7 +8,7 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{CodeGraph, FileInfo, ItemKind, ItemMark, Vis};
-use crate::views::codemap::{file_route, item_route};
+use crate::views::codemap::{RefDir, file_route, item_route, use_code};
 
 pub(crate) fn plural(n: usize, word: &str) -> String {
     if n == 1 {
@@ -355,6 +355,7 @@ pub fn CodeLegend(graph: CodeGraph, #[props(default = true)] start_open: bool) -
                     UsageRow { gesture: "click a directory", effect: "fold it to a counted gate; click the gate to open" }
                     UsageRow { gesture: "hover a block", effect: "its ties come up to full ink, lighter ties show their counts" }
                     UsageRow { gesture: "back / esc", effect: "step back up" }
+                    UsageRow { gesture: "← · →", effect: "back · forward through the review" }
                     UsageRow { gesture: "/ · f", effect: "find a file or item · refit the map" }
                 }
                 div { class: "space-y-1 border-t border-ink-line pt-2.5 text-ink-soft",
@@ -397,6 +398,46 @@ fn RefList(rows: Vec<(Route, String, String, u32)>) -> Element {
                 class: "mt-1 px-1 font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
                 onclick: move |_| all.set(true),
                 "show all {total}"
+            }
+        }
+    }
+}
+
+/// Which of the selected crate's ties the map draws. It rides on the crate
+/// sheet, because it has nothing to act on without a selection — the same
+/// grammar as the dependency chart's edges toggle. Active segment wears a
+/// 1px ink border — no fills on this plate, ever.
+#[component]
+pub fn RefDirToggle() -> Element {
+    let code = use_code();
+    let current = *code.ref_dir.read();
+    let seg = |label: &'static str, hint: &'static str, val: RefDir| {
+        rsx! {
+            button {
+                class: "flex-1 whitespace-nowrap border px-1 py-0.5 font-data text-[9px] tracking-[0.08em] uppercase",
+                class: if current == val { "border-ink text-ink" } else { "border-transparent text-ink-soft hover:text-ink" },
+                "aria-pressed": if current == val { "true" } else { "false" },
+                title: hint,
+                onclick: move |_| {
+                    let mut dir = code.ref_dir;
+                    dir.set(val);
+                },
+                "{label}"
+            }
+        }
+    };
+    rsx! {
+        div {
+            class: "border-t border-ink-line px-4 py-1.5",
+            role: "group",
+            "aria-label": "which of the crate's references the map draws",
+            span { class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
+                "references"
+            }
+            div { class: "mt-1 flex items-stretch gap-0.5",
+                {seg("uses", "only references its code makes to other crates", RefDir::Uses)}
+                {seg("used by", "only references into its code from other crates", RefDir::UsedBy)}
+                {seg("both", "both directions of its references", RefDir::Both)}
             }
         }
     }
@@ -461,7 +502,7 @@ pub fn CratePanel(graph: CodeGraph, name: String) -> Element {
 
     rsx! {
         section { class: "plate pointer-events-auto flex max-h-[44dvh] w-full flex-col overflow-hidden sm:max-h-full sm:w-72",
-            div { class: "px-4 pt-3",
+            div { class: "px-4 pt-3 pb-2",
                 Link {
                     class: "font-data text-[10px] tracking-[0.12em] uppercase text-ink-soft underline-offset-4 hover:text-ink hover:underline",
                     to: Route::CodeOverview {},
@@ -482,6 +523,7 @@ pub fn CratePanel(graph: CodeGraph, name: String) -> Element {
                     "its dependencies ↑"
                 }
             }
+            RefDirToggle {}
             div { class: "min-h-0 flex-1 overflow-y-auto px-4 pb-3",
                 h3 { class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
                     "Used outside ({used_rows.len()})"

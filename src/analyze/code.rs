@@ -30,7 +30,7 @@ use tokio::sync::OnceCell;
 
 use crate::api::{
     CodeGraph, FileDetail, FileInfo, FileRef, ItemEdge, ItemInfo, ItemKind, ItemMark, ItemRef,
-    ItemSource, ItemXRef, Tok, Vis,
+    ItemSource, ItemXRef, SrcLink, SrcRun, Tok, Vis,
 };
 
 /// The whole survey, precomputed once: the shipped graph plus every file's
@@ -42,6 +42,22 @@ pub struct CodeIndex {
     /// Every surveyed file's source text, indexed by [`FileInfo::id`]. The
     /// focus plate quotes it; it never crosses the wire whole.
     pub sources: Vec<String>,
+    /// Clickable reference spans per file: (start byte, end byte, target file,
+    /// target item label), sorted by start. The focus plate turns the ones
+    /// inside a quoted item into links.
+    pub ref_spans: Vec<Vec<RefSpan>>,
+}
+
+/// One clickable reference in a file's real source: the byte range of the
+/// reference's name token, and where it resolves. Server-side only — the
+/// focus plate translates the ones a quoted item contains into [`SrcLink`]s.
+pub struct RefSpan {
+    pub start: u32,
+    pub end: u32,
+    /// Target file, a [`FileInfo::id`].
+    pub file: u32,
+    /// Target item's URL label; empty for a whole-file target.
+    pub label: String,
 }
 
 static INDEX: OnceCell<Result<Arc<CodeIndex>, String>> = OnceCell::const_new();
@@ -85,6 +101,11 @@ impl LineStarts {
     fn line(&self, offset: TextSize) -> u32 {
         let off = u32::from(offset);
         self.0.partition_point(|&s| s <= off) as u32
+    }
+
+    /// Byte offset where a 1-based line starts.
+    fn start_of(&self, line: u32) -> Option<u32> {
+        self.0.get(line.checked_sub(1)? as usize).copied()
     }
 
     fn count(&self) -> u32 {
@@ -319,6 +340,9 @@ fn survey_attached(
     // (source file, source item, target) → count.
     let mut acc: HashMap<(u32, Option<u32>, RefTarget), u32> = HashMap::new();
     let mut unresolved: u32 = 0;
+    // Each recorded reference's name token, as a byte range in the real
+    // source file, with its target — the raw material for clickable spans.
+    let mut raw_spans: Vec<Vec<(u32, u32, RefTarget)>> = vec![Vec::new(); raw.len()];
 
     for (src_file, file) in raw.iter().enumerate() {
         let source = sema.parse(file.efid);
@@ -335,8 +359,40 @@ fn survey_attached(
             0,
             &mut acc,
             &mut unresolved,
+            &mut raw_spans[src_file],
         );
     }
+
+    // Order the spans and keep at most one per range: two references cannot
+    // share one token on screen, so the first (leftmost, then longest kept
+    // first by the sort) wins and anything overlapping it is dropped.
+    let ref_spans: Vec<Vec<RefSpan>> = raw_spans
+        .into_iter()
+        .map(|mut spans| {
+            spans.sort_by_key(|&(s, e, _)| (s, e));
+            let mut out: Vec<RefSpan> = Vec::new();
+            for (start, end, target) in spans {
+                if out.last().is_some_and(|prev| start < prev.end) {
+                    continue;
+                }
+                let label = target
+                    .item
+                    .map(|it| &raw[target.file as usize].items[it as usize])
+                    // An impl block has no mark to land on; fall back to the
+                    // file as a whole.
+                    .filter(|item| item.kind != ItemKind::Impl)
+                    .map(item_label)
+                    .unwrap_or_default();
+                out.push(RefSpan {
+                    start,
+                    end,
+                    file: target.file,
+                    label,
+                });
+            }
+            out
+        })
+        .collect();
 
     // ---- Assemble the wire model. -----------------------------------------
 
@@ -598,6 +654,7 @@ fn survey_attached(
         },
         details,
         sources,
+        ref_spans,
     })
 }
 
@@ -856,7 +913,9 @@ const MACRO_DEPTH: usize = 3;
 /// Walk one syntax tree and record every reference that resolves to a
 /// workspace file. `origin` is the offset in the *real* source file that
 /// references get attributed to — the node's own position on the real tree,
-/// the macro call site inside expansions.
+/// the macro call site inside expansions. Every recorded reference whose name
+/// token has a position in the real file also lands in `spans`, so the focus
+/// plate can turn it into a link.
 #[allow(clippy::too_many_arguments)]
 fn scan_refs(
     sema: &Semantics<'_, RootDatabase>,
@@ -871,16 +930,21 @@ fn scan_refs(
     depth: usize,
     acc: &mut HashMap<(u32, Option<u32>, RefTarget), u32>,
     unresolved: &mut u32,
+    spans: &mut Vec<(u32, u32, RefTarget)>,
 ) {
     let src_items = &raw[src_file as usize].items;
+    let src_fid = raw[src_file as usize].efid.file_id(db);
+    #[allow(clippy::too_many_arguments)]
     fn record(
         acc: &mut HashMap<(u32, Option<u32>, RefTarget), u32>,
         unresolved: &mut u32,
+        spans: &mut Vec<(u32, u32, RefTarget)>,
         src_items: &[RawItem],
         src_file: u32,
         origin: Option<TextSize>,
         at: TextSize,
         target: Option<RefTarget>,
+        span: Option<TextRange>,
     ) {
         let Some(target) = target else {
             *unresolved += 1;
@@ -894,6 +958,9 @@ fn scan_refs(
             return;
         }
         *acc.entry((src_file, src_item, target)).or_default() += 1;
+        if let Some(span) = span {
+            spans.push((span.start().into(), span.end().into(), target));
+        }
     }
 
     for desc in node.descendants() {
@@ -905,14 +972,17 @@ fn scan_refs(
                 let target = sema
                     .resolve_method_call(&call)
                     .and_then(|f| def_target(sema, db, vfs, root, file_of, raw, f.into()));
+                let span = name_span(sema, db, src_fid, origin.is_some(), call.name_ref());
                 record(
                     acc,
                     unresolved,
+                    spans,
                     src_items,
                     src_file,
                     origin,
                     desc.text_range().start(),
                     target,
+                    span,
                 );
             }
             SyntaxKind::FIELD_EXPR => {
@@ -931,14 +1001,17 @@ fn scan_refs(
                 };
                 let target = def_target(sema, db, vfs, root, file_of, raw, adt.into());
                 if target.is_some() {
+                    let span = name_span(sema, db, src_fid, origin.is_some(), field.name_ref());
                     record(
                         acc,
                         unresolved,
+                        spans,
                         src_items,
                         src_file,
                         origin,
                         desc.text_range().start(),
                         target,
+                        span,
                     );
                 }
             }
@@ -951,18 +1024,24 @@ fn scan_refs(
                 let Some(path) = ast::Path::cast(desc.clone()) else {
                     continue;
                 };
+                // The clickable token is the last segment's name alone, so
+                // nested paths inside generic args never overlap it.
+                let name_ref = path.segment().and_then(|s| s.name_ref());
                 match sema.resolve_path(&path) {
                     Some(PathResolution::Def(def)) => {
                         let target = def_target(sema, db, vfs, root, file_of, raw, def);
                         if target.is_some() {
+                            let span = name_span(sema, db, src_fid, origin.is_some(), name_ref);
                             record(
                                 acc,
                                 unresolved,
+                                spans,
                                 src_items,
                                 src_file,
                                 origin,
                                 desc.text_range().start(),
                                 target,
+                                span,
                             );
                         }
                     }
@@ -971,14 +1050,17 @@ fn scan_refs(
                             def_target(sema, db, vfs, root, file_of, raw, adt.into())
                         });
                         if target.is_some() {
+                            let span = name_span(sema, db, src_fid, origin.is_some(), name_ref);
                             record(
                                 acc,
                                 unresolved,
+                                spans,
                                 src_items,
                                 src_file,
                                 origin,
                                 desc.text_range().start(),
                                 target,
+                                span,
                             );
                         }
                     }
@@ -1027,12 +1109,34 @@ fn scan_refs(
                         depth + 1,
                         acc,
                         unresolved,
+                        spans,
                     );
                 }
             }
             _ => {}
         }
     }
+}
+
+/// A reference's name token as a byte range in the file being scanned. On
+/// the real tree the token's own range already is one. Inside a macro
+/// expansion the token maps back through the expansion when it came from the
+/// call's input — which is where most of this app's references live, in
+/// `rsx!` bodies — and is dropped when it was conjured by the macro itself
+/// or lands in a different file.
+fn name_span(
+    sema: &Semantics<'_, RootDatabase>,
+    db: &RootDatabase,
+    src_fid: FileId,
+    in_expansion: bool,
+    name_ref: Option<ast::NameRef>,
+) -> Option<TextRange> {
+    let name_ref = name_ref?;
+    if !in_expansion {
+        return Some(name_ref.syntax().text_range());
+    }
+    let mapped = sema.original_range_opt(name_ref.syntax())?;
+    (mapped.file_id.file_id(db) == src_fid).then_some(mapped.range)
 }
 
 /// Where a definition lives, if it lives in a workspace file.
@@ -1122,14 +1226,10 @@ fn target_at(
 // The definition plate: an item's own source, quoted.
 // ---------------------------------------------------------------------------
 
-/// Body lines a long definition keeps past its docs, attributes, and
-/// signature. Types, traits, consts, and statics are never cut: their whole
-/// text is the fact the reader came for.
-const BODY_LINES: usize = 60;
-
 /// One item's source text, dedented and lexed into coloured runs — what Go to
-/// Definition lands on. The plate quotes the file: nothing is rewritten, and
-/// whatever is cut says so and is counted.
+/// Definition lands on. The plate quotes the file whole: nothing is rewritten
+/// or cut. Every run whose name resolved to something in the workspace
+/// carries a link, so the quoted code navigates like the code it quotes.
 pub fn item_source(idx: &CodeIndex, file: u32, item: u32) -> Option<ItemSource> {
     let info = idx.details.get(file as usize)?.items.get(item as usize)?;
     let text = idx.sources.get(file as usize)?;
@@ -1149,27 +1249,83 @@ pub fn item_source(idx: &CodeIndex, file: u32, item: u32) -> Option<ItemSource> 
     // line hangs out to the left of its body.
     let bol = text[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
     let indent = &text[bol..start];
+    let restored = indent.is_empty() || indent.chars().all(char::is_whitespace);
     let mut snippet = String::with_capacity(end - start + indent.len());
-    if !indent.is_empty() && indent.chars().all(char::is_whitespace) {
+    if restored {
         snippet.push_str(indent);
     }
     snippet.push_str(&text[start..end]);
-    let mut lines = lex_lines(&dedent(&snippet));
+    let common = common_indent(&snippet);
+    let mut lines: Vec<Vec<SrcRun>> = lex_lines(&dedent(&snippet, common))
+        .into_iter()
+        .map(|line| {
+            line.into_iter()
+                .map(|(text, tok)| SrcRun {
+                    text,
+                    tok,
+                    link: None,
+                })
+                .collect()
+        })
+        .collect();
 
-    // A long body folds, and the fold counts what it holds back.
-    let mut elided = 0;
-    if matches!(info.kind, ItemKind::Fn | ItemKind::Mod | ItemKind::Macro) {
-        let head = lines
-            .iter()
-            .take_while(|line| {
-                line.iter()
-                    .all(|(_, t)| matches!(t, Tok::Doc | Tok::Comment | Tok::Attr | Tok::Space))
-            })
-            .count();
-        let keep = head + BODY_LINES;
-        if lines.len() > keep + 1 {
-            elided = (lines.len() - keep) as u32;
-            lines.truncate(keep);
+    // Attach the file's clickable spans to the runs they name. A span's
+    // position translates from file bytes to plate bytes by the line it is on
+    // and the indent the plate stripped; a span that does not land cleanly on
+    // one run is silently left unlinked rather than guessed at.
+    let own_label = if info.section.is_empty() {
+        info.name.clone()
+    } else {
+        format!("{}::{}", section_type(&info.section), info.name)
+    };
+    let starts = LineStarts::new(text);
+    let mut links: Vec<SrcLink> = Vec::new();
+    let mut link_of: HashMap<(u32, String), u32> = HashMap::new();
+    for span in &idx.ref_spans[file as usize] {
+        if (span.start as usize) < start || (span.end as usize) > end {
+            continue;
+        }
+        // The quoted item linking to itself would navigate nowhere.
+        if span.file == file && span.label == own_label {
+            continue;
+        }
+        let file_line = starts.line(TextSize::new(span.start));
+        let Some(li) = file_line.checked_sub(info.line) else {
+            continue;
+        };
+        let Some(line) = lines.get_mut(li as usize) else {
+            continue;
+        };
+        // When the first line's indent was not restored (non-whitespace
+        // before the item on its own line), its columns are shifted; skip
+        // rather than mislink.
+        if li == 0 && !restored {
+            continue;
+        }
+        let Some(col) = starts
+            .start_of(file_line)
+            .and_then(|ls| span.start.checked_sub(ls))
+            .and_then(|c| c.checked_sub(common as u32))
+        else {
+            continue;
+        };
+        let (col, len) = (col as usize, (span.end - span.start) as usize);
+        // The name token lexes as exactly one run, so full containment is the
+        // normal case; runs are never split.
+        let mut at = 0usize;
+        for run in line.iter_mut() {
+            if at >= col && at + run.text.len() <= col + len {
+                let key = (span.file, span.label.clone());
+                let id = *link_of.entry(key).or_insert_with(|| {
+                    links.push(SrcLink {
+                        path: idx.graph.files[span.file as usize].path.clone(),
+                        label: span.label.clone(),
+                    });
+                    links.len() as u32 - 1
+                });
+                run.link = Some(id);
+            }
+            at += run.text.len();
         }
     }
 
@@ -1177,19 +1333,22 @@ pub fn item_source(idx: &CodeIndex, file: u32, item: u32) -> Option<ItemSource> 
         path,
         first_line: info.line,
         lines,
-        elided,
+        links,
     })
+}
+
+/// The indent every non-blank line shares, in bytes — what [`dedent`] strips.
+fn common_indent(text: &str) -> usize {
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.len() - line.trim_start().len())
+        .min()
+        .unwrap_or(0)
 }
 
 /// Strip the indent every line shares, so a method quoted out of its impl
 /// block starts at the plate's left edge instead of four spaces into it.
-fn dedent(text: &str) -> String {
-    let common = text
-        .lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.len() - line.trim_start().len())
-        .min()
-        .unwrap_or(0);
+fn dedent(text: &str, common: usize) -> String {
     if common == 0 {
         return text.to_string();
     }

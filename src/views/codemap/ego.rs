@@ -59,6 +59,9 @@ pub struct OutlineRow {
     refs: u32,
     line: u32,
     to: Route,
+    /// (file id, local item id) — the source fetch's key, for expanding the
+    /// definition in place.
+    key: (u32, u32),
 }
 
 /// One `impl` block's methods, gathered wherever the impl is written.
@@ -78,6 +81,9 @@ pub struct ImplRow {
     /// `src/api.rs:165` — where this one is written.
     locator: String,
     to: Route,
+    /// (file id, local item id) — the source fetch's key, for expanding the
+    /// definition in place. The file is the impl's own, wherever it is.
+    key: (u32, u32),
 }
 
 /// The class that inks one run of quoted source. Colour lives inside the code
@@ -291,9 +297,13 @@ fn EgoColumn(groups: Vec<GroupView>, head: String, outgoing: bool) -> Element {
 
 /// The item's own source, as the reviewer's editor would show it: a line
 /// gutter counting from the item's real first line, no wrapping, and the text
-/// itself selectable so it can be copied straight out of the plate.
+/// itself selectable so it can be copied straight out of the plate. Long
+/// definitions scroll inside the pane; nothing is cut. A run that resolved to
+/// something in the workspace is a real link — Go to Definition, one click,
+/// middle-click included.
 #[component]
-fn CodePane(source: ItemSource) -> Element {
+pub(crate) fn CodePane(source: ItemSource) -> Element {
+    let nav = use_navigator();
     rsx! {
         div { class: "ego-code",
             div { class: "ego-lines",
@@ -301,16 +311,98 @@ fn CodePane(source: ItemSource) -> Element {
                     div { key: "{i}", class: "ego-line",
                         span { class: "ego-ln", "{source.first_line as usize + i}" }
                         span { class: "ego-src",
-                            for (n , (text , tok)) in line.iter().enumerate() {
-                                span { key: "{n}", class: tok_class(*tok), "{text}" }
+                            for (n , run) in line.iter().enumerate() {
+                                {
+                                    match run.link.and_then(|l| source.links.get(l as usize)) {
+                                        Some(link) => {
+                                            let (route, title) = if link.label.is_empty() {
+                                                (file_route(&link.path), link.path.clone())
+                                            } else {
+                                                (
+                                                    item_route(&link.path, &link.label),
+                                                    format!("{} · {}", link.label, link.path),
+                                                )
+                                            };
+                                            rsx! {
+                                                a {
+                                                    key: "{n}",
+                                                    class: "{tok_class(run.tok)} tok-link",
+                                                    href: route.to_string(),
+                                                    title: "{title}",
+                                                    onclick: {
+                                                        let route = route.clone();
+                                                        move |e: Event<MouseData>| {
+                                                            e.prevent_default();
+                                                            e.stop_propagation();
+                                                            nav.push(route.clone());
+                                                        }
+                                                    },
+                                                    "{run.text}"
+                                                }
+                                            }
+                                        }
+                                        None => rsx! {
+                                            span { key: "{n}", class: tok_class(run.tok), "{run.text}" }
+                                        },
+                                    }
+                                }
                             }
                         }
                     }
                 }
             }
         }
-        if source.elided > 0 {
-            p { class: "ego-elided", "+ {source.elided} more lines" }
+    }
+}
+
+/// Flip one row's in-place expansion, fetching its source on first open.
+fn toggle_expand(code: crate::views::codemap::CodeState, key: (u32, u32)) {
+    let mut expanded = code.expanded;
+    let mut set = expanded.peek().clone();
+    if !set.remove(&key) {
+        set.insert(key);
+    }
+    expanded.set(set);
+    if !code.sources.peek().contains_key(&key) {
+        spawn(async move {
+            if let Ok(source) = item_source(key.0, key.1).await {
+                let mut sources = code.sources;
+                sources.write().insert(key, source);
+            }
+        });
+    }
+}
+
+/// A row's definition unfolded in place: the same quoted pane, without the
+/// page turn. The plate one step deeper — Used by / Uses — stays a footer
+/// link away.
+#[component]
+fn InlinePane(at: (u32, u32), to: Route, name: String) -> Element {
+    let code = use_code();
+    let nav = use_navigator();
+    let source = code.sources.read().get(&at).cloned();
+    rsx! {
+        div { class: "ego-expand",
+            if let Some(source) = source {
+                CodePane { source }
+                p { class: "ego-expand-foot",
+                    a {
+                        href: to.to_string(),
+                        title: "{name} · open the focus plate",
+                        onclick: {
+                            let to = to.clone();
+                            move |e: Event<MouseData>| {
+                                e.prevent_default();
+                                e.stop_propagation();
+                                nav.push(to.clone());
+                            }
+                        },
+                        "focus · used by / uses"
+                    }
+                }
+            } else {
+                p { class: "ego-expand-load", "reading the source…" }
+            }
         }
     }
 }
@@ -329,6 +421,8 @@ fn CenterPlate(
     impls: Vec<ImplGroup>,
     folds: Vec<String>,
 ) -> Element {
+    let code = use_code();
+    let expanded = code.expanded.read().clone();
     rsx! {
         section { class: "plate flex flex-col",
             div { class: "px-5 pb-4 pt-4",
@@ -353,17 +447,40 @@ fn CenterPlate(
                 if !outline.is_empty() {
                     div { class: "mt-3 border-t border-ink-line",
                         for row in outline.iter() {
-                            Link {
+                            // The row and its possible pane, one keyed unit;
+                            // `display: contents` keeps the row's own layout.
+                            div {
                                 key: "{row.line}-{row.name}",
-                                class: "ego-member",
-                                to: row.to.clone(),
-                                title: "{row.name} · {row.vis.words()}",
-                                span { class: "ego-member-decl", "{decl_words(row.vis, row.kind)}" }
-                                span { class: "ego-member-name", "{row.name}" }
-                                if row.refs > 0 {
-                                    span { class: "ego-member-refs", "{row.refs} refs" }
+                                style: "display: contents;",
+                                a {
+                                    class: "ego-member",
+                                    href: row.to.to_string(),
+                                    title: "{row.name} · {row.vis.words()} · click to expand in place",
+                                    onclick: {
+                                        let key = row.key;
+                                        move |e: Event<MouseData>| {
+                                            e.prevent_default();
+                                            e.stop_propagation();
+                                            // The item is a leaf — its focus would
+                                            // quote code — so quote it here instead
+                                            // of a page turn.
+                                            toggle_expand(code, key);
+                                        }
+                                    },
+                                    span { class: "ego-member-decl", "{decl_words(row.vis, row.kind)}" }
+                                    span { class: "ego-member-name", "{row.name}" }
+                                    if row.refs > 0 {
+                                        span { class: "ego-member-refs", "{row.refs} refs" }
+                                    }
+                                    span { class: "ego-member-line", "{row.line}" }
                                 }
-                                span { class: "ego-member-line", "{row.line}" }
+                                if expanded.contains(&row.key) {
+                                    InlinePane {
+                                        at: row.key,
+                                        to: row.to.clone(),
+                                        name: row.name.clone(),
+                                    }
+                                }
                             }
                         }
                     }
@@ -372,14 +489,32 @@ fn CenterPlate(
                     div { key: "{group.head}", class: "mt-3 border-t border-ink-line pt-2",
                         p { class: "ego-impl-head", "{group.head}" }
                         for row in group.rows.iter() {
-                            Link {
+                            div {
                                 key: "{row.locator}",
-                                class: "ego-member",
-                                to: row.to.clone(),
-                                title: "{row.name} · {row.vis.words()}",
-                                span { class: "ego-member-decl", "{decl_words(row.vis, row.kind)}" }
-                                span { class: "ego-member-name", "{row.name}" }
-                                span { class: "ego-member-line", "{row.locator}" }
+                                style: "display: contents;",
+                                a {
+                                    class: "ego-member",
+                                    href: row.to.to_string(),
+                                    title: "{row.name} · {row.vis.words()} · click to expand in place",
+                                    onclick: {
+                                        let key = row.key;
+                                        move |e: Event<MouseData>| {
+                                            e.prevent_default();
+                                            e.stop_propagation();
+                                            toggle_expand(code, key);
+                                        }
+                                    },
+                                    span { class: "ego-member-decl", "{decl_words(row.vis, row.kind)}" }
+                                    span { class: "ego-member-name", "{row.name}" }
+                                    span { class: "ego-member-line", "{row.locator}" }
+                                }
+                                if expanded.contains(&row.key) {
+                                    InlinePane {
+                                        at: row.key,
+                                        to: row.to.clone(),
+                                        name: row.name.clone(),
+                                    }
+                                }
                             }
                         }
                     }
@@ -398,9 +533,9 @@ fn CenterPlate(
     }
 }
 
-/// Keyboard on the focus plate: `/` finds a file, Escape steps back up the
-/// ladder. Only one altitude is mounted at a time, so each installs its own
-/// handler over the other's.
+/// Keyboard on the focus plate: `/` finds a file, Escape folds any in-place
+/// quotations first, then steps back up the ladder. Only one altitude is
+/// mounted at a time, so each installs its own handler over the other's.
 const EGO_KEYS_JS: &str = r#"
 if (window.__slopifyKeys) {
     document.removeEventListener('keydown', window.__slopifyKeys);
@@ -444,7 +579,14 @@ pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
             let mut eval = document::eval(EGO_KEYS_JS);
             while let Ok(key) = eval.recv::<String>().await {
                 if key == "Escape" {
-                    up();
+                    // Fold the in-place quotations first; only a second
+                    // Escape climbs the ladder.
+                    if !code.expanded.peek().is_empty() {
+                        let mut expanded = code.expanded;
+                        expanded.set(HashSet::new());
+                    } else {
+                        up();
+                    }
                 }
             }
         });
@@ -638,6 +780,7 @@ pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
                     name: kid.name.clone(),
                     locator: format!("{where_from}:{}", kid.line),
                     to: item_route(&where_from, &kid.label),
+                    key: (kid.file, kid.local),
                 };
                 match impls.iter_mut().find(|g| g.head == head) {
                     Some(group) => group.rows.push(row),
@@ -684,6 +827,7 @@ pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
                     refs: m.fan_in,
                     line: m.line,
                     to: item_route(&info.path, &m.label),
+                    key: (m.file, m.local),
                 });
             }
             if private > 0 {

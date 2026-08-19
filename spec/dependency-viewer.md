@@ -182,7 +182,8 @@ below:
   (upstream left, downstream right), each column stacking strictly
   downward, instead of re-running the global layout on every bloom.
 - every star, queue row, and search hit is a real link; keyboard surface:
-  `/` search, `n`/`p` walk changed crates, `f` refit, Esc un-bloom.
+  `/` search, `n`/`p` walk changed crates, `f` refit, Esc un-bloom,
+  `←`/`→` browser back / forward (global, every route).
 - the legend gained a "using this chart" operations section.
 
 The visual world (engraved atlas, raises 1–5) is unchanged.

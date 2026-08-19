@@ -398,6 +398,26 @@ pub enum Tok {
     Space,
 }
 
+/// One run of quoted source: its text, its colour class, and — when the run
+/// is a resolved reference to something in the workspace — where it goes,
+/// as an index into [`ItemSource::links`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SrcRun {
+    pub text: String,
+    pub tok: Tok,
+    pub link: Option<u32>,
+}
+
+/// Where a clickable run of quoted source navigates.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SrcLink {
+    /// Target file path relative to the workspace root.
+    pub path: String,
+    /// Target item's URL label (`Type::method`), matching [`ItemMark::label`];
+    /// empty when the reference targets the file as a whole.
+    pub label: String,
+}
+
 /// One item's own source text, lexed into coloured runs — what Go to
 /// Definition lands on. The interface quotes the file rather than describing
 /// it, so nothing here is reconstructed: the runs concatenate back to exactly
@@ -409,10 +429,11 @@ pub struct ItemSource {
     /// 1-based line the first quoted line is, in the real file. Equal to
     /// [`ItemInfo::line`].
     pub first_line: u32,
-    /// Per line, its runs of text in order.
-    pub lines: Vec<Vec<(String, Tok)>>,
-    /// Lines cut from the end of a long body; 0 when the item is whole.
-    pub elided: u32,
+    /// Per line, its runs of text in order. A run whose name resolved to
+    /// something in the workspace carries a link.
+    pub lines: Vec<Vec<SrcRun>>,
+    /// The navigation targets the runs link to, deduplicated.
+    pub links: Vec<SrcLink>,
 }
 
 /// One item's source, lexed. `file` is a [`FileInfo::id`] and `item` is that

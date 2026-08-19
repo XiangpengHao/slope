@@ -69,7 +69,8 @@ Frontend (`src/views/`): one living chart that blooms.
   state words, then USED BY (the blast radius) before DEPENDS ON, both
   chunked at 8 rows with a "show all n" reveal.
 - keyboard: `/` search (arrows walk hits, Enter opens), `n`/`p` next /
-  previous changed crate, `f` refit, Esc un-bloom. every star, queue row,
+  previous changed crate, `f` refit, Esc un-bloom, `←`/`→` browser back /
+  forward on every route. every star, queue row,
   and search hit is a real link (middle-click works). route changes are
   announced to screen readers. the legend teaches all of this in a
   "using this chart" section.

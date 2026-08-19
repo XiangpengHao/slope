@@ -32,6 +32,20 @@ pub enum CodeSel {
     File(String, String),
 }
 
+/// Which of the selected crate's ties the map draws — the code altitude's
+/// version of the dependency chart's edges toggle. Without a selection it
+/// has nothing to act on and every tie draws.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum RefDir {
+    /// Every tie touching the selection, both directions.
+    #[default]
+    Both,
+    /// Only ties into the selection's code — who leans on it.
+    UsedBy,
+    /// Only ties its code makes to the outside — what it reaches for.
+    Uses,
+}
+
 // Session state that must survive route-variant remounts, like the dep
 // chart's globals.
 /// Directories the reviewer folded or unfolded by hand, as flips against
@@ -43,12 +57,19 @@ static DETAILS: GlobalSignal<HashMap<u32, FileDetail>> = Signal::global(HashMap:
 /// Item source already fetched, by (file id, item id): the definition the
 /// focus plate quotes.
 static SOURCES: GlobalSignal<HashMap<(u32, u32), ItemSource>> = Signal::global(HashMap::new);
+/// Rows the reviewer expanded in place on a focus plate, by (file id, local
+/// item id). View state, not a URL: expansion never leaves the plate.
+static EXPANDED: GlobalSignal<HashSet<(u32, u32)>> = Signal::global(HashSet::new);
+/// Which direction of a selected crate's ties the map draws.
+static REF_DIR: GlobalSignal<RefDir> = Signal::global(RefDir::default);
 
 #[derive(Clone, Copy)]
 pub struct CodeState {
     pub toggled: Signal<HashSet<u32>>,
     pub details: Signal<HashMap<u32, FileDetail>>,
     pub sources: Signal<HashMap<(u32, u32), ItemSource>>,
+    pub expanded: Signal<HashSet<(u32, u32)>>,
+    pub ref_dir: Signal<RefDir>,
 }
 
 pub fn use_code() -> CodeState {
@@ -56,6 +77,8 @@ pub fn use_code() -> CodeState {
         toggled: TOGGLED.signal(),
         details: DETAILS.signal(),
         sources: SOURCES.signal(),
+        expanded: EXPANDED.signal(),
+        ref_dir: REF_DIR.signal(),
     }
 }
 

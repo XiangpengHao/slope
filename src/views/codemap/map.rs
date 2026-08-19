@@ -17,7 +17,7 @@ use crate::api::{CodeGraph, FileInfo, ItemKind, Vis};
 use crate::views::codemap::chrome::{decl_words, file_name, plural};
 use crate::views::codemap::model::{self, Containment, Territory};
 use crate::views::codemap::tree::{self, FileTree, Measures, Placed, ROOT, dir_key, file_key};
-use crate::views::codemap::{CodeSel, file_route, item_route, use_code};
+use crate::views::codemap::{CodeSel, RefDir, file_route, item_route, use_code};
 
 /// One landmark row inside a block.
 #[derive(Clone, PartialEq)]
@@ -228,6 +228,7 @@ fn build_map(
     containment: &Containment,
     sel: &CodeSel,
     workspace: &str,
+    ref_dir: RefDir,
 ) -> Built {
     // Visible files: everything whose directory chain is open. A file behind
     // a gate keeps its references — they gather onto the gate.
@@ -488,6 +489,40 @@ fn build_map(
         }
     };
     let all_ties = model::ties(graph, containment, territory);
+    // A selected crate reads like the dependency chart's selection: only its
+    // own ties draw, in the direction the toggle asks for. A territory is the
+    // selection's when its file belongs to the crate, or its gate stands
+    // inside the crate's district. Without a selection every tie draws.
+    let in_sel = |t: Territory| -> bool {
+        let Some(sel_dir) = sel_crate_dir else {
+            return false;
+        };
+        match t {
+            Territory::File(f) => crate_files.contains(&f),
+            Territory::Dir(mut d) => loop {
+                if d == sel_dir {
+                    break true;
+                }
+                match tree.dirs[d as usize].parent {
+                    Some(p) => d = p,
+                    None => break false,
+                }
+            },
+        }
+    };
+    let all_ties: Vec<model::Tie> = all_ties
+        .into_iter()
+        .filter(|tie| {
+            if sel_crate_dir.is_none() {
+                return true;
+            }
+            match ref_dir {
+                RefDir::Both => in_sel(tie.def) || in_sel(tie.user),
+                RefDir::UsedBy => in_sel(tie.def) && !in_sel(tie.user),
+                RefDir::Uses => in_sel(tie.user) && !in_sel(tie.def),
+            }
+        })
+        .collect();
     // The label bar: the heaviest handful state their counts at rest, so the
     // labels stay data instead of texture. Every other tie still draws, and
     // says its count when the reader hovers either end.
@@ -983,7 +1018,8 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
     let open = use_memo(move || tree::open_dirs(&tree.read(), open_depth(), &code.toggled.read()));
 
     // `sel` is a prop, not a signal: the memo must be told when the route
-    // hands the map a new selection.
+    // hands the map a new selection. The direction toggle is a signal and
+    // tracks itself.
     let built = use_memo(use_reactive((&sel, &graph, &workspace), {
         move |(sel, graph, workspace)| {
             build_map(
@@ -993,6 +1029,7 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
                 &containment.read(),
                 &sel,
                 &workspace,
+                *code.ref_dir.read(),
             )
         }
     }));

@@ -31,7 +31,17 @@ mode: **Operate**.
 - **Gesture: focus replaces the map.** Clicking a file or an item is a URL,
   and that URL draws a focus plate instead of the map. The map is for
   territory and coupling; the plate is for precision. Back / Escape climbs
-  the ladder: item → file → whole map.
+  the ladder: item → file → whole map. One refinement (2026-08-19): on a
+  focus plate, an item row is a leaf — its own focus would only quote code —
+  so clicking it expands the definition in place instead of going one level
+  deeper. That holds for every item kind (fn, struct, enum, trait, …), on
+  the file outline and the impl sections alike; the item's own plate, with
+  Used by / Uses, stays one step away (the pane's footer link, or
+  middle-click). On the map the default stands: clicking anything goes to
+  its focus.
+- **Arrow keys retrace the review.** Every focus is a URL, so `←` / `→` are
+  the browser's back and forward, globally, on every route (typing fields
+  keep their caret keys).
 
 ## The six mechanisms
 
@@ -63,6 +73,12 @@ mode: **Operate**.
    ever. The heaviest dozen ties carry their `×n` at rest and draw at full
    weight; lighter ties draw at half and keep their count until the reader
    hovers either end, and hovering a block brings its own ties up to full ink.
+   A selected crate reads like the dependency chart's selection (2026-08-19):
+   only ties touching the crate draw, and its sheet carries a references
+   toggle — uses / used by / both (default both), the code altitude's version
+   of the dependency chart's edges toggle. A tie is the crate's when its file
+   block belongs to the crate or its gate stands inside the crate's district.
+   Deselecting restores every tie.
 5. **Selection becomes a definition plate.** Center plate = the item's own
    source text, sliced from the file the survey read and lexed on the server:
    doc comment, attributes, signature, and body, exactly as written, with a
@@ -118,9 +134,14 @@ mode: **Operate**.
   12px mono with a sticky, non-selectable line-number gutter, no wrapping,
   horizontal scroll inside the pane, and selectable code. A method quoted out
   of an impl block is given back its own indent and then dedented with its
-  body. A long `fn`, `mod`, or `macro_rules!` body is cut at roughly 60 lines
-  past its docs and signature, and the cut is counted: `+ 42 more lines`.
-  Types, traits, consts and statics are never cut.
+  body. Nothing is cut (2026-08-19; the ~60-line body cut is retired): the
+  pane caps at 70vh and scrolls, so a long body is whole and the plate keeps
+  its shape.
+- The quotation itself navigates. Every resolved reference's name token in
+  the quoted source is a link to its definition — the same jump the Uses
+  column offers, made where the reader is already looking. The link keeps its
+  token's colour under a quiet underline; unresolved names and references
+  into dependencies are plain text, as honest as the chart.
 - The locator is `src/api.rs:10`, with an amber `M` when the file changed.
 - Below the quotation: the type's associated items, grouped under the impl
   header they are written under, wherever in the workspace that is (that
@@ -128,8 +149,15 @@ mode: **Operate**.
   trait impl with no items of its own is still listed.
 - A whole-file focus has no single definition to quote, so it keeps an
   outline instead: `pub enum DepKind` · `12 refs` · line number, per item.
-- Both directions always show, so the REFS toggle is gone (and with it the
-  `RefDir` state).
+- **Rows expand in place** (2026-08-19): clicking an outline row or an impl
+  section's member quotes that definition right under the row — same pane,
+  capped at 40vh — instead of going one level deeper. Its own plate stays a
+  footer link (`focus · used by / uses`) or a middle-click away. Clicking
+  the row again folds it; Escape folds all open quotations before it climbs.
+  Expansion is view state, not a URL.
+- Both directions always show, so the plate's REFS toggle is gone. (`RefDir`
+  returned 2026-08-19 as the map's crate-selection toggle; the plate's columns
+  are not affected by it.)
 - Same-file references come from the file detail and are grouped by the same
   rules as the rest of the workspace.
 - Private members are counted, never named: `+ 3 private`.
@@ -137,9 +165,10 @@ mode: **Operate**.
 ## Routes
 
 - `/code` — the whole map.
-- `/code/crate/:name` — a crate's district emphasized on the map; the sheet
-  lists both directions of its boundary references and links up to the crate's
-  dependency focus (`/crate/:name`).
+- `/code/crate/:name` — a crate's district emphasized on the map, only its
+  own ties drawn (filtered by the sheet's uses / used by / both toggle); the
+  sheet lists both directions of its boundary references and links up to the
+  crate's dependency focus (`/crate/:name`).
 - `/code/file/:..path` — one file's focus plate.
 - `/code/file/:..path?item=X` — one item's focus plate (`X` is
   `Type::method` for anything inside a section).
@@ -194,6 +223,15 @@ mode: **Operate**.
   attribute, type, fn, macro, ident, punctuation, space). No new dependency,
   nothing on the wasm client. Fetched per (file, item) and cached in a global
   signal beside the file details.
+- Runs carry their targets: the scan keeps every resolved reference's
+  name-token byte range per file (`CodeIndex::ref_spans` — method and field
+  names, a path's last segment; references inside macro expansions map back
+  through `original_range_opt` and are kept only when they land in the file
+  being scanned). `item_source` translates the spans inside the quoted range
+  into display coordinates and marks the matching run with an index into a
+  deduped `SrcLink` table (target file path + item URL label; empty label =
+  the whole file). A run is `SrcRun { text, tok, link }`; nothing is split —
+  a name token lexes as exactly one run.
 - Honesty: unresolved names are counted and written on the legend, never
   guessed. Derive-macro output is not counted; a type's derives stand in its
   own source, on its plate.
