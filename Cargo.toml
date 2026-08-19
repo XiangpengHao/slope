@@ -11,6 +11,17 @@ serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1", features = ["rt"], optional = true }
 toml = { version = "1.1.4", optional = true }
 
+# rust-analyzer as a library, for the code-structure altitude: items and
+# semantically resolved references. Heavy, server-only; all crates must stay
+# on one version. Bump the whole set together.
+ra_ap_load-cargo = { version = "0.0.348", optional = true }
+ra_ap_hir = { version = "0.0.348", optional = true }
+ra_ap_ide_db = { version = "0.0.348", optional = true }
+ra_ap_syntax = { version = "0.0.348", optional = true }
+ra_ap_vfs = { version = "0.0.348", optional = true }
+ra_ap_project_model = { version = "0.0.348", optional = true }
+ra_ap_paths = { version = "0.0.348", optional = true }
+
 # `dx` requires wasm-bindgen-cli to match the wasm-bindgen crate exactly, so this
 # is pinned to the version the flake provides. Bump both together.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
@@ -23,9 +34,23 @@ default = ["web"]
 # `dx serve` builds the client with `web` and the server with `server`, so each
 # platform's deps must stay behind its own feature.
 web = ["dioxus/web"]
-# Workspace analysis (cargo metadata, VCS diff, manifest parsing) only ever
-# runs on the server; its deps stay off the wasm client entirely.
-server = ["dioxus/server", "dep:cargo_metadata", "dep:toml", "dep:tokio"]
+# Workspace analysis (cargo metadata, VCS diff, manifest parsing, and the
+# rust-analyzer code survey) only ever runs on the server; its deps stay off
+# the wasm client entirely.
+server = [
+    "dioxus/server",
+    "dep:cargo_metadata",
+    "dep:toml",
+    "dep:tokio",
+    "dep:ra_ap_load-cargo",
+    "dep:ra_ap_hir",
+    "dep:ra_ap_ide_db",
+    "dep:ra_ap_syntax",
+    "dep:ra_ap_vfs",
+    "dep:ra_ap_project_model",
+    "dep:ra_ap_paths",
+    "tokio/sync",
+]
 
 # Debug builds of the wasm client are enormous and slow without some opt.
 [profile.dev.package."*"]

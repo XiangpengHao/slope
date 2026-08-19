@@ -1,6 +1,6 @@
 use dioxus::prelude::*;
 
-use views::{AtlasShell, Focus, Overview, RingSel};
+use views::{AtlasShell, CodeCrate, CodeFile, CodeOverview, Focus, Overview, RingSel};
 
 /// Server-side analysis: cargo metadata, VCS diff, manifest events.
 #[cfg(feature = "server")]
@@ -14,7 +14,8 @@ mod views;
 /// rendered when that pattern matches. Every chart selection is a URL, so
 /// the browser's back button retraces the review trail. A multi-selection
 /// joins crate names with `+` (impossible in a crate name); a whole ring is
-/// `/ring/:hop`.
+/// `/ring/:hop`. The `/code` family is the code altitude: the file map,
+/// one crate's district, one file (its path segments), one item (`?item=`).
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
@@ -25,6 +26,12 @@ enum Route {
         Focus { name: String },
         #[route("/ring/:hop")]
         RingSel { hop: u32 },
+        #[route("/code")]
+        CodeOverview {},
+        #[route("/code/crate/:name")]
+        CodeCrate { name: String },
+        #[route("/code/file/:..path?:item")]
+        CodeFile { path: Vec<String>, item: String },
 }
 
 /* impeccable direction contract — served inside the page, greppable in the
@@ -71,7 +78,28 @@ fn font_css() -> String {
         .collect()
 }
 
+/// rust-analyzer's crates trace every query they run at INFO — a line per
+/// type inference, per path resolution — which buries everything else while
+/// the code survey runs. These directives keep them, their query engine, and
+/// their trait solver quiet unless something actually goes wrong. They are
+/// appended to `RUST_LOG` rather than replacing it, so a more specific
+/// directive (`RUST_LOG=ra_ap_hir_ty=info`) still wins: `EnvFilter` matches
+/// the longest target prefix first.
+#[cfg(feature = "server")]
+const QUIET_SURVEY: &str = "ra_ap=warn,salsa=warn,chalk=warn";
+
 fn main() {
+    #[cfg(feature = "server")]
+    {
+        let base = std::env::var("RUST_LOG")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or_else(|| "info,slopify=debug".to_string());
+        // SAFETY: first statement of `main`; no other thread exists yet to
+        // read the environment.
+        unsafe { std::env::set_var("RUST_LOG", format!("{base},{QUIET_SURVEY}")) };
+    }
+
     dioxus::launch(App);
 }
 

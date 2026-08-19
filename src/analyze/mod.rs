@@ -1,6 +1,7 @@
 //! Server-side workspace analysis: `cargo metadata` for the resolved graph,
 //! the detected VCS for the diff, manifest comparison for dependency events.
 
+pub mod code;
 mod manifest;
 mod vcs;
 
@@ -13,7 +14,7 @@ use cargo_metadata::{DependencyKind, MetadataCommand};
 use crate::api::{CrateInfo, DepEvent, DepKind, DepLink, WorkspaceGraph};
 
 /// Where to analyze: `SLOPIFY_WORKSPACE`, else the server's working dir.
-fn workspace_dir() -> PathBuf {
+pub(crate) fn workspace_dir() -> PathBuf {
     env::var_os("SLOPIFY_WORKSPACE")
         .map(PathBuf::from)
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))

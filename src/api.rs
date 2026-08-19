@@ -122,3 +122,148 @@ pub async fn workspace_graph() -> Result<WorkspaceGraph, ServerFnError> {
         .map_err(|e| ServerFnError::new(e.to_string()))?
         .map_err(ServerFnError::new)
 }
+
+// ---------------------------------------------------------------------------
+// The code altitude: files, items, and semantically resolved references.
+// ---------------------------------------------------------------------------
+
+/// What kind of thing one item in a file is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ItemKind {
+    Fn,
+    Struct,
+    Enum,
+    Union,
+    Trait,
+    TypeAlias,
+    Const,
+    Static,
+    Macro,
+    /// A module: inline (`mod x { .. }`) or an out-of-line declaration.
+    Mod,
+    /// An impl block. Its associated functions are their own items, carrying
+    /// the impl's name as their `section`.
+    Impl,
+}
+
+/// One source file in the workspace.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileInfo {
+    /// Stable within one analysis: index into [`CodeGraph::files`].
+    pub id: u32,
+    /// Path relative to the workspace root, e.g. `src/views/atlas.rs`.
+    pub path: String,
+    /// Name of the crate this file belongs to.
+    pub krate: String,
+    pub lines: u32,
+    /// How many items the file defines (functions, types, traits, …).
+    pub items: u32,
+    pub fns: u32,
+    pub types: u32,
+    pub traits: u32,
+    /// How many other files reference this one. Drives the mark's magnitude:
+    /// the more of the workspace leans on a file, the bigger its star.
+    pub refs_in_files: u32,
+    /// How many other files this one references.
+    pub refs_out_files: u32,
+}
+
+/// A file-level reference edge: `from` uses something defined in `to`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileRef {
+    pub from: u32,
+    pub to: u32,
+    /// Resolved references aggregated over the whole file pair.
+    pub count: u32,
+}
+
+/// The code-structure survey: every workspace source file and every resolved
+/// file-to-file reference. Item detail ships separately, per file, on unfold.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct CodeGraph {
+    pub files: Vec<FileInfo>,
+    pub refs: Vec<FileRef>,
+    /// Names the survey could not resolve (type-inference limits). They are
+    /// not on the chart; the words on the plate must say so.
+    pub unresolved: u32,
+    /// Fidelity notes, in plain words, for the legend.
+    pub notes: Vec<String>,
+}
+
+/// One item inside a file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemInfo {
+    /// Index into [`FileDetail::items`].
+    pub id: u32,
+    /// Display name; inline-module items carry their path (`tests::sample`).
+    pub name: String,
+    /// The impl or trait header this item sits under, e.g. `impl Trail`;
+    /// empty for top-level items.
+    pub section: String,
+    pub kind: ItemKind,
+    /// 1-based lines in the source file.
+    pub line: u32,
+    pub end_line: u32,
+    /// Declared with some form of `pub`.
+    pub public: bool,
+}
+
+/// A reference between two items of the same file.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemRef {
+    pub from: u32,
+    pub to: u32,
+    pub count: u32,
+}
+
+/// A reference crossing a file boundary, kept at item precision.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ItemXRef {
+    /// Item id in the detail's own file.
+    pub item: u32,
+    /// The other file.
+    pub file: u32,
+    /// Name of the item on the other end; empty when the reference lands
+    /// between items (e.g. a `use` of the whole file's module).
+    pub other: String,
+    pub count: u32,
+}
+
+/// Everything the cutaway needs for one file: its items in source order and
+/// its references at item precision, both directions.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FileDetail {
+    pub file: u32,
+    pub items: Vec<ItemInfo>,
+    /// References between this file's own items.
+    pub item_refs: Vec<ItemRef>,
+    /// From this file's items out to other files.
+    pub refs_out: Vec<ItemXRef>,
+    /// From other files into this file's items.
+    pub refs_in: Vec<ItemXRef>,
+}
+
+/// Survey the workspace's code structure with rust-analyzer: every workspace
+/// source file, its items, and semantically resolved references. The first
+/// call runs the survey (tens of seconds on a large workspace); later calls
+/// answer from the cache.
+#[server]
+pub async fn code_graph() -> Result<CodeGraph, ServerFnError> {
+    crate::analyze::code::index()
+        .await
+        .map(|idx| idx.graph.clone())
+        .map_err(ServerFnError::new)
+}
+
+/// One file's cutaway: items and item-level references. `file` is the id the
+/// last [`code_graph`] call handed out.
+#[server]
+pub async fn file_detail(file: u32) -> Result<FileDetail, ServerFnError> {
+    let idx = crate::analyze::code::index()
+        .await
+        .map_err(ServerFnError::new)?;
+    idx.details
+        .get(file as usize)
+        .cloned()
+        .ok_or_else(|| ServerFnError::new(format!("no file with id {file} in this survey")))
+}

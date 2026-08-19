@@ -10,6 +10,7 @@ use crate::Route;
 use crate::api::{WorkspaceGraph, workspace_graph};
 use crate::views::atlas::Chart;
 use crate::views::chrome::{Legend, SearchBox, TitleBlock};
+use crate::views::codemap::CodeShell;
 
 type GraphResource = Resource<Result<WorkspaceGraph, ServerFnError>>;
 
@@ -163,14 +164,21 @@ pub fn AtlasShell() -> Element {
 
     // Keep the trail in step with the URL. An effect, not a render-time
     // write: writes during the hydration render do not stick, which would
-    // silently drop the trail's first step.
+    // silently drop the trail's first step. The code altitude keeps its own
+    // selection state; it never writes the dependency trail.
     let route = use_route::<Route>();
-    let step: TrailStep = match &route {
-        Route::Overview {} => None,
-        Route::Focus { name } => Some(name.clone()),
-        Route::RingSel { hop } => Some(format!("ring:{hop}")),
+    let code_route = matches!(
+        &route,
+        Route::CodeOverview {} | Route::CodeCrate { .. } | Route::CodeFile { .. }
+    );
+    let step: Option<TrailStep> = match &route {
+        Route::Overview {} => Some(None),
+        Route::Focus { name } => Some(Some(name.clone())),
+        Route::RingSel { hop } => Some(Some(format!("ring:{hop}"))),
+        _ => None,
     };
     use_effect(use_reactive((&step,), move |(step,)| {
+        let Some(step) = step else { return };
         let mut trail = atlas.trail;
         if trail.peek().steps.get(trail.peek().at) == Some(&step) {
             return;
@@ -213,6 +221,18 @@ pub fn AtlasShell() -> Element {
                 Some(Err(err)) => rsx! {
                     SurveyFailed { message: err.to_string(), resource }
                 },
+                Some(Ok(graph)) if code_route => {
+                    // The code altitude: its own shell, chart, and furniture.
+                    // The workspace's identity and epoch ride along so both
+                    // altitudes stamp the same cartouche facts.
+                    let epoch_line = format!(
+                        "epoch {} → {}",
+                        graph.epoch.base, graph.epoch.target
+                    );
+                    rsx! {
+                        CodeShell { workspace: graph.name.clone(), epoch_line }
+                    }
+                }
                 Some(Ok(graph)) => {
                     // What sits at the center of the rings, for the legend's
                     // words: the root crate, or the workspace itself.

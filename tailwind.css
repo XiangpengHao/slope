@@ -306,6 +306,227 @@ details.fold:not([open]) > summary::after {
   font-weight: 500;
 }
 
+/* ————— The code altitude: file marks, streets, chords, the cutaway. ————— */
+
+/* Directory marks are buttons (fold/unfold), styled as bare marks. */
+.atlas .code-mark button.star-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  text-align: inherit;
+  color: inherit;
+}
+
+/* The crate district's engraved name, hung under its directory mark. */
+.atlas .district-name {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-family: var(--font-chart);
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--color-ink-soft);
+  text-decoration: none;
+  text-shadow:
+    0 0 2px var(--color-paper),
+    0 0 3px var(--color-paper),
+    0 0 4px var(--color-paper);
+}
+.atlas .district-name:hover {
+  color: var(--color-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* A gate's count rides with its name, quiet, in tracked caps. */
+.atlas .gate-count {
+  color: var(--color-ink-soft);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+/* On the plan, open directories are lettered on their streets, not at the
+   mark — the mark's own label stays folded until pointed at. */
+.atlas .star-label.plan-quiet {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease-out;
+}
+.atlas .code-mark:hover .star-label.plan-quiet,
+.atlas .code-mark:focus-within .star-label.plan-quiet {
+  opacity: 1;
+}
+
+/* The legend's fold is drawn, never hidden: a thin ink scrollbar stays
+   visible whenever there is more key below the cut. */
+.atlas .legend-scroll {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-ink-line)
+    color-mix(in srgb, var(--color-ink) 7%, transparent);
+}
+.atlas .legend-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.atlas .legend-scroll::-webkit-scrollbar-thumb {
+  background: var(--color-ink-line);
+}
+.atlas .legend-scroll::-webkit-scrollbar-track {
+  background: color-mix(in srgb, var(--color-ink) 7%, transparent);
+}
+
+/* The ground: streets with their lettered names. */
+.atlas .df-world-layer.code-ground {
+  z-index: 0;
+}
+.atlas .street-line {
+  stroke: var(--color-ink-line);
+  stroke-width: 1;
+  opacity: 0.75;
+}
+.atlas .street-stub {
+  stroke: var(--color-ink-line);
+  stroke-width: 0.8;
+  opacity: 0.55;
+  stroke-dasharray: 1.5 3;
+}
+.atlas .street-name {
+  font-family: var(--font-data);
+  font-size: 10.5px;
+  font-weight: 500;
+  fill: var(--color-ink);
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 3px;
+}
+
+/* Reference chords: drawn only for the selection, inked by role. The layer
+   sits under the marks, over the ground. */
+.atlas .df-world-layer.code-chords {
+  z-index: 1;
+}
+.atlas .code-chord {
+  animation: edge-ink 400ms ease-out;
+}
+.atlas .code-chord.dep .chord-path {
+  stroke: var(--color-ink);
+  stroke-width: 1.25;
+}
+.atlas .code-chord.dep .chord-head {
+  stroke: var(--color-ink);
+  stroke-width: 1.1;
+}
+.atlas .code-chord.user .chord-path {
+  stroke: var(--color-ink-line);
+  stroke-width: 1.1;
+}
+.atlas .code-chord.user .chord-head {
+  stroke: var(--color-ink-line);
+  stroke-width: 1.1;
+}
+.atlas .chord-count {
+  font-family: var(--font-data);
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  fill: var(--color-ink-soft);
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 3px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .atlas .code-chord {
+    animation: none;
+  }
+}
+
+/* The cutaway: the selected file unfolded in place. It grows from its
+   mark's corner; neighbors keep their ground beneath it — beneath, so the
+   open plate must paint above every sibling mark. */
+.atlas .df-node:has(> .cutaway),
+.atlas .df-node:has(.cutaway) {
+  z-index: 20;
+}
+.atlas .cutaway {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  transform-origin: 10px 10px;
+  animation: cutaway-open 300ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+@keyframes cutaway-open {
+  from {
+    transform: scale(0.12);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .atlas .cutaway {
+    animation: none;
+  }
+}
+.atlas .cutaway-name {
+  text-decoration: underline;
+  text-decoration-color: var(--color-ink-line);
+  text-underline-offset: 3px;
+}
+.atlas .cutaway-name:hover {
+  text-decoration-color: var(--color-ink);
+}
+.atlas .cutaway-items {
+  min-height: 0;
+  flex: 1;
+  padding: 2px 0;
+}
+.atlas .cutaway-row,
+.atlas .cutaway-section {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  height: 16px;
+  padding: 0 12px;
+  font-size: 10px;
+  line-height: 1;
+  white-space: nowrap;
+}
+.atlas .cutaway-row {
+  color: var(--color-ink-soft);
+  text-decoration: none;
+  cursor: pointer;
+}
+.atlas .cutaway-row.is-pub {
+  color: var(--color-ink);
+  font-weight: 500;
+}
+.atlas .cutaway-row.in-section {
+  padding-left: 22px;
+}
+.atlas .cutaway-row:hover {
+  background: color-mix(in srgb, var(--color-ink) 5%, transparent);
+}
+.atlas .cutaway-row.is-selected {
+  background: color-mix(in srgb, var(--color-ink) 7%, transparent);
+  box-shadow: inset 2px 0 0 var(--color-ink);
+}
+.atlas .cutaway-section {
+  margin-top: 3px;
+  border-top: 1px solid color-mix(in srgb, var(--color-ink-line) 55%, transparent);
+  color: var(--color-ink-soft);
+  font-size: 9.5px;
+}
+/* Line numbers are text: they stay in the soft-ink text role, never the
+   hairline inks. */
+.atlas .cutaway-line {
+  margin-left: auto;
+  color: var(--color-ink-soft);
+  opacity: 0.75;
+  font-size: 9px;
+}
+
 /* ————— The one authored motion: the survey constellation draws itself. ————— */
 
 .constellation-line {

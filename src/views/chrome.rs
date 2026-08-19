@@ -86,9 +86,12 @@ pub fn TitleBlock(
                 p { class: "mt-0.5 font-chart text-[12px] italic text-ink-soft",
                     "{plural(members, \"workspace crate\")} · {externals} external"
                 }
-                p { class: "mt-2 border-t border-ink-line pt-2 pb-2 font-data text-[10.5px] leading-relaxed text-ink",
+                p { class: "mt-2 border-t border-ink-line pt-2 font-data text-[10.5px] leading-relaxed text-ink",
                     span { class: "text-ink-soft", "epoch " }
                     "{epoch.base} → {epoch.target}"
+                }
+                div { class: "pb-2 pt-1",
+                    crate::views::codemap::chrome::AltitudeSwitch { code: false }
                 }
             }
             details { class: "fold border-t border-ink-line open:pb-3", open: changes_open,
@@ -810,6 +813,13 @@ pub fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
                 p { class: "font-data text-[10.5px] text-ink-soft",
                     "{version_line} · "
                     if focal.is_member { "workspace member" } else { "external crate" }
+                }
+                if focal.is_member {
+                    Link {
+                        class: "mt-1 inline-block font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
+                        to: Route::CodeCrate { name: focal.name.clone() },
+                        "its files ↓"
+                    }
                 }
                 if versions.len() > 1 {
                     p { class: "mt-0.5 font-data text-[10px] leading-snug text-ink-soft",
