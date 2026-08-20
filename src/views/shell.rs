@@ -162,15 +162,15 @@ pub fn history_back() {
 /// and installs once — the guard keeps remounts from stacking listeners.
 /// Typing fields keep their caret keys.
 const NAV_KEYS_JS: &str = r#"
-if (!window.__slopifyNavKeys) {
-    window.__slopifyNavKeys = (e) => {
+if (!window.__slopeNavKeys) {
+    window.__slopeNavKeys = (e) => {
         if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
         const t = e.target, tag = t && t.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
         if (e.key === 'ArrowLeft') { e.preventDefault(); history.back(); }
         else if (e.key === 'ArrowRight') { e.preventDefault(); history.forward(); }
     };
-    document.addEventListener('keydown', window.__slopifyNavKeys);
+    document.addEventListener('keydown', window.__slopeNavKeys);
 }
 "#;
 
@@ -378,10 +378,10 @@ fn SurveyFailed(message: String, resource: GraphResource) -> Element {
                     "{message}"
                 }
                 p { class: "mt-3 font-data text-[10.5px] leading-relaxed text-ink-soft",
-                    "Start slopify inside a cargo workspace, or point it at one and reload:"
+                    "Start slope inside a cargo workspace, or point it at one and reload:"
                 }
                 p { class: "mt-1 font-data text-[10.5px] text-ink",
-                    code { "SLOPIFY_WORKSPACE=/path/to/workspace dx serve" }
+                    code { "SLOPE_WORKSPACE=/path/to/workspace dx serve" }
                 }
                 button {
                     class: "mt-3 font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4 hover:text-ink-soft",

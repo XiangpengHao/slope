@@ -16,9 +16,9 @@ blocks a public release.
 
 ## Product Purpose
 
-slopify is a code reviewer for massive LLM-generated changes. The thesis: a
+slope is a code reviewer for massive LLM-generated changes. The thesis: a
 human cannot read every line of a large agent-written change — it costs too
-much time and cognitive load. slopify sits above the raw Rust implementation
+much time and cognitive load. slope sits above the raw Rust implementation
 and lets the reviewer navigate between altitudes — from high level (crate
 dependencies) down to detail (function call graph) — so they gain confidence
 by checking code structure without reading every line.
@@ -28,7 +28,7 @@ workspace and opens a browser window that visualizes it. Success means the
 reviewer can judge a change — where it landed and what it affects — at the
 zoom level the question demands.
 
-Sharpened 2026-08-19: slopify is a **diff tool** first. Its claim over an
+Sharpened 2026-08-19: slope is a **diff tool** first. Its claim over an
 ordinary diff: it keeps the important thing visible and helps the reviewer
 understand what changed, what the consequences are, and whether the change
 landed in the right place. The dep view and the code view are instruments in
@@ -38,7 +38,7 @@ service of that diff story, with the code view the most important surface.
 
 Line-by-line diff review does not scale to agent-sized changes, and existing
 dependency tooling (`cargo tree`, graphviz dumps) prints whole graphs and
-leaves the reader to cope. slopify's claim: structural review at the right
+leaves the reader to cope. slope's claim: structural review at the right
 altitude replaces exhaustive line reading. It takes the full resolved graph —
 thousands of nodes and edges — and manages the reviewer's cognitive load,
 centered on the blast radius of a change rather than on the graph as an
@@ -46,7 +46,7 @@ artifact.
 
 ## Operating Context
 
-- Runs locally: `slopify <path-to-workspace>` analyzes and opens the browser.
+- Runs locally: `slope <path-to-workspace>` analyzes and opens the browser.
 - Used after an LLM agent session, when the user reviews what the agent did.
 - Target workspaces are large real-world Rust projects; graphs at full
   resolution reach thousands of nodes.
@@ -77,7 +77,10 @@ artifact.
 
 ## Brand Commitments
 
-- Name: **slopify** (a wry nod to reviewing LLM "slop").
+- Name: **slope** — "slop" with an e. It keeps the wry nod to reviewing LLM
+  slop, and names the core move: the gradient the reviewer walks between
+  altitudes. Published on crates.io as `slope-cli` because the bare name is
+  taken; the binary is `slope`.
 - Voice: simple tech English — plain, direct, no marketing register.
 
 ## Evidence on Hand

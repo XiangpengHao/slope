@@ -1,8 +1,7 @@
 use dioxus::prelude::*;
 
 use views::{
-    AtlasShell, CodeCrate, CodeFile, CodeOverview, DataOverview, DataType, Focus, Overview,
-    RingSel,
+    AtlasShell, CodeCrate, CodeFile, CodeOverview, DataOverview, DataType, Focus, Overview, RingSel,
 };
 
 /// Server-side analysis: cargo metadata, VCS diff, manifest events.
@@ -103,7 +102,7 @@ fn main() {
         let base = std::env::var("RUST_LOG")
             .ok()
             .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| "info,slopify=debug".to_string());
+            .unwrap_or_else(|| "info,slope=debug".to_string());
         // SAFETY: first statement of `main`; no other thread exists yet to
         // read the environment.
         unsafe { std::env::set_var("RUST_LOG", format!("{base},{QUIET_SURVEY}")) };
@@ -119,7 +118,7 @@ fn App() -> Element {
         document::Link { rel: "icon", href: FAVICON_SVG }
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         document::Style { {font_css()} }
-        document::Title { "slopify — workspace atlas" }
+        document::Title { "slope — workspace atlas" }
 
         Router::<Route> {}
     }

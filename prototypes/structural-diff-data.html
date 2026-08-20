@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>slopify — structural diff · data chart prototype</title>
+<title>slope — structural diff · data chart prototype</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=EB+Garamond:wght@400;600&family=JetBrains+Mono:wght@400;500;700&display=swap" rel="stylesheet">
@@ -215,7 +215,7 @@
 
 <div id="chrome">
   <section id="cartouche" class="plate" aria-label="title block">
-    <h1 class="c-title">slopify</h1>
+    <h1 class="c-title">slope</h1>
     <p class="c-ladder"><span title="not in this prototype">dependencies</span> · <span title="not in this prototype">code</span> · <span class="rung-here">data</span></p>
     <p class="c-facts">12 structs · 4 enums</p>
     <p class="c-diffline">diff main @ 6d43ab4 → working copy</p>
@@ -246,7 +246,7 @@
 
 <script>
 // ---------------------------------------------------------------------------
-// Demo data: the slopify workspace's real types, plus a staged working copy
+// Demo data: the slope workspace's real types, plus a staged working copy
 // that implements the structural-diff feature itself.
 // diff: added TypeDelta, DeltaKind, FileStatus; removed FileRef;
 //       CodeGraph +deltas -refs; FileInfo +status -changed.
@@ -257,7 +257,7 @@ const SB = (s) => `<span class="tok-type dm-held" style="color:var(--color-tok-s
 const P = (s) => `<span class="tok-punct">${s}</span>`;
 
 const frames = [
-  { id: "crate", label: "slopify", x: 24, y: 60, w: 1424, h: 792, crate: true },
+  { id: "crate", label: "slope", x: 24, y: 60, w: 1424, h: 792, crate: true },
   { id: "api", label: "mod api", x: 44, y: 92, w: 986, h: 706 },
   { id: "analyze", label: "mod analyze", x: 1064, y: 92, w: 364, h: 300 },
   { id: "views", label: "mod views", x: 1064, y: 426, w: 364, h: 340 },

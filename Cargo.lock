@@ -922,7 +922,8 @@ dependencies = [
 [[package]]
 name = "dioxus-flow"
 version = "0.1.0"
-source = "git+https://github.com/XiangpengHao/dioxus-flow#3fc983e8cb155cf48a2ace69c45c9103329b8bff"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0e15fcd1ba172873a595dfe97a734334d99f2c6091edea24acde2e37ecf7b84c"
 dependencies = [
  "dioxus",
  "futures-timer",
@@ -4097,7 +4098,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "slopify"
+name = "slope-cli"
 version = "0.1.0"
 dependencies = [
  "cargo_metadata",

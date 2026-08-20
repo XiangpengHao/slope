@@ -16,7 +16,9 @@ use std::collections::{HashMap, HashSet};
 
 use dioxus::prelude::*;
 use dioxus_flow::WorldLayer;
-use dioxus_flow::prelude::{Flow, Node as FlowNode, NodeViewCtx, Point, Rect, Side, Size, Viewport};
+use dioxus_flow::prelude::{
+    Flow, Node as FlowNode, NodeViewCtx, Point, Rect, Side, Size, Viewport,
+};
 
 use crate::Route;
 use crate::api::{CodeGraph, HoldEvent, HoldKind, ItemKind};
@@ -291,7 +293,13 @@ fn measure(mark: &DataMark) -> MarkView {
     // A long row clips at the block's own maximum rather than stretching it
     // past the paper's patience. A marked row carries its `+`/`−` in front.
     let wrapping = MARK_MAX_W - PAD_X;
-    let marker_w = |row: &FieldRow| if row.state == RowState::Same { 0.0 } else { 11.0 };
+    let marker_w = |row: &FieldRow| {
+        if row.state == RowState::Same {
+            0.0
+        } else {
+            11.0
+        }
+    };
     for row in &mark.fields {
         widest = widest.max(
             (text_w(&format!("{}: {}", row.name, row.decl), 10.0) + marker_w(row)).min(wrapping),
@@ -575,7 +583,11 @@ fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool)> {
             out.push(("tok-type", run, false));
         } else {
             let mut run = String::new();
-            while chars.peek().copied().is_some_and(|c| !ident(c) && c != '\'') {
+            while chars
+                .peek()
+                .copied()
+                .is_some_and(|c| !ident(c) && c != '\'')
+            {
                 run.push(chars.next().unwrap());
             }
             out.push(("tok-punct", run, false));
@@ -629,7 +641,11 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
     } else {
         view.shown_variants
     };
-    let folds = if selected { &view.open_folds } else { &view.folds };
+    let folds = if selected {
+        &view.open_folds
+    } else {
+        &view.folds
+    };
     let push = to.clone();
     rsx! {
         a {
@@ -733,9 +749,7 @@ fn DataNode(ctx: NodeViewCtx<DataNodeData>, selected: bool) -> Element {
                     "the quietest types in this module, folded to fit the chart's budget; \
                      every edge that touches one lands here"
                 }
-                _ => {
-                    "private types are never drawn; every edge that touches one lands here"
-                }
+                _ => "private types are never drawn; every edge that touches one lands here",
             };
             rsx! {
                 p { class: "data-foldrow", title, "{row.words}" }
@@ -841,14 +855,9 @@ fn WireLayer(
         let is_kin = kin
             .as_ref()
             .is_some_and(|k| !is_ref && k.wire_kin(w.a, w.b));
-        let is_dim = kin.as_ref().is_some_and(|k| {
-            !is_kin
-                && if is_ref {
-                    !k.tie_kept(w.a, w.b)
-                } else {
-                    true
-                }
-        });
+        let is_dim = kin
+            .as_ref()
+            .is_some_and(|k| !is_kin && if is_ref { !k.tie_kept(w.a, w.b) } else { true });
         rsx! {
             g {
                 key: "{w.key}",
@@ -952,16 +961,16 @@ fn frame_chart(
 /// Keyboard at the data altitude: `f` refits, Escape deselects; `←` and `→`
 /// retrace the trail from the shell, as they do on every route.
 const DATA_KEYS_JS: &str = r#"
-if (window.__slopifyKeys) {
-    document.removeEventListener('keydown', window.__slopifyKeys);
+if (window.__slopeKeys) {
+    document.removeEventListener('keydown', window.__slopeKeys);
 }
-window.__slopifyKeys = (e) => {
+window.__slopeKeys = (e) => {
     const t = e.target, tag = t && t.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (['f', 'Escape'].includes(e.key)) dioxus.send(e.key);
 };
-document.addEventListener('keydown', window.__slopifyKeys);
+document.addEventListener('keydown', window.__slopeKeys);
 "#;
 
 /// The data chart, mounted for `/data`.
@@ -1310,7 +1319,12 @@ mod tests {
             .collect();
         assert_eq!(
             classes,
-            vec![("tok-type", "Vec"), ("tok-punct", "<"), ("tok-type", "FileDetail"), ("tok-punct", ">")]
+            vec![
+                ("tok-type", "Vec"),
+                ("tok-punct", "<"),
+                ("tok-type", "FileDetail"),
+                ("tok-punct", ">")
+            ]
         );
     }
 }

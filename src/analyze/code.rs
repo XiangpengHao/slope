@@ -4,9 +4,19 @@
 //! below it — files and items. It loads the workspace into a rust-analyzer
 //! database, walks every workspace-member source file, collects its items
 //! (functions, types, traits, impls), and resolves every reference it can:
-//! paths, method calls, and field accesses, including inside macro
-//! expansions. References that reach outside the workspace are dropped —
-//! this altitude charts the reviewer's own code, not its dependencies.
+//! paths, method calls, and field accesses. References that reach outside the
+//! workspace are dropped — this altitude charts the reviewer's own code, not
+//! its dependencies.
+//!
+//! Every name is read where rust-analyzer really resolved it, which for a
+//! dioxus app is usually not where it is written: `rsx!` bodies are unparsed
+//! token trees, and a `#[component]` or `#[server]` function's body is
+//! type-checked as the macro's expansion, not as the text on disk. So each
+//! name token is descended into the macros it reaches and resolved there,
+//! keeping its own range in the real file for the plate to link. Reading only
+//! the real tree would leave most of a dioxus workspace's references
+//! uncounted, and a review tool that undercounts references invites deleting
+//! live code.
 //!
 //! Resolution is semantic (types, traits, and methods are resolved the way
 //! rustc sees them), but not omniscient: names that type inference cannot
@@ -23,7 +33,7 @@ use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at
 use ra_ap_project_model::{CargoConfig, RustLibSource};
 use ra_ap_syntax::ast::{HasName, HasVisibility, VisibilityKind};
 use ra_ap_syntax::{
-    AstNode, Edition, SyntaxKind, SyntaxNode, SyntaxToken, TextRange, TextSize, ast,
+    AstNode, AstToken, Edition, SyntaxKind, SyntaxNode, SyntaxToken, TextRange, TextSize, ast,
 };
 use ra_ap_vfs::{FileId, Vfs};
 use tokio::sync::OnceCell;
@@ -31,7 +41,7 @@ use tokio::sync::OnceCell;
 use super::data;
 use crate::api::{
     CodeGraph, FileDetail, FileInfo, FileRef, ItemEdge, ItemInfo, ItemKind, ItemMark, ItemRef,
-    ItemSource, ItemXRef, SrcLink, SrcRun, Tok, Vis,
+    ItemSource, SrcLink, SrcRun, Tok, Vis,
 };
 
 /// The whole survey, precomputed once: the shipped graph plus every file's
@@ -152,8 +162,8 @@ pub fn survey(dir: &std::path::Path) -> Result<CodeIndex, String> {
     let manifest = dir.join("Cargo.toml");
     if !manifest.exists() {
         return Err(format!(
-            "No Cargo.toml found in {}. Point slopify at a cargo workspace: \
-             SLOPIFY_WORKSPACE=/path/to/workspace",
+            "No Cargo.toml found in {}. Point slope at a cargo workspace: \
+             SLOPE_WORKSPACE=/path/to/workspace",
             dir.display()
         ));
     }
@@ -356,8 +366,6 @@ fn survey_attached(
             &raw,
             src_file as u32,
             source.syntax(),
-            None,
-            0,
             &mut acc,
             &mut unresolved,
             &mut raw_spans[src_file],
@@ -468,8 +476,6 @@ fn survey_attached(
 
     let mut file_pair: HashMap<(u32, u32), u32> = HashMap::new();
     let mut item_refs: Vec<Vec<ItemRef>> = vec![Vec::new(); raw.len()];
-    let mut refs_out: Vec<Vec<ItemXRef>> = vec![Vec::new(); raw.len()];
-    let mut refs_in: Vec<Vec<ItemXRef>> = vec![Vec::new(); raw.len()];
     // Cross-file references at item precision, aggregated per pair. Several
     // impl blocks for one type collapse onto the same endpoint, so the pairs
     // must be summed, not pushed.
@@ -490,29 +496,6 @@ fn survey_attached(
             continue;
         }
         *file_pair.entry((src_file, target.file)).or_default() += count;
-        if let Some(from) = src_item {
-            let other = target
-                .item
-                .map(|t| item_label(&raw[target.file as usize].items[t as usize]))
-                .unwrap_or_default();
-            refs_out[src_file as usize].push(ItemXRef {
-                item: from,
-                file: target.file,
-                other,
-                count,
-            });
-        }
-        if let Some(to) = target.item {
-            let other = src_item
-                .map(|s| item_label(&raw[src_file as usize].items[s as usize]))
-                .unwrap_or_default();
-            refs_in[target.file as usize].push(ItemXRef {
-                item: to,
-                file: src_file,
-                other,
-                count,
-            });
-        }
 
         // The same edge at item precision, for the map's lifting. A reference
         // written inside an impl block belongs to the type that impl names —
@@ -588,9 +571,7 @@ fn survey_attached(
     }
 
     let mut in_files: HashMap<u32, u32> = HashMap::new();
-    let mut out_files: HashMap<u32, u32> = HashMap::new();
-    for &(from, to) in file_pair.keys() {
-        *out_files.entry(from).or_default() += 1;
+    for &(_, to) in file_pair.keys() {
         *in_files.entry(to).or_default() += 1;
     }
 
@@ -603,32 +584,18 @@ fn survey_attached(
     let files: Vec<FileInfo> = raw
         .iter()
         .enumerate()
-        .map(|(i, f)| {
-            let count = |kinds: &[ItemKind]| {
-                f.items.iter().filter(|it| kinds.contains(&it.kind)).count() as u32
-            };
-            FileInfo {
-                id: i as u32,
-                path: f.path.clone(),
-                krate: f.krate.clone(),
-                changed: changed.contains(&f.path),
-                lines: f.lines,
-                items: f
-                    .items
-                    .iter()
-                    .filter(|it| it.kind != ItemKind::Impl)
-                    .count() as u32,
-                fns: count(&[ItemKind::Fn]),
-                types: count(&[
-                    ItemKind::Struct,
-                    ItemKind::Enum,
-                    ItemKind::Union,
-                    ItemKind::TypeAlias,
-                ]),
-                traits: count(&[ItemKind::Trait]),
-                refs_in_files: in_files.get(&(i as u32)).copied().unwrap_or(0),
-                refs_out_files: out_files.get(&(i as u32)).copied().unwrap_or(0),
-            }
+        .map(|(i, f)| FileInfo {
+            id: i as u32,
+            path: f.path.clone(),
+            krate: f.krate.clone(),
+            changed: changed.contains(&f.path),
+            lines: f.lines,
+            items: f
+                .items
+                .iter()
+                .filter(|it| it.kind != ItemKind::Impl)
+                .count() as u32,
+            refs_in_files: in_files.get(&(i as u32)).copied().unwrap_or(0),
         })
         .collect();
 
@@ -655,7 +622,6 @@ fn survey_attached(
                         section: it.section.clone(),
                         kind: it.kind,
                         line: lines.line(it.range.start()),
-                        end_line: lines.line(it.range.end()),
                         vis: it.vis,
                         mark: mark_of[i][id],
                         start: u32::from(it.range.start()),
@@ -663,8 +629,6 @@ fn survey_attached(
                     })
                     .collect(),
                 item_refs: std::mem::take(&mut item_refs[i]),
-                refs_out: std::mem::take(&mut refs_out[i]),
-                refs_in: std::mem::take(&mut refs_in[i]),
             }
         })
         .collect();
@@ -675,6 +639,11 @@ fn survey_attached(
             .to_string(),
         "references produced by derive macros are not counted; a type's \
          derives stand in its own source, on its plate"
+            .to_string(),
+        "a name written inside a string a macro rewrites — an rsx! text node's \
+         `\"{words(x)}\"` — is not counted: the expansion keeps no trail back \
+         into the literal, so the reference cannot be placed. a format \
+         string's own captures (`\"{LIMIT}\"`) are counted"
             .to_string(),
         "an `impl Trait for Type` counts as a reference from the type to the \
          trait — the impl block itself holds no ground"
@@ -925,18 +894,22 @@ fn collect_items(node: &SyntaxNode, ctx: &ItemCtx, out: &mut Vec<RawItem>) {
                 out.push(ctx.item(&name, ItemKind::Macro, range, vis));
             }
         } else if let Some(m) = ast::Module::cast(child.clone()) {
-            if let Some(name) = name_of(m.name()) {
+            // Only an inline module is a landmark. `mod x;` declares the file
+            // beside it, which the chart already draws as its own block; a
+            // reference to that module lands on the file, so a mark here could
+            // only ever read "no references".
+            if let Some(name) = name_of(m.name())
+                && let Some(list) = m.item_list()
+            {
                 let vis = ctx.vis(m.visibility());
                 out.push(ctx.item(&name, ItemKind::Mod, range, vis));
-                if let Some(list) = m.item_list() {
-                    let inner = ItemCtx {
-                        prefix: format!("{}{name}::", ctx.prefix),
-                        section: ctx.section.clone(),
-                        owner: ctx.owner,
-                        inherited: ctx.inherited,
-                    };
-                    collect_items(list.syntax(), &inner, out);
-                }
+                let inner = ItemCtx {
+                    prefix: format!("{}{name}::", ctx.prefix),
+                    section: ctx.section.clone(),
+                    owner: ctx.owner,
+                    inherited: ctx.inherited,
+                };
+                collect_items(list.syntax(), &inner, out);
             }
         } else if let Some(i) = ast::Impl::cast(child.clone()) {
             let header = impl_header(&i);
@@ -975,15 +948,21 @@ fn item_at(items: &[RawItem], offset: TextSize) -> Option<u32> {
         .map(|(i, _)| i as u32)
 }
 
-/// How deep to chase macro calls inside macro expansions.
-const MACRO_DEPTH: usize = 3;
+/// What one name in the source turned out to be.
+enum Named {
+    /// It resolved to something this survey charts.
+    Target(RefTarget),
+    /// It resolved, but not to anything the chart holds: a local, a `Vec`, a
+    /// dependency's type, or a path qualifier the segment it qualifies already
+    /// speaks for.
+    Elsewhere,
+    /// A name that should have resolved and did not.
+    Missed,
+}
 
-/// Walk one syntax tree and record every reference that resolves to a
-/// workspace file. `origin` is the offset in the *real* source file that
-/// references get attributed to — the node's own position on the real tree,
-/// the macro call site inside expansions. Every recorded reference whose name
-/// token has a position in the real file also lands in `spans`, so the focus
-/// plate can turn it into a link.
+/// Walk one file's syntax tree and record every reference that resolves to a
+/// workspace file. Every recorded reference lands in `spans` too, keyed by its
+/// own name token in the real file, so the focus plate can turn it into a link.
 #[allow(clippy::too_many_arguments)]
 fn scan_refs(
     sema: &Semantics<'_, RootDatabase>,
@@ -994,217 +973,204 @@ fn scan_refs(
     raw: &[RawFile],
     src_file: u32,
     node: &SyntaxNode,
-    origin: Option<TextSize>,
-    depth: usize,
-    acc: &mut HashMap<(u32, Option<u32>, RefTarget), u32>,
+    acc: &mut HashMap<RefSource, u32>,
     unresolved: &mut u32,
     spans: &mut Vec<(u32, u32, RefTarget)>,
 ) {
     let src_items = &raw[src_file as usize].items;
-    let src_fid = raw[src_file as usize].efid.file_id(db);
-    #[allow(clippy::too_many_arguments)]
     fn record(
-        acc: &mut HashMap<(u32, Option<u32>, RefTarget), u32>,
-        unresolved: &mut u32,
+        acc: &mut HashMap<RefSource, u32>,
         spans: &mut Vec<(u32, u32, RefTarget)>,
         src_items: &[RawItem],
         src_file: u32,
-        origin: Option<TextSize>,
-        at: TextSize,
-        target: Option<RefTarget>,
-        span: Option<TextRange>,
+        at: TextRange,
+        target: RefTarget,
     ) {
-        let Some(target) = target else {
-            *unresolved += 1;
-            return;
-        };
-        let attributed = origin.unwrap_or(at);
-        let src_item = item_at(src_items, attributed);
+        let src_item = item_at(src_items, at.start());
         // A reference from an item to itself (recursion, `Self` in an impl)
         // says nothing at any zoom level.
         if target.file == src_file && src_item.is_some() && src_item == target.item {
             return;
         }
         *acc.entry((src_file, src_item, target)).or_default() += 1;
-        if let Some(span) = span {
-            spans.push((span.start().into(), span.end().into(), target));
+        spans.push((at.start().into(), at.end().into(), target));
+    }
+
+    for tok in node
+        .descendants_with_tokens()
+        .filter_map(|e| e.into_token())
+        .filter(|t| t.kind() == SyntaxKind::IDENT)
+    {
+        // A declaration's own name is not a reference to anything.
+        if tok.parent().is_some_and(|p| p.kind() == SyntaxKind::NAME) {
+            continue;
+        }
+        match resolve_name(sema, db, vfs, root, file_of, raw, &tok) {
+            Named::Target(target) => {
+                record(acc, spans, src_items, src_file, tok.text_range(), target);
+            }
+            Named::Elsewhere => {}
+            Named::Missed => {
+                if countable(&tok) {
+                    *unresolved += 1;
+                }
+            }
         }
     }
 
-    for desc in node.descendants() {
-        match desc.kind() {
-            SyntaxKind::METHOD_CALL_EXPR => {
-                let Some(call) = ast::MethodCallExpr::cast(desc.clone()) else {
-                    continue;
-                };
-                let target = sema
-                    .resolve_method_call(&call)
-                    .and_then(|f| def_target(sema, db, vfs, root, file_of, raw, f.into()));
-                let span = name_span(sema, db, src_fid, origin.is_some(), call.name_ref());
-                record(
-                    acc,
-                    unresolved,
-                    spans,
-                    src_items,
-                    src_file,
-                    origin,
-                    desc.text_range().start(),
-                    target,
-                    span,
-                );
+    // A name a format string captures — `format!("{LIMIT}")` — sits inside a
+    // string literal, so no name token on the tree stands for it. The template's
+    // own parts carry the resolution, already ranged in this file.
+    for tok in node
+        .descendants_with_tokens()
+        .filter_map(|e| e.into_token())
+        .filter(|t| t.kind() == SyntaxKind::STRING)
+    {
+        let Some(string) = ast::String::cast(tok) else {
+            continue;
+        };
+        let Some(parts) = sema.as_format_args_parts(&string) else {
+            continue;
+        };
+        for (at, res) in parts {
+            let Some(PathResolution::Def(def)) = res.and_then(|part| part.left()) else {
+                continue;
+            };
+            if let Some(target) = def_target(sema, db, vfs, root, file_of, raw, def) {
+                record(acc, spans, src_items, src_file, at, target);
             }
-            SyntaxKind::FIELD_EXPR => {
-                let Some(field) = ast::FieldExpr::cast(desc.clone()) else {
-                    continue;
-                };
-                // Tuple-field access (`pair.0`) has no named target; only a
-                // real field names its parent type.
-                let Some(f) = sema.resolve_field(&field).and_then(|e| e.left()) else {
-                    continue;
-                };
-                let adt: Adt = match f.parent_def(db) {
-                    Variant::Struct(s) => Adt::Struct(s),
-                    Variant::Union(u) => Adt::Union(u),
-                    Variant::EnumVariant(v) => Adt::Enum(v.parent_enum(db)),
-                };
-                let target = def_target(sema, db, vfs, root, file_of, raw, adt.into());
-                if target.is_some() {
-                    let span = name_span(sema, db, src_fid, origin.is_some(), field.name_ref());
-                    record(
-                        acc,
-                        unresolved,
-                        spans,
-                        src_items,
-                        src_file,
-                        origin,
-                        desc.text_range().start(),
-                        target,
-                        span,
-                    );
-                }
-            }
-            SyntaxKind::PATH => {
-                // Only the outermost path of `a::b::c` resolves; its
-                // qualifiers are children of the same PATH node.
-                if desc.parent().is_some_and(|p| p.kind() == SyntaxKind::PATH) {
-                    continue;
-                }
-                let Some(path) = ast::Path::cast(desc.clone()) else {
-                    continue;
-                };
-                // The clickable token is the last segment's name alone, so
-                // nested paths inside generic args never overlap it.
-                let name_ref = path.segment().and_then(|s| s.name_ref());
-                match sema.resolve_path(&path) {
-                    Some(PathResolution::Def(def)) => {
-                        let target = def_target(sema, db, vfs, root, file_of, raw, def);
-                        if target.is_some() {
-                            let span = name_span(sema, db, src_fid, origin.is_some(), name_ref);
-                            record(
-                                acc,
-                                unresolved,
-                                spans,
-                                src_items,
-                                src_file,
-                                origin,
-                                desc.text_range().start(),
-                                target,
-                                span,
-                            );
-                        }
-                    }
-                    Some(PathResolution::SelfType(imp)) => {
-                        let target = imp.self_ty(db).as_adt().and_then(|adt| {
-                            def_target(sema, db, vfs, root, file_of, raw, adt.into())
-                        });
-                        if target.is_some() {
-                            let span = name_span(sema, db, src_fid, origin.is_some(), name_ref);
-                            record(
-                                acc,
-                                unresolved,
-                                spans,
-                                src_items,
-                                src_file,
-                                origin,
-                                desc.text_range().start(),
-                                target,
-                                span,
-                            );
-                        }
-                    }
-                    Some(_) => {}
-                    None => {
-                        // Only count contexts where a name should have
-                        // resolved: expressions, types, and use trees.
-                        // Attribute paths and macro fragments miss for
-                        // reasons that are not type inference's fault.
-                        let countable =
-                            desc.ancestors().any(|a| {
-                                matches!(
-                                    a.kind(),
-                                    SyntaxKind::PATH_EXPR
-                                        | SyntaxKind::PATH_TYPE
-                                        | SyntaxKind::USE_TREE
-                                        | SyntaxKind::RECORD_EXPR
-                                        | SyntaxKind::PATH_PAT
-                                )
-                            }) && !desc.ancestors().any(|a| a.kind() == SyntaxKind::ATTR);
-                        if countable {
-                            *unresolved += 1;
-                        }
-                    }
-                }
-            }
-            SyntaxKind::MACRO_CALL => {
-                if depth >= MACRO_DEPTH {
-                    continue;
-                }
-                let Some(call) = ast::MacroCall::cast(desc.clone()) else {
-                    continue;
-                };
-                let call_at = origin.unwrap_or_else(|| desc.text_range().start());
-                if let Some(expansion) = sema.expand_macro_call(&call) {
-                    scan_refs(
-                        sema,
-                        db,
-                        vfs,
-                        root,
-                        file_of,
-                        raw,
-                        src_file,
-                        &expansion.value,
-                        Some(call_at),
-                        depth + 1,
-                        acc,
-                        unresolved,
-                        spans,
-                    );
-                }
-            }
-            _ => {}
         }
     }
 }
 
-/// A reference's name token as a byte range in the file being scanned. On
-/// the real tree the token's own range already is one. Inside a macro
-/// expansion the token maps back through the expansion when it came from the
-/// call's input — which is where most of this app's references live, in
-/// `rsx!` bodies — and is dropped when it was conjured by the macro itself
-/// or lands in a different file.
-fn name_span(
+/// Where one name resolves, read wherever rust-analyzer really resolved it.
+///
+/// A name written in plain code resolves where it stands. Two whole classes of
+/// name never do: a name inside a macro's arguments is not parsed as a path at
+/// all — the arguments are one unread token tree, and `rsx!` bodies are where
+/// most of this app's references live — and the body of a function an attribute
+/// macro rewrote (`#[component]`, `#[server]`) carries no inference on the real
+/// tree, because the body that was type-checked is the expansion's. Both only
+/// resolve inside the expansion, so a name the real tree cannot answer for is
+/// descended into the macros it reaches and read there. Either way the token
+/// keeps its own range in the real file, so every span the plate links is one a
+/// reader can point at.
+fn resolve_name(
     sema: &Semantics<'_, RootDatabase>,
     db: &RootDatabase,
-    src_fid: FileId,
-    in_expansion: bool,
-    name_ref: Option<ast::NameRef>,
-) -> Option<TextRange> {
-    let name_ref = name_ref?;
-    if !in_expansion {
-        return Some(name_ref.syntax().text_range());
+    vfs: &Vfs,
+    root: &std::path::Path,
+    file_of: &HashMap<FileId, u32>,
+    raw: &[RawFile],
+    tok: &SyntaxToken,
+) -> Named {
+    // In place first: it costs nothing and answers for most of the code.
+    if let Some(named) = resolve_at(sema, db, vfs, root, file_of, raw, tok) {
+        return named;
     }
-    let mapped = sema.original_range_opt(name_ref.syntax())?;
-    (mapped.file_id.file_id(db) == src_fid).then_some(mapped.range)
+    for down in sema.descend_into_macros_exact(tok.clone()) {
+        if let Some(named) = resolve_at(sema, db, vfs, root, file_of, raw, &down) {
+            return named;
+        }
+    }
+    Named::Missed
+}
+
+/// Read one name token exactly where it sits. `None` means this position has no
+/// answer — the token is not a reference here, or resolution failed and an
+/// expansion may still know.
+#[allow(clippy::too_many_arguments)]
+fn resolve_at(
+    sema: &Semantics<'_, RootDatabase>,
+    db: &RootDatabase,
+    vfs: &Vfs,
+    root: &std::path::Path,
+    file_of: &HashMap<FileId, u32>,
+    raw: &[RawFile],
+    tok: &SyntaxToken,
+) -> Option<Named> {
+    let landed = |def: ModuleDef| match def_target(sema, db, vfs, root, file_of, raw, def) {
+        Some(target) => Named::Target(target),
+        None => Named::Elsewhere,
+    };
+    let name_ref = tok.parent().and_then(ast::NameRef::cast)?;
+    let parent = name_ref.syntax().parent()?;
+    match parent.kind() {
+        SyntaxKind::METHOD_CALL_EXPR => {
+            let call = ast::MethodCallExpr::cast(parent)?;
+            // `a.b(c)` also holds `c`; only the method's own name is the call.
+            if !same_node(call.name_ref(), &name_ref) {
+                return Some(Named::Elsewhere);
+            }
+            let f = sema.resolve_method_call(&call)?;
+            Some(landed(f.into()))
+        }
+        SyntaxKind::FIELD_EXPR => {
+            let field = ast::FieldExpr::cast(parent)?;
+            if !same_node(field.name_ref(), &name_ref) {
+                return Some(Named::Elsewhere);
+            }
+            // Tuple-field access (`pair.0`) has no named target; only a real
+            // field names its parent type.
+            let Some(f) = sema.resolve_field(&field)?.left() else {
+                return Some(Named::Elsewhere);
+            };
+            let adt: Adt = match f.parent_def(db) {
+                Variant::Struct(s) => Adt::Struct(s),
+                Variant::Union(u) => Adt::Union(u),
+                Variant::EnumVariant(v) => Adt::Enum(v.parent_enum(db)),
+            };
+            Some(landed(adt.into()))
+        }
+        SyntaxKind::PATH_SEGMENT => {
+            let seg = ast::PathSegment::cast(parent)?;
+            // Only the last segment of `a::b::c` names the target; the
+            // qualifiers are the same path's own children.
+            let mut path = seg.parent_path();
+            while let Some(up) = path.parent_path() {
+                path = up;
+            }
+            if !same_node(path.segment(), &seg) {
+                return Some(Named::Elsewhere);
+            }
+            match sema.resolve_path(&path)? {
+                PathResolution::Def(def) => Some(landed(def)),
+                PathResolution::SelfType(imp) => Some(match imp.self_ty(db).as_adt() {
+                    Some(adt) => landed(adt.into()),
+                    None => Named::Elsewhere,
+                }),
+                _ => Some(Named::Elsewhere),
+            }
+        }
+        // A name in any other position — a struct literal's field, a record
+        // pattern's — is charted by the path beside it, not twice.
+        _ => Some(Named::Elsewhere),
+    }
+}
+
+/// Whether two optional nodes are the same node.
+fn same_node<A: AstNode, B: AstNode>(a: Option<A>, b: &B) -> bool {
+    a.is_some_and(|a| a.syntax() == b.syntax())
+}
+
+/// Whether a name that failed to resolve is one the survey should own up to.
+/// Expressions, types, and use trees are names that should have resolved;
+/// attribute paths and macro fragments miss for reasons that are not type
+/// inference's fault.
+fn countable(tok: &SyntaxToken) -> bool {
+    let Some(node) = tok.parent() else {
+        return false;
+    };
+    node.ancestors().any(|a| {
+        matches!(
+            a.kind(),
+            SyntaxKind::PATH_EXPR
+                | SyntaxKind::PATH_TYPE
+                | SyntaxKind::USE_TREE
+                | SyntaxKind::RECORD_EXPR
+                | SyntaxKind::PATH_PAT
+        )
+    }) && !node.ancestors().any(|a| a.kind() == SyntaxKind::ATTR)
 }
 
 /// Where a definition lives, if it lives in a workspace file.
@@ -1486,12 +1452,17 @@ fn classify(tokens: &[SyntaxToken], i: usize) -> Tok {
     }
     if kind == SyntaxKind::COMMENT {
         let text = token.text();
-        let doc = ["///", "//!", "/**", "/*!"].iter().any(|p| text.starts_with(p));
+        let doc = ["///", "//!", "/**", "/*!"]
+            .iter()
+            .any(|p| text.starts_with(p));
         return if doc { Tok::Doc } else { Tok::Comment };
     }
     // An attribute is one thing to a reader — `#[derive(Clone, Copy)]` reads
     // as a unit — so everything inside it takes one class.
-    if token.parent_ancestors().any(|n| n.kind() == SyntaxKind::ATTR) {
+    if token
+        .parent_ancestors()
+        .any(|n| n.kind() == SyntaxKind::ATTR)
+    {
         return Tok::Attr;
     }
     if kind.is_literal() {

@@ -136,8 +136,10 @@ pub fn CodeCartouche(graph: CodeGraph, workspace: String, diff_line: String) -> 
 #[derive(Clone, PartialEq)]
 enum Hit {
     File(FileInfo),
-    /// The item, and the path of the file that defines it.
-    Item(ItemMark, String),
+    /// The item, and the path of the file that defines it. Boxed because
+    /// an `ItemMark` is 296 bytes against `FileInfo`'s 88, and every hit
+    /// in the list would otherwise pay for the larger of the two.
+    Item(Box<ItemMark>, String),
 }
 
 /// How one hit ranks: a prefix match is what the reviewer meant, files come
@@ -156,7 +158,11 @@ pub fn CodeSearch(graph: CodeGraph) -> Element {
             return Vec::new();
         }
         let mut hits: Vec<(Rank, Hit)> = Vec::new();
-        for file in graph.files.iter().filter(|f| f.path.to_lowercase().contains(&q)) {
+        for file in graph
+            .files
+            .iter()
+            .filter(|f| f.path.to_lowercase().contains(&q))
+        {
             let name = file_name(&file.path).to_lowercase();
             hits.push((
                 (
@@ -185,7 +191,7 @@ pub fn CodeSearch(graph: CodeGraph) -> Element {
                     std::cmp::Reverse(item.fan_in),
                     item.label.clone(),
                 ),
-                Hit::Item(item.clone(), path),
+                Hit::Item(Box::new(item.clone()), path),
             ));
         }
         hits.sort_by(|a, b| a.0.cmp(&b.0));

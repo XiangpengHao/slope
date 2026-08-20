@@ -1,0 +1,135 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: tag matches manifest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A tag that disagrees with the manifest publishes the wrong version to
+      # crates.io, and a crates.io version cannot be replaced — only yanked.
+      # Cheapest possible gate, so it runs before anything else.
+      - name: compare tag to Cargo.toml
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          manifest=$(grep -m1 '^version = ' Cargo.toml | cut -d'"' -f2)
+          echo "tag=$tag  manifest=$manifest"
+          if [ "$tag" != "$manifest" ]; then
+            echo "::error::tag $tag does not match Cargo.toml version $manifest"
+            exit 1
+          fi
+
+  bundle:
+    name: linux bundle
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      # Deliberately not the nix toolchain here. The nix build produces a
+      # binary wired to /nix/store paths, which is right for `nix run` and
+      # useless as a download. A plain glibc runner gives a tarball that
+      # unpacks and runs on an ordinary distro — and off NixOS, `dx` fetches
+      # its own wasm-bindgen, wasm-opt, and Tailwind, so nothing needs pinning
+      # beyond the compiler.
+      - name: rust nightly (same date as flake.nix)
+        uses: dtolnay/rust-toolchain@nightly
+        with:
+          toolchain: nightly-2026-05-17
+          targets: wasm32-unknown-unknown
+
+      - uses: cargo-bins/cargo-binstall@main
+      - name: install dx
+        run: cargo binstall --no-confirm dioxus-cli@0.7.10
+
+      - name: bundle
+        run: dx bundle --platform web --release --debug-symbols false --out-dir bundle
+
+      # `slope` looks for `public/` beside its own executable, so the tarball
+      # keeps them together and the binary takes the product name.
+      - name: assemble the tarball
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          staging="slope-$version-x86_64-unknown-linux-gnu"
+          mkdir -p "$staging"
+          mv bundle/server "$staging/slope"
+          mv bundle/public "$staging/public"
+          cp README.md LICENSE-MIT LICENSE-APACHE "$staging/"
+          tar czf "$staging.tar.gz" "$staging"
+          sha256sum "$staging.tar.gz" > "$staging.tar.gz.sha256"
+          ls -lh "$staging.tar.gz"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-bundle
+          path: slope-*.tar.gz*
+
+  release:
+    name: github release
+    needs: bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux-bundle
+
+      # `gh` ships on the runner, so this needs no third-party action.
+      - name: publish the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            --title "$GITHUB_REF_NAME" \
+            --generate-notes \
+            slope-*.tar.gz slope-*.tar.gz.sha256
+
+  crates-io:
+    name: publish to crates.io
+    # Last, and only once a real bundle has been produced from this tag: a
+    # crates.io version is permanent, so nothing gets published from a tree
+    # that could not build.
+    needs: [verify, bundle]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+
+      # `assets/tailwind.css` is generated and gitignored, but an `asset!` in
+      # main.rs needs it to compile, and Cargo.toml's `include` carries it into
+      # the tarball — so it has to exist before packaging. This is the same pass
+      # `dx` runs during a build.
+      - name: generate the tailwind output
+        run: >
+          nix develop --command
+          tailwindcss -i tailwind.css -o assets/tailwind.css --minify
+
+      # Verification builds the server side only. The default `web` feature
+      # targets wasm, and a plain cargo build cannot produce the client bundle
+      # regardless — the published crate is source distribution, while the
+      # working installs are `nix run` and the release tarball above.
+      # --allow-dirty: the generated CSS above is deliberately untracked.
+      - name: cargo publish
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: >
+          nix develop --command cargo publish
+          --no-default-features --features server --allow-dirty

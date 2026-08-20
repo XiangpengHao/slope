@@ -312,9 +312,7 @@ fn build_chart(
                         uy,
                         focal,
                         named: named.contains(c.id.as_str()),
-                        versioned: seen_names
-                            .get(c.name.as_str())
-                            .is_some_and(|n| *n > 1),
+                        versioned: seen_names.get(c.name.as_str()).is_some_and(|n| *n > 1),
                     },
                 )
                 .size(Size::new(b, b))
@@ -605,10 +603,10 @@ fn frame_target(built: &Built) -> (Option<Rect>, Option<Point>) {
 /// keys. Rebinds on every mount so the listener always feeds the living
 /// channel, not a dropped one.
 const KEYS_JS: &str = r#"
-if (window.__slopifyKeys) {
-    document.removeEventListener('keydown', window.__slopifyKeys);
+if (window.__slopeKeys) {
+    document.removeEventListener('keydown', window.__slopeKeys);
 }
-window.__slopifyKeys = (e) => {
+window.__slopeKeys = (e) => {
     const t = e.target, tag = t && t.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -620,7 +618,7 @@ window.__slopifyKeys = (e) => {
     }
     if (['n', 'p', 'f', 'Escape'].includes(e.key)) dioxus.send(e.key);
 };
-document.addEventListener('keydown', window.__slopifyKeys);
+document.addEventListener('keydown', window.__slopeKeys);
 "#;
 
 /// The ring cap the chart last painted. Provided as a context by the atlas
@@ -769,8 +767,7 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
                             .crates
                             .iter()
                             .filter(|c| {
-                                !c.ghost
-                                    && layout.placed.get(&c.id).is_some_and(|p| p.ring == hop)
+                                !c.ghost && layout.placed.get(&c.id).is_some_and(|p| p.ring == hop)
                             })
                             .map(|c| c.name.clone())
                             .collect();
@@ -1024,10 +1021,8 @@ mod tests {
             root: "/test".into(),
             root_crate: Some("root@1.0.0".into()),
             epoch: Epoch {
-                vcs: None,
                 base: "base".into(),
                 target: "working copy".into(),
-                clean: true,
                 note: None,
             },
             crates: names.iter().map(|n| krate(n)).collect(),

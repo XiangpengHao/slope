@@ -1,12 +1,33 @@
 [package]
-name = "slopify"
+# `slope` is taken on crates.io by an abandoned crate, so the package ships as
+# `slope-cli` while the binary stays `slope` — the same split dioxus-cli/`dx`
+# uses. `cargo install slope-cli` puts `slope` on PATH.
+name = "slope-cli"
 version = "0.1.0"
 edition = "2024"
+description = "Structural code review for large LLM-written changes to a cargo workspace"
+authors = ["Xiangpeng Hao <xiangpeng.hao@wisc.edu>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/XiangpengHao/slope"
+homepage = "https://github.com/XiangpengHao/slope"
+readme = "README.md"
+keywords = ["cargo", "code-review", "diff", "visualization", "dioxus"]
+categories = ["development-tools", "visualization", "command-line-utilities"]
+# An allowlist, not an `exclude` list, for one reason: `assets/tailwind.css` is
+# generated and gitignored, and an `asset!` in main.rs needs it at compile time.
+# Cargo's git-derived file list would drop it and the published crate would not
+# build; `include` overrides that. Design notes, the spec, and the throwaway
+# HTML prototypes stay out as repo furniture.
+include = ["/src", "/assets", "/Cargo.toml", "/Cargo.lock", "/Dioxus.toml", "/clippy.toml", "/tailwind.css", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE"]
+
+[[bin]]
+name = "slope"
+path = "src/main.rs"
 
 [dependencies]
 cargo_metadata = { version = "0.23.1", optional = true }
 dioxus = { version = "0.7.10", features = ["router", "fullstack"] }
-dioxus-flow = { git = "https://github.com/XiangpengHao/dioxus-flow" }
+dioxus-flow = "0.1"
 serde = { version = "1.0.229", features = ["derive"] }
 tokio = { version = "1", features = ["rt"], optional = true }
 toml = { version = "1.1.4", optional = true }

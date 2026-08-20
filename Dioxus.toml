@@ -3,7 +3,7 @@
 [web.app]
 
 # HTML title tag content
-title = "slopify"
+title = "slope"
 
 # include `assets` in web platform
 [web.resource]

@@ -44,9 +44,9 @@ fn find_up(start: &Path, marker: &str) -> Option<PathBuf> {
 }
 
 /// Detect the VCS and compute changed files between the base and the working
-/// copy. `SLOPIFY_BASE` overrides the base revision (a git rev or jj revset).
+/// copy. `SLOPE_BASE` overrides the base revision (a git rev or jj revset).
 pub fn detect_diff(workspace_root: &Path) -> Diff {
-    let base_override = std::env::var("SLOPIFY_BASE").ok();
+    let base_override = std::env::var("SLOPE_BASE").ok();
 
     // A colocated jj repo has both markers; git plumbing is the more
     // predictable of the two, so prefer it whenever .git exists.
@@ -63,10 +63,8 @@ pub fn detect_diff(workspace_root: &Path) -> Diff {
 
     Diff {
         epoch: Epoch {
-            vcs: None,
             base: "—".into(),
             target: "working copy".into(),
-            clean: true,
             note: Some("No version control detected — change tracking is off.".into()),
         },
         changed_files: Vec::new(),
@@ -129,10 +127,8 @@ fn git_diff(workspace_root: &Path, repo: &Path, base_override: Option<&str>) -> 
 
     Some(Diff {
         epoch: Epoch {
-            vcs: Some("git".into()),
             base: format!("{base_label} @ {short}"),
             target: "working copy".into(),
-            clean: files.is_empty(),
             note: None,
         },
         changed_files: files,
@@ -170,14 +166,12 @@ fn jj_diff(workspace_root: &Path, repo: &Path, base_override: Option<&str>) -> O
 
     Some(Diff {
         epoch: Epoch {
-            vcs: Some("jj".into()),
             base: if short.is_empty() {
                 base.to_string()
             } else {
                 format!("{base} @ {short}")
             },
             target: "working copy".into(),
-            clean: files.is_empty(),
             note: None,
         },
         changed_files: files,

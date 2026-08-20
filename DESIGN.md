@@ -1,5 +1,5 @@
 ---
-name: Slopify — Workspace Atlas
+name: Slope — Workspace Atlas
 description: A cargo workspace charted as an engraved star atlas — ink on paper, where only change takes color, and every definition is quoted from the source.
 colors:
   paper: "#f6f4ed"
@@ -100,13 +100,13 @@ components:
     padding: "2px 6px"
 ---
 
-# Design System: Slopify — Workspace Atlas
+# Design System: Slope — Workspace Atlas
 
 ## Overview
 
 **Creative North Star: "The Engraved Star Atlas"**
 
-Slopify draws a cargo workspace the way a nineteenth-century plate draws the sky: engraving ink on warm paper, hairline constellation lines, a cartouche for the title block, and a legend that names every mark in words. It deliberately refuses the glowing graph-dashboard with sidebar filters. The whole page is one material — ink at varying pressure on one sheet of paper — and the chart rests as a monochrome engraving until change appears.
+Slope draws a cargo workspace the way a nineteenth-century plate draws the sky: engraving ink on warm paper, hairline constellation lines, a cartouche for the title block, and a legend that names every mark in words. It deliberately refuses the glowing graph-dashboard with sidebar filters. The whole page is one material — ink at varying pressure on one sheet of paper — and the chart rests as a monochrome engraving until change appears.
 
 The atlas has three altitudes of that one plate: the dependency chart (`/`, crates as stars on rings of hops), the code chart (`/code`, files as blocks seated inside nested directory frames), and the data chart (`/data`, types as blocks seated inside module frames, with holding edges between them). The altitude ladder — a `dependencies · code · data` line in every cartouche, the current rung engraved solid, the others links — is the only navigation between them. All three share the plate, the legend discipline, and the URL-per-focus rule; the code altitude adds directory frames, file blocks, reference ties, and the definition plate, and the data altitude adds type marks, holding edges, and the static's root mark, without adding a second material.
 
@@ -236,7 +236,7 @@ The code map draws no stars. A **file** is a ruled block: a paper rectangle with
 A **gate** is a folded directory standing in for its whole subtree: one block-shaped button with a 2.5px ink left edge, `▸ views/` on the first line and `12 files · 255 items` on the second. Clicking it opens the directory.
 
 ### The Ground (nested directory frames)
-The code map's ground layer, under the ties and blocks: one bordered frame per open directory, filled at 2.6% ink so nesting reads as depth without a second material. Nesting means one thing — belongs to. The frame's label band sits on its top border and holds two segments, each measured on its own face: the directory as it is on disk (`▾ views/`, mono 500 at 12px, clicking folds it), then the crate whose sources live under it (`slopify`, 10px soft ink, a link to the crate sheet), drawn only where the survey has more than one crate to tell apart. An open frame states no counts: its files are on the paper to be counted, and `18 files · 380 items` on the root, again on `src/`, and again in the cartouche was one fact drawn three times in eighty vertical pixels. The root frame carries the workspace name and never folds. Every segment wears a paper halo.
+The code map's ground layer, under the ties and blocks: one bordered frame per open directory, filled at 2.6% ink so nesting reads as depth without a second material. Nesting means one thing — belongs to. The frame's label band sits on its top border and holds two segments, each measured on its own face: the directory as it is on disk (`▾ views/`, mono 500 at 12px, clicking folds it), then the crate whose sources live under it (`slope`, 10px soft ink, a link to the crate sheet), drawn only where the survey has more than one crate to tell apart. An open frame states no counts: its files are on the paper to be counted, and `18 files · 380 items` on the root, again on `src/`, and again in the cartouche was one fact drawn three times in eighty vertical pixels. The root frame carries the workspace name and never folds. Every segment wears a paper halo.
 
 The layout packs children into shelves aimed at a landscape sheet — files in name order first, then subdirectories — and is a pure function of (tree, disclosure, measured sizes): the same workspace always draws the same map.
 
@@ -252,7 +252,7 @@ The center plate is a quotation, not a description — and the quotation *is* th
 
 Below the quotation sits what the source cannot show, because it is written somewhere else: the type's associated items, grouped under the impl header they are written under (`impl Vis`, `impl Clone for Vis`, in mono 500), each row `pub fn weight` with `src/api.rs:165` right-aligned in soft ink, and each row a link. A hand-written trait impl with no items of its own is still listed — it is still code someone wrote. Private members are counted, never named: `+ 3 private`.
 
-Selecting a whole **file** gives the same plate with an outline instead of a quotation — a file has no single definition to quote, so it keeps no frame either, and the outline sets on the page's paper under the facts line. The locator is the path, the facts line reads `373 lines · 24 items · crate slopify`, and each row is `pub enum DepKind`, its reference count, and its line in the plate's own locator idiom — `87 refs` then `:29`, set apart so the two never read as one run of digits.
+Selecting a whole **file** gives the same plate with an outline instead of a quotation — a file has no single definition to quote, so it keeps no frame either, and the outline sets on the page's paper under the facts line. The locator is the path, the facts line reads `373 lines · 24 items · crate slope`, and each row is `pub enum DepKind`, its reference count, and its line in the plate's own locator idiom — `87 refs` then `:29`, set apart so the two never read as one run of digits.
 
 The two reference columns are grouped by the file the references are written in: a header naming the file with its total (`37 refs`) over a hairline rule, then rows of keyword + name + count, capped at 3 with `+2 more (5 refs)`. A group is a section of one list, not a plate — nine boxed groups down a column drew nine frames to say what one rule each says. Every row names something; a file's private items are the group's own counted fold, `+ 96 private`, in the same grammar the map's blocks use. (A row named `private items` names nothing, and it appeared in eight of nine groups, usually as the loudest row in each — the column's dominant content was the row that said the least.) An empty column says `No references.` / `No outgoing references.` Every row re-centers the plate on itself.
 

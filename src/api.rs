@@ -83,14 +83,10 @@ pub struct DepLink {
 /// The diff window the chart reads against.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Epoch {
-    /// `"jj"` or `"git"`; `None` when no VCS was detected.
-    pub vcs: Option<String>,
     /// Human-readable base, e.g. `main @ 1a2b3c4`.
     pub base: String,
     /// Human-readable target, normally `working copy`.
     pub target: String,
-    /// No changes between base and target.
-    pub clean: bool,
     /// Why change tracking is off or degraded, in plain words.
     pub note: Option<String>,
 }
@@ -113,8 +109,8 @@ pub struct WorkspaceGraph {
 
 /// Analyze the target workspace: resolved dependency graph via
 /// `cargo metadata`, diff via the detected VCS. The target is
-/// `SLOPIFY_WORKSPACE` (falling back to the server's working directory);
-/// `SLOPIFY_BASE` overrides the diff base revision.
+/// `SLOPE_WORKSPACE` (falling back to the server's working directory);
+/// `SLOPE_BASE` overrides the diff base revision.
 #[server]
 pub async fn workspace_graph() -> Result<WorkspaceGraph, ServerFnError> {
     tokio::task::spawn_blocking(crate::analyze::analyze)
@@ -204,14 +200,9 @@ pub struct FileInfo {
     pub lines: u32,
     /// How many items the file defines (functions, types, traits, …).
     pub items: u32,
-    pub fns: u32,
-    pub types: u32,
-    pub traits: u32,
     /// How many other files reference this one. Drives the mark's magnitude:
     /// the more of the workspace leans on a file, the bigger its star.
     pub refs_in_files: u32,
-    /// How many other files this one references.
-    pub refs_out_files: u32,
 }
 
 /// A file-level reference edge: `from` uses something defined in `to`.
@@ -426,9 +417,8 @@ pub struct ItemInfo {
     /// empty for top-level items.
     pub section: String,
     pub kind: ItemKind,
-    /// 1-based lines in the source file.
+    /// 1-based line in the source file.
     pub line: u32,
-    pub end_line: u32,
     pub vis: Vis,
     /// Index into [`CodeGraph::items`]; `None` for impl blocks.
     pub mark: Option<u32>,
@@ -446,31 +436,16 @@ pub struct ItemRef {
     pub count: u32,
 }
 
-/// A reference crossing a file boundary, kept at item precision.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ItemXRef {
-    /// Item id in the detail's own file.
-    pub item: u32,
-    /// The other file.
-    pub file: u32,
-    /// Name of the item on the other end; empty when the reference lands
-    /// between items (e.g. a `use` of the whole file's module).
-    pub other: String,
-    pub count: u32,
-}
-
 /// Everything the cutaway needs for one file: its items in source order and
-/// its references at item precision, both directions.
+/// the references between them. Cross-file references are not here — they are
+/// on [`CodeGraph::item_edges`], where the map can lift them to any fold state
+/// without fetching a file's detail at all.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct FileDetail {
     pub file: u32,
     pub items: Vec<ItemInfo>,
     /// References between this file's own items.
     pub item_refs: Vec<ItemRef>,
-    /// From this file's items out to other files.
-    pub refs_out: Vec<ItemXRef>,
-    /// From other files into this file's items.
-    pub refs_in: Vec<ItemXRef>,
 }
 
 /// Survey the workspace's code structure with rust-analyzer: every workspace
@@ -569,7 +544,6 @@ pub async fn item_source(file: u32, item: u32) -> Result<ItemSource, ServerFnErr
     let idx = crate::analyze::code::index()
         .await
         .map_err(ServerFnError::new)?;
-    crate::analyze::code::item_source(&idx, file, item).ok_or_else(|| {
-        ServerFnError::new(format!("no item {item} in file {file} in this survey"))
-    })
+    crate::analyze::code::item_source(&idx, file, item)
+        .ok_or_else(|| ServerFnError::new(format!("no item {item} in file {file} in this survey")))
 }

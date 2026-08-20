@@ -484,8 +484,7 @@ impl DataModel {
                 .or_else(|| ghost_of(id).map(|g| g.name.clone()))
                 .unwrap_or_default()
         };
-        let ghost_key =
-            |g: &GhostMark| (g.krate.clone(), module_of(&g.path).map(str::to_string));
+        let ghost_key = |g: &GhostMark| (g.krate.clone(), module_of(&g.path).map(str::to_string));
 
         // ---- Which marks are drawn, and which fold. ------------------------
         let mut degree = vec![0u32; graph.items.len() + graph.ghosts.len()];
@@ -602,8 +601,7 @@ impl DataModel {
             key_of(mark).and_then(|key| frame_index.get(key).copied())
         };
 
-        let mut anchor_of: Vec<Option<Anchor>> =
-            vec![None; graph.items.len() + graph.ghosts.len()];
+        let mut anchor_of: Vec<Option<Anchor>> = vec![None; graph.items.len() + graph.ghosts.len()];
         for &m in &drawn {
             if let Some(frame) = frame_of(m) {
                 frames[frame as usize].marks.push(m);
@@ -1133,15 +1131,11 @@ mod tests {
         FileInfo {
             id,
             path: path.to_string(),
-            krate: "slopify".to_string(),
+            krate: "slope".to_string(),
             changed,
             lines: 100,
             items: 2,
-            fns: 0,
-            types: 2,
-            traits: 0,
             refs_in_files: 0,
-            refs_out_files: 0,
         }
     }
 
@@ -1300,7 +1294,7 @@ mod tests {
         g.ghosts.push(crate::api::GhostMark {
             id: ghost_id,
             path: "src/api.rs".into(),
-            krate: "slopify".into(),
+            krate: "slope".into(),
             name: "FileRef".into(),
             kind: ItemKind::Struct,
             vis: Vis::Pub,
@@ -1334,7 +1328,10 @@ mod tests {
         assert_eq!(index.fields[1].name, "refs");
         assert_eq!(index.fields[1].state, RowState::Removed);
         assert_eq!((model.removed, model.changed), (1, 1));
-        assert_eq!(model.changed_modules, vec!["analyze".to_string(), "api".to_string()]);
+        assert_eq!(
+            model.changed_modules,
+            vec!["analyze".to_string(), "api".to_string()]
+        );
         // A ghost is drawn, never counted as current code.
         assert_eq!(model.structs, 2);
     }

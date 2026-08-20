@@ -16,9 +16,7 @@ use std::collections::{HashMap, HashSet};
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{
-    CodeGraph, ItemKind, ItemMark, ItemSource, Tok, Vis, file_detail, item_source,
-};
+use crate::api::{CodeGraph, ItemKind, ItemMark, ItemSource, Tok, Vis, file_detail, item_source};
 use crate::views::codemap::chrome::{decl_words, dir_of, file_name, kind_words, plural};
 use crate::views::codemap::model::{self, Center, Containment, Dir, Group};
 use crate::views::codemap::{file_route, item_route, use_code};
@@ -528,10 +526,10 @@ fn CenterPlate(
 /// quotations first, then steps back up the ladder. Only one altitude is
 /// mounted at a time, so each installs its own handler over the other's.
 const EGO_KEYS_JS: &str = r#"
-if (window.__slopifyKeys) {
-    document.removeEventListener('keydown', window.__slopifyKeys);
+if (window.__slopeKeys) {
+    document.removeEventListener('keydown', window.__slopeKeys);
 }
-window.__slopifyKeys = (e) => {
+window.__slopeKeys = (e) => {
     const t = e.target, tag = t && t.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -544,7 +542,7 @@ window.__slopifyKeys = (e) => {
     }
     if (e.key === 'Escape') dioxus.send(e.key);
 };
-document.addEventListener('keydown', window.__slopifyKeys);
+document.addEventListener('keydown', window.__slopeKeys);
 "#;
 
 /// The focus plate. `item` is empty for a whole-file focus.

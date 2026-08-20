@@ -276,7 +276,12 @@ pub fn radial_layout(graph: &WorkspaceGraph, cap: u32) -> RadialLayout {
             .unwrap_or((-TAU / 4.0, 0.0, 0, 0));
         let seat = ghost_seat.entry(from).or_insert(0);
         let swing = (*seat as f64 / 2.0 + 1.0).floor() * 0.22;
-        let a = a0 + if seat.is_multiple_of(2) { swing } else { -swing };
+        let a = a0
+            + if seat.is_multiple_of(2) {
+                swing
+            } else {
+                -swing
+            };
         *seat += 1;
         let radius = r0 + GHOST_OFFSET;
         placed.insert(
@@ -342,10 +347,8 @@ mod tests {
             root: "/test".into(),
             root_crate: root.map(str::to_string),
             epoch: Epoch {
-                vcs: None,
                 base: "base".into(),
                 target: "working copy".into(),
-                clean: true,
                 note: None,
             },
             crates,
@@ -446,9 +449,6 @@ mod tests {
         let full = radial_layout(&g, u32::MAX);
         assert_eq!(full.placed["c@1.0.0"].ring, 3);
         // Expanding never swings a star sideways: same angle, new radius.
-        assert_eq!(
-            capped.placed["c@1.0.0"].angle,
-            full.placed["c@1.0.0"].angle
-        );
+        assert_eq!(capped.placed["c@1.0.0"].angle, full.placed["c@1.0.0"].angle);
     }
 }

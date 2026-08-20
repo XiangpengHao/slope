@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same ref supersedes the run in flight.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: fmt · clippy · test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+
+      # The rust-analyzer crates dominate compile time, so the cargo layer is
+      # worth caching even though `target/` runs to several GB. Keyed on both
+      # lockfiles: flake.lock pins the compiler, Cargo.lock pins the deps.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: check-${{ runner.os }}-${{ hashFiles('Cargo.lock', 'flake.lock') }}
+          restore-keys: check-${{ runner.os }}-
+
+      - name: fmt
+        run: nix develop --command cargo fmt --all --check
+
+      # `dx serve` builds the client with `web` and the server with `server`,
+      # and each feature gates a disjoint set of dependencies, so neither pass
+      # covers the other. Each side is linted on the target it ships to.
+      - name: clippy (server)
+        run: >
+          nix develop --command cargo clippy
+          --no-default-features --features server --all-targets -- -D warnings
+
+      - name: clippy (web / wasm)
+        run: >
+          nix develop --command cargo clippy
+          --no-default-features --features web
+          --target wasm32-unknown-unknown -- -D warnings
+
+      # Workspace analysis is server-only, and the view tests are compiled on
+      # both sides, so the server feature set runs the whole suite natively.
+      - name: test
+        run: nix develop --command cargo test --no-default-features --features server
+
+  bundle:
+    name: nix build
+    # The real distribution path: `dx bundle` compiles the wasm client, runs
+    # the Tailwind pass, and links the server. It rebuilds everything in
+    # release mode inside the nix sandbox, which the cargo cache above cannot
+    # reach, so it is slow by nature — keep it off the pull-request path.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A release build of the rust-analyzer crates plus a wasm client needs
+      # more room than the runner image leaves free.
+      - name: free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+                      /usr/local/share/boost "$AGENT_TOOLSDIRECTORY"
+          df -h /
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            accept-flake-config = true
+
+      - run: nix build .#slope -L
+
+      # Prove the client was actually built. A server binary alone would still
+      # start and serve an empty page, so check for the wasm client, its loader,
+      # and the Tailwind output — each produced by a different tool in the
+      # bundle pipeline.
+      - name: check the bundle is complete
+        run: |
+          public=result/libexec/slope/public
+          test -x result/bin/slope
+          test -f "$public/index.html"
+          # A release bundle content-hashes the client into public/assets; a
+          # debug one leaves it in public/wasm. Accept either and assert the
+          # wasm has real content, so a zero-byte file cannot pass.
+          wasm=$(find "$public" -name '*.wasm' -size +512k | head -1)
+          test -n "$wasm" || { echo '::error::no wasm client in the bundle'; \
+            find "$public" -type f; exit 1; }
+          test -n "$(find "$public" -name '*.js' | head -1)"
+          test -n "$(find "$public" -name '*.css' | head -1)"
+          ls -lh "$wasm"

@@ -49,10 +49,7 @@ fn plural(n: usize, word: &str) -> String {
 /// is, which epoch it is charted against, and every crate that changed in
 /// it. One plate, because the epoch and its changes are one thought.
 #[component]
-pub fn TitleBlock(
-    graph: WorkspaceGraph,
-    #[props(default = true)] changes_open: bool,
-) -> Element {
+pub fn TitleBlock(graph: WorkspaceGraph, #[props(default = true)] changes_open: bool) -> Element {
     let atlas = use_atlas();
     let members = graph.crates.iter().filter(|c| c.is_member).count();
     let externals = graph
@@ -70,10 +67,7 @@ pub fn TitleBlock(
     let mut changed: Vec<CrateInfo> = graph.crates.iter().filter(|c| c.changed).cloned().collect();
     changed.sort_by(|a, b| a.name.cmp(&b.name));
     let visited = atlas.visited.read();
-    let seen = changed
-        .iter()
-        .filter(|c| visited.contains(&c.name))
-        .count();
+    let seen = changed.iter().filter(|c| visited.contains(&c.name)).count();
     let total = changed.len();
     let focus = atlas.trail.read().current_focus();
 
@@ -798,12 +792,9 @@ pub fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
             plural(focal.changed_files as usize, "file")
         ))
     } else {
-        focal.affected_dist.map(|d| {
-            format!(
-                "{} downstream of a change",
-                plural(d as usize, "hop")
-            )
-        })
+        focal
+            .affected_dist
+            .map(|d| format!("{} downstream of a change", plural(d as usize, "hop")))
     };
 
     rsx! {

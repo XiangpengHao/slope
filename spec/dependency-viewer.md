@@ -191,7 +191,7 @@ The visual world (engraved atlas, raises 1–5) is unchanged.
 ## Job and audience
 
 A Rust systems engineer, right after an LLM agent session, runs
-`slopify <workspace>` and gets a browser window. They are in "trust but
+`slope <workspace>` and gets a browser window. They are in "trust but
 verify" mode, time-boxed, cognitively loaded. Visitor mode: **Operate** —
 the surface is a working instrument, not a showcase.
 

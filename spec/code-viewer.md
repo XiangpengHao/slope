@@ -129,7 +129,7 @@ mode: **Operate**.
 
 - **Directory frames**: one per open directory, faint ink tint, its name on
   the border exactly as it is on disk (`▾ views/`, mono, lowercase) and nothing
-  else. The label folds the directory; the crate name (`slopify`, mono) on the
+  else. The label folds the directory; the crate name (`slope`, mono) on the
   shallowest directory holding all of a crate's files climbs to the crate sheet,
   and is drawn only where the survey has more than one crate to tell apart. The
   root frame carries the workspace.
@@ -229,7 +229,10 @@ mode: **Operate**.
   machine — the survey is a guest). All Semantics work runs under `attach_db`
   (the new trait solver reads the db from a thread-local).
 - Items: every file's syntax tree walked for fns, types, traits, consts,
-  statics, macros, inline modules, and impl blocks. Each item carries a `Vis`
+  statics, macros, inline modules, and impl blocks. An out-of-line `mod x;` is
+  not a mark: it declares the file beside it, which the chart already draws as
+  its own block, and a reference to that module lands on the file — so a mark
+  there could only ever read "no references". Each item carries a `Vis`
   (`Pub` / `Crate` / `Private`, classified from the ast visibility so
   `pub(crate)` never reads as `pub`) and the byte range of its own source,
   doc comment and attributes included. A trait's items inherit the trait's
@@ -241,13 +244,25 @@ mode: **Operate**.
   A trait declaration owns the items inside it. Inline modules are not
   containers at this altitude — their items keep the module path in their name
   and stay on the file's shelf.
-- References: paths (outermost only), method calls, and field accesses,
-  resolved via Semantics; macro calls are expanded (three levels deep) and
-  their references attributed to the call site. Enum-variant references chart
-  as references to the enum; `Self` as the impl's type. A reference written
-  inside an impl block belongs to the type that impl names, which is how
-  `impl Trait for Type` becomes a type → trait tie. References from an item to
-  itself are dropped.
+- References: paths (outermost segment only), method calls, and field accesses,
+  resolved via Semantics. **Every name is read where rust-analyzer really
+  resolved it, not where it is written** (2026-08-20): a name is looked up in
+  place first, and a name the real tree cannot answer for is descended into the
+  macros it reaches (`descend_into_macros_exact`) and resolved there. Two whole
+  classes of name only resolve that way, and both are most of a dioxus app —
+  an `rsx!` body is an unparsed token tree with no paths in it at all, and a
+  `#[component]` or `#[server]` function's body carries no inference on the real
+  tree because the body that was type-checked is the macro's expansion. The
+  earlier approach — expand the macro call and walk the expansion — silently
+  resolved nothing: `expand_macro_call` returns `None` for a call inside a
+  function body, so `rsx!`, `vec!`, and `assert_eq!` were all skipped. The
+  token keeps its own range in the real file either way, so every span stays
+  one a reader can point at. A format string's own captures (`"{LIMIT}"`) are
+  read from the template's parts, since no name token stands for them.
+  Enum-variant references chart as references to the enum; `Self` as the impl's
+  type. A reference written inside an impl block belongs to the type that impl
+  names, which is how `impl Trait for Type` becomes a type → trait tie.
+  References from an item to itself are dropped.
 - `code_graph()` ships eagerly: `files` (with `changed` from the VCS diff),
   file-level `refs`, every chartable item as an `ItemMark` (file, local id,
   name, URL label, kind, vis, line, parent, item-level `fan_in`, and the
@@ -257,11 +272,11 @@ mode: **Operate**.
   every cross-file reference at item precision as an `ItemEdge` (from_file,
   from, to_file, to, count). That is everything the client needs to lift edges
   at any fold state without fetching item detail.
-- `file_detail(id)` ships one file's items (name, section, kind, line range,
-  vis, mark, byte range), its same-file `item_refs`, and its `refs_out` /
-  `refs_in` at item precision. The plate uses it for the file outline, the
-  impl headers, and same-file references; the item-level cross-file rows come
-  from `item_edges`.
+- `file_detail(id)` ships one file's items (name, section, kind, line, vis,
+  mark, byte range) and its same-file `item_refs`. The plate uses it for the
+  file outline, the impl headers, and same-file references; the item-level
+  cross-file rows come from `item_edges`, so the detail carries no cross-file
+  copy of its own.
 - `item_source(file, item)` slices one item's own text out of the per-file
   source the survey kept (`CodeIndex::sources`, server-only, never on the
   wire), dedents it, and lexes it with `ra_ap_syntax` into per-line runs
@@ -271,16 +286,21 @@ mode: **Operate**.
   shell's session state (a context on the layout) beside the file details.
 - Runs carry their targets: the scan keeps every resolved reference's
   name-token byte range per file (`CodeIndex::ref_spans` — method and field
-  names, a path's last segment; references inside macro expansions map back
-  through `original_range_opt` and are kept only when they land in the file
-  being scanned). `item_source` translates the spans inside the quoted range
+  names, a path's last segment; a name resolved through a macro descent keeps
+  the range of the token as written, so a reference inside an `rsx!` body links
+  from where the reviewer sees it). `item_source` translates the spans inside
+  the quoted range
   into display coordinates and marks the matching run with an index into a
   deduped `SrcLink` table (target file path + item URL label; empty label =
   the whole file). A run is `SrcRun { text, tok, link }`; nothing is split —
   a name token lexes as exactly one run.
 - Honesty: unresolved names are counted and written on the legend, never
   guessed. Derive-macro output is not counted; a type's derives stand in its
-  own source, on its plate.
+  own source, on its plate. One reference the survey cannot place, and says so
+  on the legend: a name written inside a string a macro rewrites — an `rsx!`
+  text node's `"{words(x)}"` — has no name token on the tree, and the expansion
+  keeps no trail from the rewritten expression back into the literal, so there
+  is nothing to resolve and nothing to link.
 - The survey is computed once per server run (tokio OnceCell) and cached.
 - Quiet by default: the `ra_ap_*` crates trace every query at INFO, so `main`
   appends `ra_ap=warn,salsa=warn,chalk=warn` to `RUST_LOG`.

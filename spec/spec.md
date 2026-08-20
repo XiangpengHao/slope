@@ -1,11 +1,11 @@
-we're building slopify.
+we're building slope.
 
 ## Goal
 
-slopify is a code reviewer for large LLM-made changes.
+slope is a code reviewer for large LLM-made changes.
 
 The thesis: a human cannot read every line of a big agent-written change.
-That takes too much time and cognitive load. Instead, slopify works above
+That takes too much time and cognitive load. Instead, slope works above
 the raw rust code. The reviewer navigates from high level (crate
 dependencies) down to details (function call graph), and gains confidence
 by checking code structure without reading every line.
@@ -33,9 +33,9 @@ Decided so far:
 How it works today:
 
 - backend (`src/analyze/`): runs `cargo metadata` on the target workspace
-  (`SLOPIFY_WORKSPACE` env, default: current dir). detects the VCS (git
+  (`SLOPE_WORKSPACE` env, default: current dir). detects the VCS (git
   first, jj fallback) and diffs the working copy against trunk
-  (main/master merge-base). `SLOPIFY_BASE` overrides the base revision.
+  (main/master merge-base). `SLOPE_BASE` overrides the base revision.
 - a crate is CHANGED when files in its directory changed in that window.
   AFFECTED = transitive dependents of a changed crate, graded by hops.
 - manifest edits are compared against the base revision Cargo.toml:
@@ -85,8 +85,59 @@ Frontend (`src/views/`): one living chart that blooms.
   and the code altitude's focus plate quotes an item's own source instead
   of describing it. See spec/code-viewer.md and DESIGN.md.
 
-Run it:
+## Name (renamed 2026-08-20)
+
+the project was `slopify`, which reads as "make more slop". it is `slope`
+now: "slop" with an e, and the gradient the reviewer walks between
+altitudes. the env vars are `SLOPE_WORKSPACE` and `SLOPE_BASE`.
+
+the crates.io package is `slope-cli`, because `slope` is held there by an
+abandoned crate. the binary stays `slope`, the same split dioxus-cli uses
+for `dx`.
+
+## Develop
 
 ```
-SLOPIFY_WORKSPACE=/path/to/workspace dx serve
+SLOPE_WORKSPACE=/path/to/workspace dx serve
 ```
+
+## Ship it (added 2026-08-20)
+
+the repo is flake-only. `nix build .#slope` runs `dx bundle` in the
+sandbox: it compiles the wasm client, runs the tailwind pass, links the
+server, and installs the `server` binary next to its `public/` directory
+under `libexec`, wrapped as `bin/slope`. the wrapper sets
+`DIOXUS_PUBLIC_PATH`, since the server otherwise looks for `public/`
+beside its own executable. `nix run github:XiangpengHao/slope` is the
+recommended install.
+
+`dx bundle` defaults to a debug build, which yields a 110MB wasm client.
+the package passes `--release --debug-symbols false`, which brings it to
+2.6MB. a bundle without a wasm file still starts and serves an empty
+page, so CI asserts the wasm is present and has real size.
+
+two workflows:
+
+- `.github/workflows/ci.yml` — fmt, clippy, and tests on every push, then
+  a full `nix build` off the pull-request path. clippy runs twice, once
+  per side: the `web` and `server` features gate disjoint dependency
+  sets, so neither pass covers the other.
+- `.github/workflows/release.yml` — on a `v*` tag: check the tag matches
+  the manifest, build a linux tarball on a plain glibc runner (the nix
+  binary is wired to /nix/store paths and is not a portable download),
+  cut a github release, then publish to crates.io.
+
+`cargo install slope-cli` compiles the sources but cannot produce the
+wasm client or run tailwind, so its binary serves an empty page. the
+crates.io package is source distribution and name reservation; the
+working installs are nix and the release tarball.
+
+`dioxus-flow` was published as 0.1.0 on 2026-08-20 (it had been a git
+dependency, which cargo refuses to publish). slope now depends on it from
+the registry, so the flake needs no per-git-dep output hash either.
+
+one packaging trap: `assets/tailwind.css` is generated and gitignored, and
+an `asset!` in main.rs reads it at compile time. cargo's git-derived file
+list drops it and the published crate then fails to build, so Cargo.toml
+uses an `include` allowlist that carries it, and the publish job generates
+it before packaging.

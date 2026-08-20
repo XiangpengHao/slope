@@ -11,7 +11,9 @@ use std::collections::{HashMap, HashSet};
 
 use dioxus::prelude::*;
 use dioxus_flow::WorldLayer;
-use dioxus_flow::prelude::{Flow, Node as FlowNode, NodeViewCtx, Point, Rect, Side, Size, Viewport};
+use dioxus_flow::prelude::{
+    Flow, Node as FlowNode, NodeViewCtx, Point, Rect, Side, Size, Viewport,
+};
 
 use crate::api::{CodeGraph, FileInfo, ItemKind, Vis};
 use crate::views::codemap::chrome::{decl_words, file_name, plural};
@@ -963,10 +965,10 @@ fn frame_chart(
 /// up one focus level. Rebinds on every mount so altitude switches always
 /// feed the living chart.
 const CODE_KEYS_JS: &str = r#"
-if (window.__slopifyKeys) {
-    document.removeEventListener('keydown', window.__slopifyKeys);
+if (window.__slopeKeys) {
+    document.removeEventListener('keydown', window.__slopeKeys);
 }
-window.__slopifyKeys = (e) => {
+window.__slopeKeys = (e) => {
     const t = e.target, tag = t && t.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
@@ -982,7 +984,7 @@ window.__slopifyKeys = (e) => {
     }
     if (['f', 'Escape'].includes(e.key)) dioxus.send(e.key);
 };
-document.addEventListener('keydown', window.__slopifyKeys);
+document.addEventListener('keydown', window.__slopeKeys);
 "#;
 
 /// The ambient map, mounted while no file or item holds the focus.

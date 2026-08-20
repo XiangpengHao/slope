@@ -131,7 +131,7 @@ const MAX_DEPTH: usize = 16;
 
 /// The edges under construction: (from, to, kind, via) → the fields that draw
 /// it, in source order.
-type Edges = HashMap<(u32, u32, HoldKind, String), Vec<(String, String)>>;
+pub(super) type Edges = HashMap<(u32, u32, HoldKind, String), Vec<(String, String)>>;
 
 /// Walk every holder's fields and aggregate what they hold. `mark_of_def`
 /// is the survey's own def → mark resolution, already filtered to the marks

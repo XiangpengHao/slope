@@ -141,10 +141,7 @@ fn base_decls(text: &str) -> Vec<BaseDecl> {
                 (
                     name.text().to_string(),
                     vis,
-                    base_fields(
-                        u.record_field_list()
-                            .map(ast::FieldList::RecordFieldList),
-                    ),
+                    base_fields(u.record_field_list().map(ast::FieldList::RecordFieldList)),
                     Vec::new(),
                     String::new(),
                 )
@@ -164,7 +161,13 @@ fn base_decls(text: &str) -> Vec<BaseDecl> {
                         Some(super::data::variant_text(&v, &name))
                     })
                     .collect();
-                (name.text().to_string(), vis, Vec::new(), variants, String::new())
+                (
+                    name.text().to_string(),
+                    vis,
+                    Vec::new(),
+                    variants,
+                    String::new(),
+                )
             }
             ItemKind::Static => {
                 let Some(s) = ast::Static::cast(node.clone()) else {
@@ -218,10 +221,8 @@ fn diff_rows(
         .enumerate()
         .map(|(i, (n, _))| (n.as_str(), i))
         .collect();
-    let base_decl: HashMap<&str, &str> = base
-        .iter()
-        .map(|(n, d)| (n.as_str(), d.as_str()))
-        .collect();
+    let base_decl: HashMap<&str, &str> =
+        base.iter().map(|(n, d)| (n.as_str(), d.as_str())).collect();
     let added: Vec<u32> = live
         .iter()
         .enumerate()
@@ -338,8 +339,7 @@ fn name_walk(
                         kind = HoldKind::Dyn;
                         via = "dyn".to_string();
                     }
-                    if let Some(&(word, k)) =
-                        WRAPPER_WORDS.iter().find(|(word, _)| *word == run)
+                    if let Some(&(word, k)) = WRAPPER_WORDS.iter().find(|(word, _)| *word == run)
                         && rank(k) > rank(kind)
                     {
                         kind = k;
@@ -449,10 +449,8 @@ pub(super) fn apply(
                 }
             }
         }
-        let leftover: HashSet<(ItemKind, String)> = base_of
-            .keys()
-            .map(|(k, n)| (*k, n.to_string()))
-            .collect();
+        let leftover: HashSet<(ItemKind, String)> =
+            base_of.keys().map(|(k, n)| (*k, n.to_string())).collect();
         for decl in base {
             if leftover.contains(&(decl.kind, decl.name.clone())) {
                 removed.push((path.clone(), decl));
@@ -564,13 +562,19 @@ pub(super) fn apply(
     // another live field, the relation stands and no removed edge is drawn.
     let mut targets: HashMap<String, Vec<u32>> = HashMap::new();
     for item in &graph.items {
-        if matches!(item.kind, ItemKind::Struct | ItemKind::Enum | ItemKind::Union) {
+        if matches!(
+            item.kind,
+            ItemKind::Struct | ItemKind::Enum | ItemKind::Union
+        ) {
             let bare = item.name.rsplit("::").next().unwrap_or(&item.name);
             targets.entry(bare.to_string()).or_default().push(item.id);
         }
     }
     for ghost in &graph.ghosts {
-        if matches!(ghost.kind, ItemKind::Struct | ItemKind::Enum | ItemKind::Union) {
+        if matches!(
+            ghost.kind,
+            ItemKind::Struct | ItemKind::Enum | ItemKind::Union
+        ) {
             let bare = ghost.name.rsplit("::").next().unwrap_or(&ghost.name);
             targets.entry(bare.to_string()).or_default().push(ghost.id);
         }
@@ -603,7 +607,7 @@ pub(super) fn apply(
             dropped.push((ghost.id, ghost.name.clone(), ghost.ty.clone(), false));
         }
     }
-    let mut gone: HashMap<(u32, u32, HoldKind, String), Vec<(String, String)>> = HashMap::new();
+    let mut gone: super::data::Edges = HashMap::new();
     for (from, name, decl, skip) in dropped {
         let (kind, via, found) = name_walk(&decl, skip, &targets, &mut ambiguous);
         if kind == HoldKind::Dyn {
@@ -680,7 +684,10 @@ fn body() { struct Local; }
         assert_eq!(decls[1].vis, Vis::Crate);
         assert_eq!(decls[1].variants, vec!["A", "B(String)"]);
         assert_eq!(decls[2].ty, "OnceCell<Arc<Index>>");
-        assert_eq!(decls[3].field_rows, vec![("0".to_string(), "u8".to_string())]);
+        assert_eq!(
+            decls[3].field_rows,
+            vec![("0".to_string(), "u8".to_string())]
+        );
     }
 
     #[test]
@@ -715,11 +722,9 @@ fn body() { struct Local; }
         targets.insert("FileRef".to_string(), vec![7]);
         targets.insert("Trail".to_string(), vec![3]);
         let mut ambiguous = 0;
-        let (kind, via, found) =
-            name_walk("Vec<FileRef>", false, &targets, &mut ambiguous);
+        let (kind, via, found) = name_walk("Vec<FileRef>", false, &targets, &mut ambiguous);
         assert_eq!((kind, via.as_str(), found), (HoldKind::Owns, "", vec![7]));
-        let (kind, via, found) =
-            name_walk("GlobalSignal<Trail>", false, &targets, &mut ambiguous);
+        let (kind, via, found) = name_walk("GlobalSignal<Trail>", false, &targets, &mut ambiguous);
         assert_eq!(
             (kind, via.as_str(), found),
             (HoldKind::Shares, "GlobalSignal", vec![3])

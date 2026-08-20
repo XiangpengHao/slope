@@ -287,7 +287,7 @@ mod tests {
     fn frame(id: u32, module: Option<&str>, parent: Option<u32>, marks: &[u32]) -> Frame {
         Frame {
             id,
-            krate: "slopify".to_string(),
+            krate: "slope".to_string(),
             module: module.map(str::to_string),
             parent,
             marks: marks.to_vec(),

@@ -514,11 +514,7 @@ mod tests {
             changed: false,
             lines: 10,
             items: 1,
-            fns: 1,
-            types: 0,
-            traits: 0,
             refs_in_files: 0,
-            refs_out_files: 0,
         }
     }
 

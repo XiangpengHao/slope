@@ -15,9 +15,9 @@ use cargo_metadata::{DependencyKind, MetadataCommand};
 
 use crate::api::{CrateInfo, DepEvent, DepKind, DepLink, WorkspaceGraph};
 
-/// Where to analyze: `SLOPIFY_WORKSPACE`, else the server's working dir.
+/// Where to analyze: `SLOPE_WORKSPACE`, else the server's working dir.
 pub(crate) fn workspace_dir() -> PathBuf {
-    env::var_os("SLOPIFY_WORKSPACE")
+    env::var_os("SLOPE_WORKSPACE")
         .map(PathBuf::from)
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
@@ -27,8 +27,8 @@ pub fn analyze() -> Result<WorkspaceGraph, String> {
     let manifest = dir.join("Cargo.toml");
     if !manifest.exists() {
         return Err(format!(
-            "No Cargo.toml found in {}. Point slopify at a cargo workspace: \
-             SLOPIFY_WORKSPACE=/path/to/workspace",
+            "No Cargo.toml found in {}. Point slope at a cargo workspace: \
+             SLOPE_WORKSPACE=/path/to/workspace",
             dir.display()
         ));
     }
