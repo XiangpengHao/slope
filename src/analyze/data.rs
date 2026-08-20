@@ -42,9 +42,10 @@ pub(super) struct Holder {
 pub(super) struct DataWalk {
     /// Holding edges, aggregated per (from, to, kind, via) and sorted.
     pub holds: Vec<HoldEdge>,
-    /// Fields whose walk reached no workspace type.
-    pub plain_fields: Vec<u32>,
-    /// An enum's variant names, as written.
+    /// A struct's or union's fields, quoted in declaration order:
+    /// (name as written, declared type as written).
+    pub field_rows: Vec<Vec<(String, String)>>,
+    /// An enum's variants as written — name, payload, discriminant.
     pub variants: Vec<Vec<String>>,
     /// A static's declared type, as written.
     pub ty: Vec<String>,
@@ -143,7 +144,7 @@ pub(super) fn walk<'db>(
     marks: usize,
     mark_of_def: &dyn Fn(ModuleDef) -> Option<u32>,
 ) -> DataWalk {
-    let mut plain_fields = vec![0u32; marks];
+    let mut field_rows: Vec<Vec<(String, String)>> = vec![Vec::new(); marks];
     let mut variants: Vec<Vec<String>> = vec![Vec::new(); marks];
     let mut ty: Vec<String> = vec![String::new(); marks];
     let mut acc: Edges = HashMap::new();
@@ -186,22 +187,18 @@ pub(super) fn walk<'db>(
                                 .and_then(|u| u.record_field_list())
                                 .map(ast::FieldList::RecordFieldList)
                         });
-                    let mut plain = 0u32;
                     for (name, decl, field_ty) in fields_of(sema, db, list) {
-                        let held = field_edges(
+                        field_edges(
                             db,
                             mark_of_def,
                             holder.mark,
-                            name,
-                            decl,
+                            name.clone(),
+                            decl.clone(),
                             &field_ty,
                             &mut acc,
                         );
-                        if !held {
-                            plain += 1;
-                        }
+                        field_rows[mark].push((name, decl));
                     }
-                    plain_fields[mark] = plain;
                 }
                 ItemKind::Enum => {
                     let Some(e) = ast::Enum::cast(node.clone()) else {
@@ -211,7 +208,7 @@ pub(super) fn walk<'db>(
                         let Some(name) = variant.name().map(|n| n.text().to_string()) else {
                             continue;
                         };
-                        variants[mark].push(name.clone());
+                        variants[mark].push(variant_text(&variant, &name));
                         // A variant's payload is held by the enum, and a
                         // payload field has no name a reader would know: the
                         // variant is what they read it by.
@@ -270,15 +267,35 @@ pub(super) fn walk<'db>(
 
     DataWalk {
         holds,
-        plain_fields,
+        field_rows,
         variants,
         ty,
     }
 }
 
-/// Walk one field's type and file every edge it draws. Answers whether the
-/// field reached any workspace type at all: one that reached none is a plain
-/// field, folded into a count rather than drawn.
+/// One variant as its source writes it: the name, its payload types, and its
+/// discriminant, with whitespace runs collapsed so a record variant broken
+/// across lines still reads as one row. Nothing is reconstructed.
+fn variant_text(variant: &ast::Variant, name: &str) -> String {
+    let collapse = |node: &SyntaxNode| {
+        node.text()
+            .to_string()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let payload = match variant.field_list() {
+        Some(ast::FieldList::TupleFieldList(list)) => collapse(list.syntax()),
+        Some(ast::FieldList::RecordFieldList(list)) => format!(" {}", collapse(list.syntax())),
+        None => String::new(),
+    };
+    match variant.const_arg() {
+        Some(arg) => format!("{name}{payload} = {}", collapse(arg.syntax())),
+        None => format!("{name}{payload}"),
+    }
+}
+
+/// Walk one field's type and file every edge it draws.
 fn field_edges(
     db: &RootDatabase,
     mark_of_def: &dyn Fn(ModuleDef) -> Option<u32>,
@@ -287,11 +304,11 @@ fn field_edges(
     decl: String,
     ty: &Type<'_>,
     acc: &mut Edges,
-) -> bool {
+) {
     let mut found: Vec<(u32, HoldKind, &'static str)> = Vec::new();
     walk_ty(db, mark_of_def, ty, (HoldKind::Owns, ""), 0, &mut found);
     if found.is_empty() {
-        return false;
+        return;
     }
     // One field can reach the same type by more than one route — a
     // `GlobalSignal<T>` resolves to `Global<Signal<T>, T>` and so meets `T`
@@ -313,7 +330,6 @@ fn field_edges(
             row.push((name.clone(), decl.clone()));
         }
     }
-    true
 }
 
 /// Walk one semantic type, collecting every workspace mark it reaches and the

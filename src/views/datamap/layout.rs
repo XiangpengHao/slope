@@ -1,17 +1,23 @@
 //! Where the data chart's marks and frames sit on the paper.
 //!
 //! A pure function of (frames, measured sizes): every block is measured before
-//! anything is placed, marks are shelved inside their module's frame, module
-//! frames are shelved inside their crate's, and the crates are shelved on the
-//! sheet. Each shelf aims for a landscape box — the shape of the paper it will
-//! be read on — and never gets narrower than its widest child. The same survey
-//! always draws the same chart: no physics, no randomness, no measurement of
-//! anything the browser has already laid out.
+//! anything is placed, a frame's ownership forest is tidied into trees, the
+//! trees are shelved inside their module's frame, module frames are shelved
+//! inside their crate's, and the crates are shelved on the sheet. Each shelf
+//! aims for a landscape box — the shape of the paper it will be read on — and
+//! never gets narrower than its widest child. The same survey always draws the
+//! same chart: no physics, no randomness, no measurement of anything the
+//! browser has already laid out.
+//!
+//! A tree is tidied one layer per ownership depth: children in a row under
+//! their parent, the parent centered over whichever of the two is wider. The
+//! layers are a tree's own, not the frame's — aligning depth across trees would
+//! buy nothing and cost the frame its shelves.
 
 use std::collections::HashMap;
 
 use crate::views::codemap::tree::Placed;
-use crate::views::datamap::model::{Anchor, Frame};
+use crate::views::datamap::model::{Anchor, Frame, Seat};
 
 /// Frame furniture, in flow units — one unit is one CSS pixel at zoom 1.
 const PAD: f64 = 14.0;
@@ -20,6 +26,10 @@ const LABEL_H: f64 = 16.0;
 /// Between two seated boxes. Wide enough that an edge can leave a block and
 /// land on its neighbor without crossing a third.
 const GAP: f64 = 20.0;
+/// Between a parent block and the row of children under it. The owns edge that
+/// seated them is drawn in this band, arrowhead and all, so it has to read as a
+/// line rather than as a seam between two touching blocks.
+const LAYER_GAP: f64 = 34.0;
 /// How much wider than tall a packed shelf aims to be.
 const LANDSCAPE: f64 = 2.4;
 /// A frame narrower than this reads as a column of unrelated plates.
@@ -57,10 +67,10 @@ impl DataLayout {
     }
 }
 
-/// One thing a shelf seats.
+/// One thing a shelf seats: a tidied tree out of a frame's forest, or a nested
+/// frame. A lone block is a tree of one.
 enum Kid {
-    Mark(u32),
-    Row(Anchor),
+    Tree(Packed),
     Frame(u32, Packed),
 }
 
@@ -88,10 +98,10 @@ fn shift(packed: Packed, dx: f64, dy: f64) -> Packed {
     }
 }
 
-/// Seat a frame's children in shelves and draw the frame around them. Marks
-/// come first — a frame's own types before the frames nested in it — then the
-/// counted fold rows, then the child frames, so the reading order down a frame
-/// is the same everywhere on the chart.
+/// Seat a frame's children in shelves and draw the frame around them. The
+/// forest comes first — a frame's own types before the frames nested in it —
+/// and the child frames last, so the reading order down a frame is the same
+/// everywhere on the chart.
 fn shelve(kids: Vec<(Kid, f64, f64)>, label_w: f64) -> Packed {
     let widest = kids.iter().map(|(_, w, _)| *w).fold(0.0, f64::max);
     let area: f64 = kids.iter().map(|(_, w, h)| (w + GAP) * (h + GAP)).sum();
@@ -105,12 +115,14 @@ fn shelve(kids: Vec<(Kid, f64, f64)>, label_w: f64) -> Packed {
             x = 0.0;
             row_h = 0.0;
         }
-        let at = Placed { x, y, w, h };
         match kid {
-            Kid::Mark(id) => out.marks.push((id, at)),
-            Kid::Row(anchor) => out.rows.push((anchor, at)),
+            Kid::Tree(packed) => {
+                let inner = shift(packed, x, y);
+                out.marks.extend(inner.marks);
+                out.rows.extend(inner.rows);
+            }
             Kid::Frame(id, packed) => {
-                out.frames.push((id, at));
+                out.frames.push((id, Placed { x, y, w, h }));
                 let inner = shift(packed, x, y);
                 out.marks.extend(inner.marks);
                 out.rows.extend(inner.rows);
@@ -146,23 +158,64 @@ fn shelve(kids: Vec<(Kid, f64, f64)>, label_w: f64) -> Packed {
     }
 }
 
+/// One seated box, as the drawing measured it. The fallbacks only matter to a
+/// caller that forgot to measure something; the chart always measures first.
+fn box_of(anchor: Anchor, sizes: &Sizes) -> (f64, f64) {
+    match anchor {
+        Anchor::Mark(id) => sizes.marks.get(&id).copied().unwrap_or((MIN_FRAME_W, 40.0)),
+        row => sizes.rows.get(&row).copied().unwrap_or((MIN_FRAME_W, 22.0)),
+    }
+}
+
+/// Tidy one tree of the frame's forest: the block itself, its children side by
+/// side one layer below, and the parent centered over whichever span is wider.
+/// The tree's box is that span — from here on it shelves like any other block.
+fn pack_tree(seat: &Seat, sizes: &Sizes) -> Packed {
+    let (own_w, own_h) = box_of(seat.anchor, sizes);
+    let kids: Vec<Packed> = seat.children.iter().map(|s| pack_tree(s, sizes)).collect();
+    let kids_w: f64 =
+        kids.iter().map(|k| k.w).sum::<f64>() + GAP * kids.len().saturating_sub(1) as f64;
+    let kids_h = kids.iter().map(|k| k.h).fold(0.0, f64::max);
+
+    let w = own_w.max(kids_w);
+    let h = if kids.is_empty() {
+        own_h
+    } else {
+        own_h + LAYER_GAP + kids_h
+    };
+    let mut out = Packed {
+        w,
+        h,
+        ..Default::default()
+    };
+    let at = Placed {
+        x: (w - own_w) / 2.0,
+        y: 0.0,
+        w: own_w,
+        h: own_h,
+    };
+    match seat.anchor {
+        Anchor::Mark(id) => out.marks.push((id, at)),
+        row => out.rows.push((row, at)),
+    }
+    let mut x = (w - kids_w) / 2.0;
+    for kid in kids {
+        let step = kid.w + GAP;
+        let placed = shift(kid, x, own_h + LAYER_GAP);
+        out.marks.extend(placed.marks);
+        out.rows.extend(placed.rows);
+        x += step;
+    }
+    out
+}
+
 /// One frame's children, measured and ready to seat.
 fn kids_of(frame: &Frame, frames: &[Frame], sizes: &Sizes) -> Vec<(Kid, f64, f64)> {
     let mut kids: Vec<(Kid, f64, f64)> = Vec::new();
-    for &mark in &frame.marks {
-        let (w, h) = sizes.marks.get(&mark).copied().unwrap_or((MIN_FRAME_W, 40.0));
-        kids.push((Kid::Mark(mark), w, h));
-    }
-    for anchor in [Anchor::Private(frame.id), Anchor::More(frame.id)] {
-        let counted = match anchor {
-            Anchor::Private(_) => frame.private,
-            _ => frame.more,
-        };
-        if counted == 0 {
-            continue;
-        }
-        let (w, h) = sizes.rows.get(&anchor).copied().unwrap_or((MIN_FRAME_W, 22.0));
-        kids.push((Kid::Row(anchor), w, h));
+    for seat in &frame.forest {
+        let packed = pack_tree(seat, sizes);
+        let (w, h) = (packed.w, packed.h);
+        kids.push((Kid::Tree(packed), w, h));
     }
     for child in frames.iter().filter(|f| f.parent == Some(frame.id)) {
         let packed = shelve(
@@ -229,6 +282,8 @@ pub fn layout(frames: &[Frame], sizes: &Sizes) -> DataLayout {
 mod tests {
     use super::*;
 
+    /// A frame whose marks all seat as roots — the shape a frame has when
+    /// nothing in it owns anything else.
     fn frame(id: u32, module: Option<&str>, parent: Option<u32>, marks: &[u32]) -> Frame {
         Frame {
             id,
@@ -238,6 +293,17 @@ mod tests {
             marks: marks.to_vec(),
             private: 0,
             more: 0,
+            forest: marks.iter().map(|&m| Seat::leaf(Anchor::Mark(m))).collect(),
+        }
+    }
+
+    fn seat(mark: u32, children: &[u32]) -> Seat {
+        Seat {
+            anchor: Anchor::Mark(mark),
+            children: children
+                .iter()
+                .map(|&c| Seat::leaf(Anchor::Mark(c)))
+                .collect(),
         }
     }
 
@@ -262,9 +328,13 @@ mod tests {
 
     #[test]
     fn marks_nest_in_their_frames_and_never_overlap() {
+        let mut api = frame(1, Some("api"), Some(0), &[0, 1, 2]);
+        // `Wire` owns the other two, so the frame seats one tree, not three
+        // loose blocks.
+        api.forest = vec![seat(0, &[1, 2])];
         let frames = vec![
             frame(0, None, None, &[9]),
-            frame(1, Some("api"), Some(0), &[0, 1, 2]),
+            api,
             frame(2, Some("views"), Some(0), &[3, 4]),
         ];
         let placed = layout(&frames, &sizes(&[0, 1, 2, 3, 4, 9]));
@@ -291,10 +361,45 @@ mod tests {
     }
 
     #[test]
+    fn a_child_seats_one_layer_under_the_parent_that_owns_it() {
+        let mut api = frame(0, Some("api"), None, &[0, 1, 2]);
+        api.forest = vec![seat(0, &[1, 2])];
+        let placed = layout(&[api], &sizes(&[0, 1, 2]));
+        let (root, left, right) = (placed.marks[&0], placed.marks[&1], placed.marks[&2]);
+
+        // One layer down, with room between them for the owns edge.
+        assert!(left.y - (root.y + root.h) >= LAYER_GAP - 0.001);
+        assert_eq!(left.y, right.y);
+        // Siblings in a row, in the survey's order, a gap apart.
+        assert!(left.x + left.w + GAP <= right.x + 0.001);
+        // The parent stands over the middle of what it owns.
+        let span = (left.x + right.x + right.w) / 2.0;
+        assert!((root.x + root.w / 2.0 - span).abs() < 0.001);
+    }
+
+    #[test]
+    fn a_parent_wider_than_its_children_centers_them_under_itself() {
+        let mut api = frame(0, Some("api"), None, &[0, 1]);
+        api.forest = vec![seat(0, &[1])];
+        let sizes = Sizes {
+            marks: [(0, (240.0, 64.0)), (1, (100.0, 40.0))]
+                .into_iter()
+                .collect(),
+            ..Default::default()
+        };
+        let placed = layout(&[api], &sizes);
+        let (root, kid) = (placed.marks[&0], placed.marks[&1]);
+        assert!((root.x + root.w / 2.0 - (kid.x + kid.w / 2.0)).abs() < 0.001);
+        assert!(kid.x > root.x);
+    }
+
+    #[test]
     fn the_same_frames_always_draw_the_same_chart() {
+        let mut api = frame(1, Some("api"), Some(0), &[0, 1]);
+        api.forest = vec![seat(0, &[1])];
         let frames = vec![
             frame(0, None, None, &[]),
-            frame(1, Some("api"), Some(0), &[0, 1]),
+            api,
             frame(2, Some("views"), Some(0), &[2]),
         ];
         let a = layout(&frames, &sizes(&[0, 1, 2]));

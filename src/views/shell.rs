@@ -198,6 +198,7 @@ pub fn AtlasShell() -> Element {
             | Route::CodeCrate { .. }
             | Route::CodeFile { .. }
             | Route::DataOverview {}
+            | Route::DataType { .. }
     );
     let step: Option<TrailStep> = match &route {
         Route::Overview {} => Some(None),

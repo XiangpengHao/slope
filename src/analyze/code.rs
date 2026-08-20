@@ -575,7 +575,7 @@ fn survey_attached(
             parent: parent_of[id],
             fan_in: fan_in[id],
             impls,
-            plain_fields: walk.plain_fields[id],
+            field_rows: std::mem::take(&mut walk.field_rows[id]),
             variants: std::mem::take(&mut walk.variants[id]),
             ty: std::mem::take(&mut walk.ty[id]),
         });

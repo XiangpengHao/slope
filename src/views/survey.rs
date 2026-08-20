@@ -32,7 +32,7 @@ pub fn SurveyShell(workspace: String, diff_line: String) -> Element {
     use_context_provider(|| resource);
 
     let route = use_route::<Route>();
-    let data = matches!(route, Route::DataOverview {});
+    let data = matches!(route, Route::DataOverview {} | Route::DataType { .. });
 
     let state = resource.read();
     rsx! {

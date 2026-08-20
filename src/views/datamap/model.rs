@@ -7,6 +7,12 @@
 //! without a count: a private type folds to its frame's counted row and the
 //! edges touching it land there, the way the code map's ties land on a gate.
 //!
+//! Seating is decided here too, but not measured: each frame gets an ownership
+//! forest, every type under its one heaviest same-frame `Owns` holder, and the
+//! layout turns that into geometry. The same-frame rule is the whole point —
+//! a type never leaves the module that declares it, so ownership reaching
+//! across a module stays a drawn line instead of moving a block.
+//!
 //! Reference ties are computed here too. The survey records references between
 //! items; this altitude reads them at type precision, so each endpoint climbs
 //! its containment chain to the outermost mark and a tie is kept only when both
@@ -47,6 +53,27 @@ pub enum Anchor {
     More(u32),
 }
 
+/// One seat in a frame's ownership forest: a block, and the blocks that sit
+/// under it because it owns them. A counted fold row can seat children too —
+/// what only private code owns hangs under the row that counts the private
+/// code, because that row is the only holder the chart draws.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Seat {
+    pub anchor: Anchor,
+    /// Seated one layer beneath, in the survey's order.
+    pub children: Vec<Seat>,
+}
+
+impl Seat {
+    /// A seat with nothing under it.
+    pub fn leaf(anchor: Anchor) -> Self {
+        Self {
+            anchor,
+            children: Vec::new(),
+        }
+    }
+}
+
 /// One frame on the paper: a workspace crate, or one top-level module inside a
 /// crate. One level of module frames only — a deeper module path stays in the
 /// mark's locator, where rust already writes it.
@@ -59,12 +86,18 @@ pub struct Frame {
     pub module: Option<String>,
     /// The crate frame a module frame sits in.
     pub parent: Option<u32>,
-    /// Drawn marks seated here, in the survey's (file, source) order.
+    /// Drawn marks seated here, in the survey's (file, source) order. The
+    /// roster of what the frame draws; `forest` says where each one sits.
     pub marks: Vec<u32>,
     /// Private types, never drawn, counted here.
     pub private: u32,
     /// Types the budget folded away, counted here.
     pub more: u32,
+    /// How they seat: the frame's ownership forest, in reading order —
+    /// statics, then trees biggest first, then the vocabulary leaves, then the
+    /// counted fold rows. Every mark in `marks` sits somewhere in here exactly
+    /// once, and a fold row the frame counts is a seat of its own.
+    pub forest: Vec<Seat>,
 }
 
 impl Frame {
@@ -105,14 +138,17 @@ pub struct DataMark {
     pub line: u32,
     /// Its file changed since the diff base.
     pub changed: bool,
-    /// Holding fields, quoted, capped at [`FIELD_CAP`].
+    /// Fields, quoted as written in declaration order, capped at
+    /// [`FIELD_CAP`].
     pub fields: Vec<FieldRow>,
-    /// Holding fields past the cap.
+    /// Fields past the cap.
     pub more_fields: u32,
-    /// Fields whose type walk reached no workspace type.
-    pub plain_fields: u32,
-    /// An enum's variant names, as written.
-    pub variants: Vec<String>,
+    /// An enum's variants as written — payloads and discriminants included —
+    /// quoted as rows (the row text in `decl`, `name` empty), capped at
+    /// [`FIELD_CAP`].
+    pub variants: Vec<FieldRow>,
+    /// Variants past the cap.
+    pub more_variants: u32,
     /// A static's declared type, as written.
     pub ty: String,
     /// Incoming holds edges folded to a count: how many types hold this one.
@@ -152,8 +188,32 @@ pub struct Hold {
 
 impl Hold {
     pub fn key(&self) -> String {
-        format!("{:?}>{:?}:{:?}:{}", self.held, self.holder, self.kind, self.via)
+        format!(
+            "{:?}>{:?}:{:?}:{}",
+            self.held, self.holder, self.kind, self.via
+        )
     }
+}
+
+/// Every anchor a shape change to `from` could reach, walking holds edges
+/// holder-ward: the transitive holders. `pairs` are (held, holder). A counted
+/// fold row can join the set — the edge landing on it is drawn — but the walk
+/// ends there: a row is a count, not a type with holders of its own.
+pub fn upstream(pairs: &[(Anchor, Anchor)], from: Anchor) -> HashSet<Anchor> {
+    let mut seen: HashSet<Anchor> = HashSet::new();
+    let mut queue: Vec<Anchor> = vec![from];
+    while let Some(at) = queue.pop() {
+        for (held, holder) in pairs {
+            if *held == at
+                && *holder != from
+                && seen.insert(*holder)
+                && matches!(holder, Anchor::Mark(_))
+            {
+                queue.push(*holder);
+            }
+        }
+    }
+    seen
 }
 
 /// One reference tie between two types, summed. The arrowhead rests on the
@@ -292,6 +352,45 @@ fn interest(mark: &ItemMark, degree: u32, changed: bool) -> u32 {
     degree + mark.fan_in + if changed { 2 } else { 0 }
 }
 
+/// How many marks a seat carries, itself included. A frame reads biggest tree
+/// first, so the state with the most shape under it opens the frame.
+fn subtree_size(anchor: Anchor, seated: &HashMap<Anchor, Vec<u32>>) -> usize {
+    1 + seated.get(&anchor).map_or(0, |kids| {
+        kids.iter()
+            .map(|&kid| subtree_size(Anchor::Mark(kid), seated))
+            .sum::<usize>()
+    })
+}
+
+/// Grow one seat and everything seated under it.
+fn seat_of(anchor: Anchor, seated: &HashMap<Anchor, Vec<u32>>) -> Seat {
+    Seat {
+        anchor,
+        children: seated.get(&anchor).map_or_else(Vec::new, |kids| {
+            kids.iter()
+                .map(|&kid| seat_of(Anchor::Mark(kid), seated))
+                .collect()
+        }),
+    }
+}
+
+/// Whether seating `child` under `candidate` would close a loop. Two types that
+/// own each other cannot both sit above the other: the first seat taken stands,
+/// and the edge that would have closed the ring stays drawn as a line.
+fn would_cycle(child: u32, candidate: Anchor, parents: &HashMap<u32, Anchor>) -> bool {
+    let mut at = candidate;
+    while let Anchor::Mark(id) = at {
+        if id == child {
+            return true;
+        }
+        match parents.get(&id) {
+            Some(&up) => at = up,
+            None => return false,
+        }
+    }
+    false
+}
+
 impl DataModel {
     pub fn build(graph: &CodeGraph, ref_dir: RefDir) -> Self {
         let changed_file: Vec<bool> = graph.files.iter().map(|f| f.changed).collect();
@@ -333,11 +432,7 @@ impl DataModel {
             ranked.sort_by_key(|&m| {
                 let mark = &graph.items[m as usize];
                 (
-                    std::cmp::Reverse(interest(
-                        mark,
-                        degree[m as usize],
-                        file_changed(mark.file),
-                    )),
+                    std::cmp::Reverse(interest(mark, degree[m as usize], file_changed(mark.file))),
                     mark.file,
                     mark.line,
                 )
@@ -354,12 +449,7 @@ impl DataModel {
         let file_key: Vec<(String, Option<String>)> = graph
             .files
             .iter()
-            .map(|f| {
-                (
-                    f.krate.clone(),
-                    module_of(&f.path).map(str::to_string),
-                )
-            })
+            .map(|f| (f.krate.clone(), module_of(&f.path).map(str::to_string)))
             .collect();
         let key_of = |mark: u32| -> Option<&(String, Option<String>)> {
             file_key.get(graph.items[mark as usize].file as usize)
@@ -389,6 +479,7 @@ impl DataModel {
                 marks: Vec::new(),
                 private: 0,
                 more: 0,
+                forest: Vec::new(),
             });
             frame_index.insert((krate.clone(), None), id);
         }
@@ -406,6 +497,7 @@ impl DataModel {
                 marks: Vec::new(),
                 private: 0,
                 more: 0,
+                forest: Vec::new(),
             });
             frame_index.insert(key.clone(), id);
         }
@@ -499,19 +591,122 @@ impl DataModel {
             hold.rest = !folded_fan.contains_key(&hold.held);
         }
 
-        // ---- The marks themselves. -----------------------------------------
-        // Holding fields, quoted per holder. `graph.holds` arrives sorted by
-        // (from, to, kind, via), so the rows are grouped by what they hold and
-        // the same survey always writes the same block.
-        let drawn_set: HashSet<u32> = drawn.iter().copied().collect();
-        let mut fields_of: HashMap<u32, Vec<FieldRow>> = HashMap::new();
-        for edge in &graph.holds {
-            if !drawn_set.contains(&edge.from) {
+        // ---- Seating: the ownership forest inside each frame. ---------------
+        // Every drawn type sits under its one heaviest same-frame `Owns`
+        // holder, so an owns edge is usually a short line to the block right
+        // above it. Ownership that crosses a module seats nothing: a type
+        // never leaves the frame that declares it, so that edge stays drawn
+        // ink and the coupling stays visible instead of being arranged away.
+        // Statics are roots, because nothing holds a static. A vocabulary type
+        // — one more than [`HELD_CAP`] types hold — is neither child nor
+        // parent: seating it would drag half the frame under one block, and
+        // its fan-in is already folded to a count on its own mark.
+        let mut seat_parent: HashMap<u32, Anchor> = HashMap::new();
+        for &id in &drawn {
+            if graph.items[id as usize].kind == ItemKind::Static {
                 continue;
             }
-            if graph.items[edge.from as usize].kind == ItemKind::Static {
-                // A static quotes its declared type whole, right under its
-                // name; a field row would say the same thing twice.
+            let seat = Anchor::Mark(id);
+            if folded_fan.contains_key(&seat) {
+                continue;
+            }
+            let Some(home) = frame_of(id) else { continue };
+            let mut weight: HashMap<Anchor, u32> = HashMap::new();
+            for hold in &holds {
+                if hold.held != seat || hold.kind != HoldKind::Owns || hold.holder == seat {
+                    continue;
+                }
+                if folded_fan.contains_key(&hold.holder) {
+                    continue;
+                }
+                let same_frame = match hold.holder {
+                    Anchor::Mark(holder) => frame_of(holder) == Some(home),
+                    // A frame's private fold row is the drawn stand-in for its
+                    // private code, so it can seat what only private code
+                    // owns. The `+ n more types` row cannot: it stands for
+                    // types the budget took away, not for a place in the
+                    // module's shape.
+                    Anchor::Private(frame) => frame == home,
+                    Anchor::More(_) => false,
+                };
+                if !same_frame {
+                    continue;
+                }
+                *weight.entry(hold.holder).or_default() += hold.fields;
+            }
+            // A drawn owner always outranks the private fold row; then the
+            // heaviest holder by field count; then the survey's own order.
+            let mut candidates: Vec<(Anchor, u32)> = weight.into_iter().collect();
+            candidates.sort_by_key(|&(holder, fields)| {
+                (
+                    matches!(holder, Anchor::Private(_)),
+                    std::cmp::Reverse(fields),
+                    holder,
+                )
+            });
+            let chosen = candidates
+                .iter()
+                .map(|&(holder, _)| holder)
+                .find(|&holder| !would_cycle(id, holder, &seat_parent));
+            if let Some(holder) = chosen {
+                seat_parent.insert(id, holder);
+            }
+        }
+
+        // `drawn` is in the survey's order, so every seat's children are too.
+        let mut seated: HashMap<Anchor, Vec<u32>> = HashMap::new();
+        for &id in &drawn {
+            if let Some(&parent) = seat_parent.get(&id) {
+                seated.entry(parent).or_default().push(id);
+            }
+        }
+        for frame in &mut frames {
+            let vocabulary = |m: u32| folded_fan.contains_key(&Anchor::Mark(m));
+            let mut roots: Vec<u32> = frame
+                .marks
+                .iter()
+                .copied()
+                .filter(|&m| !seat_parent.contains_key(&m) && !vocabulary(m))
+                .collect();
+            roots.sort_by_key(|&m| {
+                (
+                    graph.items[m as usize].kind != ItemKind::Static,
+                    std::cmp::Reverse(subtree_size(Anchor::Mark(m), &seated)),
+                    m,
+                )
+            });
+            let mut forest: Vec<Seat> = roots
+                .iter()
+                .map(|&m| seat_of(Anchor::Mark(m), &seated))
+                .collect();
+            // Then the vocabulary leaves, then the counted rows: what a frame
+            // holds back reads last, under everything it draws in full.
+            forest.extend(
+                frame
+                    .marks
+                    .iter()
+                    .copied()
+                    .filter(|&m| vocabulary(m))
+                    .map(|m| Seat::leaf(Anchor::Mark(m))),
+            );
+            if frame.private > 0 {
+                forest.push(seat_of(Anchor::Private(frame.id), &seated));
+            }
+            if frame.more > 0 {
+                forest.push(seat_of(Anchor::More(frame.id), &seated));
+            }
+            frame.forest = forest;
+        }
+
+        // ---- The marks themselves. -----------------------------------------
+        // Every field and variant is quoted as written; the holds edges say
+        // which run of a row names a workspace type, and that run alone is
+        // drawn bold. `graph.holds` arrives sorted, so the same survey always
+        // writes the same block.
+        let drawn_set: HashSet<u32> = drawn.iter().copied().collect();
+        let mut target_of: HashMap<(u32, String), String> = HashMap::new();
+        for edge in &graph.holds {
+            if !drawn_set.contains(&edge.from) {
                 continue;
             }
             let target = graph
@@ -519,18 +714,12 @@ impl DataModel {
                 .get(edge.to as usize)
                 .map(|m| m.name.clone())
                 .unwrap_or_default();
-            let rows = fields_of.entry(edge.from).or_default();
-            for (name, decl) in &edge.fields {
-                // One field can reach two workspace types (`Arc<(A, B)>`) and
-                // is then written on both edges. It is still one field.
-                if rows.iter().any(|r| &r.name == name && &r.decl == decl) {
-                    continue;
-                }
-                rows.push(FieldRow {
-                    name: name.clone(),
-                    decl: decl.clone(),
-                    target: target.clone(),
-                });
+            for (name, _) in &edge.fields {
+                // One field can reach two workspace types (`Arc<(A, B)>`); its
+                // row bolds the first, and the edges still say the rest.
+                target_of
+                    .entry((edge.from, name.clone()))
+                    .or_insert_with(|| target.clone());
             }
         }
 
@@ -540,9 +729,42 @@ impl DataModel {
                 let mark = &graph.items[id as usize];
                 let frame = frame_of(id)?;
                 let file = graph.files.get(mark.file as usize)?;
-                let mut fields = fields_of.remove(&id).unwrap_or_default();
+                let mut fields: Vec<FieldRow> = mark
+                    .field_rows
+                    .iter()
+                    .map(|(name, decl)| FieldRow {
+                        name: name.clone(),
+                        decl: decl.clone(),
+                        target: target_of
+                            .get(&(id, name.clone()))
+                            .cloned()
+                            .unwrap_or_default(),
+                    })
+                    .collect();
                 let more_fields = fields.len().saturating_sub(FIELD_CAP) as u32;
                 fields.truncate(FIELD_CAP);
+                // A variant's row is its whole written form; the edge that
+                // knows its target is filed under the variant's bare name.
+                let mut variants: Vec<FieldRow> = mark
+                    .variants
+                    .iter()
+                    .map(|written| {
+                        let vname: String = written
+                            .chars()
+                            .take_while(|c| c.is_alphanumeric() || *c == '_')
+                            .collect();
+                        FieldRow {
+                            name: String::new(),
+                            decl: written.clone(),
+                            target: target_of
+                                .get(&(id, vname))
+                                .cloned()
+                                .unwrap_or_default(),
+                        }
+                    })
+                    .collect();
+                let more_variants = variants.len().saturating_sub(FIELD_CAP) as u32;
+                variants.truncate(FIELD_CAP);
                 Some(DataMark {
                     id,
                     frame,
@@ -555,8 +777,8 @@ impl DataModel {
                     changed: file.changed,
                     fields,
                     more_fields,
-                    plain_fields: mark.plain_fields,
-                    variants: mark.variants.clone(),
+                    variants,
+                    more_variants,
                     ty: mark.ty.clone(),
                     held_by: folded_fan.get(&Anchor::Mark(id)).copied().unwrap_or(0),
                 })
@@ -636,10 +858,7 @@ impl DataModel {
             .iter()
             .filter(|m| matches!(m.kind, ItemKind::Struct | ItemKind::Union))
             .count();
-        let enums = marks
-            .iter()
-            .filter(|m| m.kind == ItemKind::Enum)
-            .count();
+        let enums = marks.iter().filter(|m| m.kind == ItemKind::Enum).count();
         // A root is state nothing else holds: every static, and every type no
         // other type has a field of.
         let roots = marks
@@ -709,7 +928,7 @@ mod tests {
             parent: None,
             fan_in: 0,
             impls: Vec::new(),
-            plain_fields: 0,
+            field_rows: Vec::new(),
             variants: Vec::new(),
             ty: String::new(),
         }
@@ -727,6 +946,8 @@ mod tests {
     /// `Wire` (pub, in `mod api`) is held by `Index` (pub, in `mod analyze`)
     /// and by `Hidden` (private, same module).
     fn graph() -> CodeGraph {
+        let mut index = mark(1, 1, "Index", ItemKind::Struct, Vis::Pub);
+        index.field_rows = vec![("wire".into(), "Wire".into())];
         CodeGraph {
             files: vec![
                 file(0, "src/api.rs", false),
@@ -735,7 +956,7 @@ mod tests {
             refs: Vec::new(),
             items: vec![
                 mark(0, 0, "Wire", ItemKind::Struct, Vis::Pub),
-                mark(1, 1, "Index", ItemKind::Struct, Vis::Pub),
+                index,
                 mark(2, 1, "Hidden", ItemKind::Struct, Vis::Private),
                 mark(3, 1, "CACHE", ItemKind::Static, Vis::Private),
             ],
@@ -800,8 +1021,7 @@ mod tests {
             model
                 .holds
                 .iter()
-                .any(|h| h.holder == Anchor::Private(analyze.id)
-                    && h.held == Anchor::Mark(0))
+                .any(|h| h.holder == Anchor::Private(analyze.id) && h.held == Anchor::Mark(0))
         );
         // Only the static is a root here: nothing can hold a static, and both
         // types are held — `Wire` by `Index`, `Index` by the static itself.
@@ -829,5 +1049,210 @@ mod tests {
         assert_eq!(model.ties[0].def, Anchor::Mark(0));
         assert_eq!(model.ties[0].user, Anchor::Mark(1));
         assert_eq!(model.ties[0].count, 4);
+    }
+
+    // ---- Seating: the ownership forest inside a frame. ---------------------
+
+    fn holds(from: u32, to: u32, fields: &[&str]) -> HoldEdge {
+        HoldEdge {
+            from,
+            to,
+            kind: HoldKind::Owns,
+            via: String::new(),
+            fields: fields
+                .iter()
+                .map(|name| ((*name).to_string(), "T".to_string()))
+                .collect(),
+        }
+    }
+
+    /// A frame with something to seat. In `mod api`: `Wire` owns `Leaf` and
+    /// `Node`, `Node` also owns `Leaf` (the same weight, later in the survey),
+    /// the `CACHE` static owns `Node` with one field where `Wire` owns it with
+    /// two, four types hold `Id`, and the private `Hidden` is all that owns
+    /// `Orphan`. A module away, `Index` owns `Wire`.
+    fn seating_graph() -> CodeGraph {
+        CodeGraph {
+            files: vec![
+                file(0, "src/api.rs", false),
+                file(1, "src/analyze/code.rs", false),
+            ],
+            refs: Vec::new(),
+            items: vec![
+                mark(0, 0, "Wire", ItemKind::Struct, Vis::Pub),
+                mark(1, 0, "Leaf", ItemKind::Struct, Vis::Pub),
+                mark(2, 0, "Node", ItemKind::Struct, Vis::Pub),
+                mark(3, 0, "Orphan", ItemKind::Struct, Vis::Pub),
+                mark(4, 0, "Id", ItemKind::Struct, Vis::Pub),
+                mark(5, 0, "Hidden", ItemKind::Struct, Vis::Private),
+                mark(6, 0, "CACHE", ItemKind::Static, Vis::Private),
+                mark(7, 1, "Index", ItemKind::Struct, Vis::Pub),
+            ],
+            item_edges: Vec::new(),
+            // Sorted by (from, to), the way the survey ships them.
+            holds: vec![
+                holds(0, 1, &["leaf"]),
+                holds(0, 2, &["head", "tail"]),
+                holds(0, 4, &["id"]),
+                // Nothing can have a field of a static, so the survey never
+                // writes this edge. The rule that a static is a root is the
+                // chart's own, and it is worth a guard.
+                holds(0, 6, &["cache"]),
+                holds(1, 4, &["id"]),
+                holds(2, 1, &["leaf"]),
+                holds(2, 4, &["id"]),
+                holds(3, 4, &["id"]),
+                holds(5, 3, &["orphan"]),
+                holds(6, 2, &["node"]),
+                holds(7, 0, &["wire"]),
+            ],
+            unresolved: 0,
+            notes: Vec::new(),
+        }
+    }
+
+    fn frame_named<'a>(model: &'a DataModel, module: &str) -> &'a Frame {
+        model
+            .frames
+            .iter()
+            .find(|f| f.module.as_deref() == Some(module))
+            .unwrap()
+    }
+
+    /// Every seat in a forest, with the ownership depth it sits at.
+    fn walk(seats: &[Seat], depth: usize, out: &mut Vec<(Anchor, usize)>) {
+        for seat in seats {
+            out.push((seat.anchor, depth));
+            walk(&seat.children, depth + 1, out);
+        }
+    }
+
+    fn roots(frame: &Frame) -> Vec<Anchor> {
+        frame.forest.iter().map(|s| s.anchor).collect()
+    }
+
+    #[test]
+    fn a_type_seats_under_the_same_frame_owner_that_holds_it_hardest() {
+        let model = DataModel::build(&seating_graph(), RefDir::Uses);
+        let api = frame_named(&model, "api");
+        let wire = api
+            .forest
+            .iter()
+            .find(|s| s.anchor == Anchor::Mark(0))
+            .unwrap();
+        // `Leaf` is owned by `Wire` and by `Node` with one field each; the
+        // survey's order breaks the tie. `Node` is owned by `Wire` with two
+        // fields and by `CACHE` with one, so weight decides.
+        assert_eq!(
+            wire.children.iter().map(|s| s.anchor).collect::<Vec<_>>(),
+            vec![Anchor::Mark(1), Anchor::Mark(2)]
+        );
+        // Ownership depth is the layer: `Leaf` sits one under `Wire`.
+        let mut seats = Vec::new();
+        walk(&api.forest, 0, &mut seats);
+        assert!(seats.contains(&(Anchor::Mark(1), 1)));
+    }
+
+    #[test]
+    fn a_type_owned_from_another_module_is_a_root_and_keeps_its_edge() {
+        let model = DataModel::build(&seating_graph(), RefDir::Uses);
+        // `Index` owns `Wire`, but it is a module away: `Wire` stays a root of
+        // its own frame rather than moving into `mod analyze`.
+        assert!(roots(frame_named(&model, "api")).contains(&Anchor::Mark(0)));
+        assert_eq!(roots(frame_named(&model, "analyze")), vec![Anchor::Mark(7)]);
+        // And the ownership is still ink on the paper.
+        assert!(model.holds.iter().any(|h| h.held == Anchor::Mark(0)
+            && h.holder == Anchor::Mark(7)
+            && h.kind == HoldKind::Owns));
+    }
+
+    #[test]
+    fn a_static_never_seats_under_a_type() {
+        let model = DataModel::build(&seating_graph(), RefDir::Uses);
+        let api = frame_named(&model, "api");
+        let mut seats = Vec::new();
+        walk(&api.forest, 0, &mut seats);
+        assert!(seats.contains(&(Anchor::Mark(6), 0)));
+        assert!(!seats.iter().any(|&(a, d)| a == Anchor::Mark(6) && d > 0));
+    }
+
+    #[test]
+    fn a_frame_seats_statics_then_trees_then_vocabulary_then_its_fold_rows() {
+        let model = DataModel::build(&seating_graph(), RefDir::Uses);
+        let api = frame_named(&model, "api");
+        assert_eq!(
+            roots(api),
+            vec![
+                // The static register first,
+                Anchor::Mark(6),
+                // then the trees, biggest first — `Wire` carries two,
+                Anchor::Mark(0),
+                // then `Id`, which four types hold: never seated, never a seat,
+                Anchor::Mark(4),
+                // then what the frame does not draw.
+                Anchor::Private(api.id),
+            ]
+        );
+        assert_eq!(
+            model.marks.iter().find(|m| m.name == "Id").unwrap().held_by,
+            4
+        );
+        // `Orphan` is owned by private code alone, so it hangs under the row
+        // that counts the private code.
+        assert_eq!(api.forest[3].children.len(), 1);
+        assert_eq!(api.forest[3].children[0].anchor, Anchor::Mark(3));
+    }
+
+    #[test]
+    fn every_drawn_mark_sits_in_its_frame_exactly_once() {
+        let model = DataModel::build(&seating_graph(), RefDir::Uses);
+        for frame in &model.frames {
+            let mut seats = Vec::new();
+            walk(&frame.forest, 0, &mut seats);
+            let mut seated: Vec<u32> = seats
+                .iter()
+                .filter_map(|(a, _)| match a {
+                    Anchor::Mark(id) => Some(*id),
+                    _ => None,
+                })
+                .collect();
+            seated.sort_unstable();
+            let mut roster = frame.marks.clone();
+            roster.sort_unstable();
+            assert_eq!(seated, roster, "frame {:?}", frame.module);
+        }
+    }
+
+    #[test]
+    fn two_types_that_own_each_other_seat_once() {
+        let graph = CodeGraph {
+            files: vec![file(0, "src/api.rs", false)],
+            refs: Vec::new(),
+            items: vec![
+                mark(0, 0, "A", ItemKind::Struct, Vis::Pub),
+                mark(1, 0, "B", ItemKind::Struct, Vis::Pub),
+            ],
+            item_edges: Vec::new(),
+            holds: vec![holds(0, 1, &["b"]), holds(1, 0, &["a"])],
+            unresolved: 0,
+            notes: Vec::new(),
+        };
+        let model = DataModel::build(&graph, RefDir::Uses);
+        let api = frame_named(&model, "api");
+        // One seat takes the other; the ring is not seated twice.
+        let mut seats = Vec::new();
+        walk(&api.forest, 0, &mut seats);
+        assert_eq!(seats.len(), 2);
+        assert_eq!(api.forest.len(), 1);
+        // Both edges are still drawn — the closing one included.
+        assert_eq!(model.holds.len(), 2);
+    }
+
+    #[test]
+    fn the_same_survey_always_seats_the_same_forest() {
+        let graph = seating_graph();
+        let a = DataModel::build(&graph, RefDir::Uses);
+        let b = DataModel::build(&graph, RefDir::Uses);
+        assert_eq!(a, b);
     }
 }

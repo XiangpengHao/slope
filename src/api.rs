@@ -254,12 +254,13 @@ pub struct ItemMark {
     /// workspace. Derives are not here: they stand in the type's own source,
     /// and a derive is not code anyone wrote.
     pub impls: Vec<String>,
-    /// Fields whose type walk reached no workspace type at all — a `u32`, a
-    /// `String`, a generic parameter. The data chart counts them instead of
-    /// drawing them. Structs and unions only; zero everywhere else.
-    pub plain_fields: u32,
-    /// An enum's variant names, as written, in source order. Empty for
-    /// everything that is not an enum.
+    /// A struct's or union's fields, quoted from source in declaration order:
+    /// the name as written (a tuple field's is its index) and the declared
+    /// type as written. The data chart quotes them all — what a field reaches
+    /// is on the holds edges. Empty for everything else.
+    pub field_rows: Vec<(String, String)>,
+    /// An enum's variants as written, in source order — name, payload types,
+    /// and discriminant included. Empty for everything that is not an enum.
     pub variants: Vec<String>,
     /// A static's declared type, as written. Empty for everything that is not
     /// a static.

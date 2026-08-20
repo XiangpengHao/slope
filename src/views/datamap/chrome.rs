@@ -3,9 +3,12 @@
 
 use dioxus::prelude::*;
 
-use crate::views::codemap::chrome::{Altitude, AltitudeSwitch, plural};
-use crate::views::codemap::{RefDir, use_code};
-use crate::views::datamap::model::DataFacts;
+use crate::Route;
+use crate::api::{CodeGraph, HoldKind};
+use crate::views::codemap::chrome::{Altitude, AltitudeSwitch, decl_words, plural};
+use crate::views::codemap::{RefDir, item_route, use_code};
+use crate::views::datamap::data_type_route;
+use crate::views::datamap::model::{Anchor, DataFacts, DataModel, upstream};
 
 /// Which top-level modules a change landed in, in plain words. The chart shows
 /// a reviewer where the amber is; the cartouche says it out loud, because that
@@ -98,6 +101,242 @@ pub fn DataRefToggle() -> Element {
     }
 }
 
+/// A hold's kind, in its own lowercase word, for a sheet row's far column.
+/// The wrapper's word wins where the walk met one — `Arc` says more than
+/// `shares` — and the kind speaks only for a plain hold.
+fn hold_word(kind: HoldKind, via: &str) -> String {
+    if !via.is_empty() {
+        return via.to_string();
+    }
+    match kind {
+        HoldKind::Owns => "owns",
+        HoldKind::Shares => "shares",
+        HoldKind::Borrows => "borrows",
+        HoldKind::Dyn => "dyn",
+    }
+    .to_string()
+}
+
+/// One row of the sheet's holds lists: a drawn type (a link that re-centers
+/// the selection on it), or a frame's counted fold row, which is words.
+#[derive(Clone, PartialEq)]
+struct HoldRow {
+    to: Option<Route>,
+    decl: String,
+    name: String,
+    changed: bool,
+    word: String,
+}
+
+/// The rows one side of the selection draws, from each hold's far end. A
+/// fold-row end names its count and its module instead of a type — the
+/// chart's own words for what it does not draw.
+fn hold_rows(model: &DataModel, holds: Vec<(&Anchor, HoldKind, &str)>) -> Vec<HoldRow> {
+    let by_id: std::collections::HashMap<u32, &crate::views::datamap::model::DataMark> =
+        model.marks.iter().map(|m| (m.id, m)).collect();
+    holds
+        .into_iter()
+        .map(|(anchor, kind, via)| match anchor {
+            Anchor::Mark(id) => {
+                let mark = by_id.get(id);
+                HoldRow {
+                    to: mark.map(|m| data_type_route(&m.path, &m.label)),
+                    decl: mark.map(|m| decl_words(m.vis, m.kind)).unwrap_or_default(),
+                    name: mark.map(|m| m.name.clone()).unwrap_or_default(),
+                    changed: mark.is_some_and(|m| m.changed),
+                    word: hold_word(kind, via),
+                }
+            }
+            Anchor::Private(frame) | Anchor::More(frame) => {
+                let frame = &model.frames[*frame as usize];
+                let count = if matches!(anchor, Anchor::Private(_)) {
+                    format!("+ {}", plural(frame.private as usize, "private type"))
+                } else {
+                    format!("+ {}", plural(frame.more as usize, "more type"))
+                };
+                let place = frame
+                    .label(model.multi_crate)
+                    .unwrap_or_else(|| frame.krate.clone());
+                HoldRow {
+                    to: None,
+                    decl: String::new(),
+                    name: format!("{count} · {place}"),
+                    changed: false,
+                    word: hold_word(kind, via),
+                }
+            }
+        })
+        .collect()
+}
+
+/// One chunked list of hold rows: the first eight, then a typographic
+/// "show all n".
+#[component]
+fn HoldList(rows: Vec<HoldRow>) -> Element {
+    let mut all = use_signal(|| false);
+    let total = rows.len();
+    let shown = if all() || total <= 8 { total } else { 8 };
+    rsx! {
+        ul { class: "mt-1",
+            for (i , row) in rows.iter().take(shown).enumerate() {
+                li { key: "{i}",
+                    if let Some(to) = row.to.clone() {
+                        Link {
+                            class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] hover:bg-ink/5",
+                            to,
+                            if !row.decl.is_empty() {
+                                span { class: "shrink-0 text-ink-soft", "{row.decl}" }
+                            }
+                            span { class: "truncate font-medium text-ink", "{row.name}" }
+                            if row.changed {
+                                span { class: "shrink-0 font-bold text-flare", "M" }
+                            }
+                            span { class: "ml-auto shrink-0 text-[9px] text-ink-soft", "{row.word}" }
+                        }
+                    } else {
+                        span { class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] text-ink-soft",
+                            span { class: "truncate", "{row.name}" }
+                            span { class: "ml-auto shrink-0 text-[9px]", "{row.word}" }
+                        }
+                    }
+                }
+            }
+        }
+        if shown < total {
+            button {
+                class: "mt-1 px-1 font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
+                onclick: move |_| all.set(true),
+                "show all {total}"
+            }
+        }
+    }
+}
+
+/// One selected type's sheet: who holds it, what it holds, and the one step
+/// further to its definition. The chart keeps the selection's blast radius
+/// inked; this plate says the same thing in rows a reader can follow.
+#[component]
+pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
+    let code = use_code();
+    // The sheet reads holding structure, never the tie reading, so the
+    // toggle is peeked: it moves nothing on this plate.
+    let model = use_memo(use_reactive((&graph,), move |(graph,)| {
+        DataModel::build(&graph, *code.ref_dir.peek())
+    }));
+    let model = model.read();
+
+    let Some(mark) = model
+        .marks
+        .iter()
+        .find(|m| m.path == path && m.label == item)
+    else {
+        return rsx! {
+            section { class: "plate pointer-events-auto w-full px-4 py-3 sm:w-72",
+                p { class: "font-data text-[11px] text-ink",
+                    "No type “{item}” in {path} on this survey."
+                }
+                Link {
+                    class: "mt-2 inline-block font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4",
+                    to: Route::DataOverview {},
+                    "← whole chart"
+                }
+            }
+        };
+    };
+
+    let at = Anchor::Mark(mark.id);
+    let decl = decl_words(mark.vis, mark.kind);
+    let held_by: Vec<HoldRow> = hold_rows(
+        &model,
+        model
+            .holds
+            .iter()
+            .filter(|h| h.held == at)
+            .map(|h| (&h.holder, h.kind, h.via.as_str()))
+            .collect(),
+    );
+    let holds: Vec<HoldRow> = hold_rows(
+        &model,
+        model
+            .holds
+            .iter()
+            .filter(|h| h.holder == at)
+            .map(|h| (&h.held, h.kind, h.via.as_str()))
+            .collect(),
+    );
+    // The blast radius in one line: how much further than its direct holders
+    // a change to this shape travels.
+    let pairs: Vec<(Anchor, Anchor)> = model.holds.iter().map(|h| (h.held, h.holder)).collect();
+    let direct: std::collections::HashSet<Anchor> = model
+        .holds
+        .iter()
+        .filter(|h| h.held == at)
+        .map(|h| h.holder)
+        .collect();
+    let beyond = upstream(&pairs, at)
+        .iter()
+        .filter(|a| matches!(a, Anchor::Mark(_)) && !direct.contains(a))
+        .count();
+
+    rsx! {
+        section { class: "plate pointer-events-auto flex max-h-[44dvh] w-full flex-col overflow-hidden sm:max-h-full sm:w-72",
+            div { class: "px-4 pt-3 pb-2",
+                Link {
+                    class: "font-data text-[10px] tracking-[0.12em] uppercase text-ink-soft underline-offset-4 hover:text-ink hover:underline",
+                    to: Route::DataOverview {},
+                    "← whole chart"
+                }
+                h2 { class: "mt-1.5 flex items-baseline gap-1.5 font-data text-[15px]",
+                    span { class: "shrink-0 text-[11px] text-ink-soft", "{decl}" }
+                    span { class: "truncate font-semibold text-ink", "{mark.name}" }
+                    if mark.changed {
+                        span {
+                            class: "shrink-0 font-bold text-flare",
+                            title: "changed since the diff base",
+                            "M"
+                        }
+                    }
+                }
+                p { class: "mt-0.5 font-data text-[9.5px] text-ink-soft", "{mark.locator()}" }
+            }
+            div { class: "min-h-0 flex-1 overflow-y-auto px-4 pb-3",
+                h3 { class: "mt-1 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
+                    "Held by ({held_by.len()})"
+                }
+                if held_by.is_empty() {
+                    p { class: "mt-1 font-data text-[10px] text-ink-soft",
+                        "no type holds it — a root."
+                    }
+                } else {
+                    HoldList { rows: held_by }
+                }
+                if beyond > 0 {
+                    p { class: "mt-1 px-1 font-data text-[10px] leading-relaxed text-ink-soft",
+                        "a shape change here reaches {plural(beyond, \"more type\")} upstream."
+                    }
+                }
+                h3 { class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
+                    "Holds ({holds.len()})"
+                }
+                if holds.is_empty() {
+                    p { class: "mt-1 font-data text-[10px] text-ink-soft",
+                        "holds no workspace types."
+                    }
+                } else {
+                    HoldList { rows: holds }
+                }
+            }
+            div { class: "border-t border-ink-line px-4 py-2",
+                Link {
+                    class: "font-data text-[9.5px] tracking-[0.12em] uppercase text-ink underline underline-offset-4 hover:text-ink-soft",
+                    to: item_route(&mark.path, &mark.label),
+                    "open its definition →"
+                }
+            }
+        }
+    }
+}
+
 /// One drawn edge sample for the legend, in the chart's own grammar — the same
 /// classes the chart itself draws with, so the key cannot drift from the map.
 #[component]
@@ -154,7 +393,7 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                         span {
                             span { class: "text-ink", "owns" }
                             span { class: "text-ink-soft",
-                                " — a field of this type. the arrowhead rests on the holder: a shape change travels along the arrow."
+                                " — a field of this type. the arrowhead rests on the holder: a shape change travels along the arrow. a block sits under the same-module block that owns it hardest; ownership from another module stays a drawn line."
                             }
                         }
                     }
@@ -223,10 +462,13 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                         span { class: "text-flare", "M" }
                         span { class: "text-ink-soft", " — defined in a file the diff touched" }
                     }
+                    p { class: "text-ink-soft",
+                        "a block quotes every field and variant as written, colored by token class the way the definition plate colors its source. the bold run names the workspace type a field holds."
+                    }
                     p {
-                        span { class: "font-medium", "+ 4 plain fields" }
+                        span { class: "font-medium", "+ 4 more fields" }
                         span { class: "text-ink-soft",
-                            " — fields whose type walk reached no workspace type. a type that is all plain data states only its count."
+                            " — rows past the block's eight quoted ones. variants past theirs count the same way."
                         }
                     }
                     p {
@@ -276,7 +518,9 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                     p {
                         "references from free functions and trait items are not on this chart: a tie is kept only where both ends land on a drawn type."
                     }
-                    p { "type parameters are holes and count as plain fields." }
+                    p {
+                        "type parameters are holes: their fields quote as written, and the walk reads nothing through them."
+                    }
                     if facts.trait_holds > 0 {
                         p {
                             "{plural(facts.trait_holds, \"dyn hold\")} land on a trait, and a trait has no mark of its own yet."
@@ -289,7 +533,11 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                     }
                 }
                 div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
-                    UsageRow { gesture: "click a type", effect: "open its definition plate" }
+                    UsageRow {
+                        gesture: "click a type",
+                        effect: "select it: everything a shape change could reach keeps its ink, the rest recedes, and its sheet opens. its definition is one step further, on the sheet.",
+                    }
+                    UsageRow { gesture: "esc · bare paper", effect: "deselect" }
                     UsageRow { gesture: "hover a type", effect: "all of its edges, at full ink" }
                     UsageRow { gesture: "f · ← · →", effect: "refit the chart · back · forward" }
                 }

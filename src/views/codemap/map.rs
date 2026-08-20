@@ -11,7 +11,7 @@ use std::collections::{HashMap, HashSet};
 
 use dioxus::prelude::*;
 use dioxus_flow::WorldLayer;
-use dioxus_flow::prelude::{Flow, Node as FlowNode, NodeViewCtx, Point, Rect, Side, Size};
+use dioxus_flow::prelude::{Flow, Node as FlowNode, NodeViewCtx, Point, Rect, Side, Size, Viewport};
 
 use crate::api::{CodeGraph, FileInfo, ItemKind, Vis};
 use crate::views::codemap::chrome::{decl_words, file_name, plural};
@@ -916,6 +916,13 @@ pub(crate) fn window_size() -> Option<(f64, f64)> {
 /// Below this the block letters stop being letters; the reviewer pans instead.
 const MIN_MAP_ZOOM: f64 = 0.22;
 
+/// The camera as the reviewer last left it. Session state that must survive
+/// route-variant remounts, like the disclosure globals: opening a focus plate
+/// unmounts the map, and coming back must give the reader back their own pan
+/// and zoom, not a fresh framing — the camera carries the mental map (the
+/// Kept-Ground rule). `f` still refits on demand.
+static CAMERA: GlobalSignal<Option<Viewport>> = Signal::global(|| None);
+
 fn frame_chart(
     flow: dioxus_flow::prelude::FlowHandle<CodeNodeData>,
     bounds: Rect,
@@ -1041,6 +1048,8 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
     let nodes: Signal<Vec<FlowNode<CodeNodeData>>> = use_signal(Vec::new);
     let framed = use_signal(|| false);
     let mut hot: Signal<Option<Territory>> = use_signal(|| None);
+    // True once the flow's core is live; the camera mirror below waits on it.
+    let core_live: Signal<bool> = use_signal(|| false);
 
     use_effect(move || {
         let b = built();
@@ -1057,8 +1066,27 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
             }
             let duration = if first || reduced { 0 } else { 400 };
             let (frame, focused) = (b.frame, b.focused);
+            let mut core_live = core_live;
             spawn(async move {
                 gloo_timers::future::TimeoutFuture::new(if first { 150 } else { 30 }).await;
+                if first {
+                    // The canvas mounts on its own beat; wait for its core
+                    // (bounded) rather than framing into the void.
+                    for _ in 0..40 {
+                        if flow.core().is_some() {
+                            break;
+                        }
+                        gloo_timers::future::TimeoutFuture::new(50).await;
+                    }
+                    core_live.set(true);
+                    // A remount is a return — from a focus plate or another
+                    // altitude, never a new focus: focus changes glide above
+                    // without remounting. Seat the reader where they left.
+                    if let Some(vp) = *CAMERA.peek() {
+                        flow.set_viewport(vp, 0);
+                        return;
+                    }
+                }
                 if let Some(frame) = frame {
                     frame_chart(flow, frame, focused, duration);
                 }
@@ -1066,11 +1094,22 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let _ = (framed, reduced);
+            let _ = (framed, reduced, core_live);
             if let Some(frame) = b.frame {
                 frame_chart(flow, frame, b.focused, 0);
             }
         }
+    });
+
+    // Mirror every camera move into the store, so the next mount can give the
+    // reader back their place. The store has no reactive readers; the mount
+    // logic peeks it, so per-frame writes during a pan or glide stay cheap.
+    use_effect(move || {
+        if !core_live() {
+            return;
+        }
+        let Some(core) = flow.core() else { return };
+        *CAMERA.write() = Some(*core.viewport.read());
     });
 
     // Keyboard.

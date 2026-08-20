@@ -12,19 +12,21 @@
 //! lifted to types and thinned by the cartouche's toggle; it rests at half ink
 //! under the holds edges so the two never read as one family.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use dioxus::prelude::*;
 use dioxus_flow::WorldLayer;
-use dioxus_flow::prelude::{Flow, Node as FlowNode, NodeViewCtx, Point, Rect, Side, Size};
+use dioxus_flow::prelude::{Flow, Node as FlowNode, NodeViewCtx, Point, Rect, Side, Size, Viewport};
 
+use crate::Route;
 use crate::api::{CodeGraph, HoldKind};
 use crate::views::codemap::chrome::{decl_words, plural};
 use crate::views::codemap::map::{narrow_viewport, prefers_reduced_motion, tie_ends, window_size};
 use crate::views::codemap::tree::{Placed, text_w};
-use crate::views::codemap::{item_route, use_code};
+use crate::views::codemap::use_code;
+use crate::views::datamap::data_type_route;
 use crate::views::datamap::layout::{self, DataLayout, Sizes};
-use crate::views::datamap::model::{Anchor, DataMark, DataModel, FieldRow};
+use crate::views::datamap::model::{Anchor, DataMark, DataModel, FieldRow, upstream};
 
 // ---------------------------------------------------------------------------
 // Mark furniture, in flow units — one unit is one CSS pixel at zoom 1. These
@@ -50,8 +52,6 @@ const MARK_MAX_W: f64 = 300.0;
 /// A counted fold row standing in for what a frame does not draw.
 const ROW_MIN_W: f64 = 132.0;
 const ROW_FOLD_H: f64 = 22.0;
-/// Lines of variant names one enum writes before counting the rest.
-const VARIANT_LINES: f64 = 3.0;
 /// What ragged line breaks cost over a straight width ratio.
 const WRAP_SLACK: f64 = 1.12;
 
@@ -91,8 +91,8 @@ pub struct MarkView {
     pub fields: Vec<FieldRow>,
     /// A static's declared type, as written.
     pub ty: String,
-    /// The variant names it draws, joined the way they are read.
-    pub variants: String,
+    /// An enum's variants as written, one row each (the row text in `decl`).
+    pub variants: Vec<FieldRow>,
     /// Every counted line at the foot, in words.
     pub folds: Vec<String>,
     pub locator: String,
@@ -160,6 +160,47 @@ pub struct Built {
     pub frame: Option<Rect>,
 }
 
+/// The selection's ink. One chosen mark; everything a shape change to it could
+/// reach, walking holds edges holder-ward (the blast radius); and what it
+/// directly holds, one hop the other way. While a selection stands the rest of
+/// the chart recedes to a lighter pressure — a reading, never a re-layout, and
+/// the camera does not move.
+#[derive(Clone, PartialEq)]
+pub struct KinView {
+    pub sel: Anchor,
+    /// Transitive holders. A counted fold row can join — its edge is drawn —
+    /// but the walk ends there.
+    pub up: HashSet<Anchor>,
+    /// Directly held types.
+    pub down: HashSet<Anchor>,
+}
+
+impl KinView {
+    fn node_class(&self, a: Anchor) -> &'static str {
+        if a == self.sel {
+            "is-sel"
+        } else if self.up.contains(&a) || self.down.contains(&a) {
+            "is-kin"
+        } else {
+            "is-dim"
+        }
+    }
+
+    /// A holds wire inside the selection's ink: a link in the chain toward the
+    /// holders, or the one hop down to what the selection holds.
+    fn wire_kin(&self, held: Anchor, holder: Anchor) -> bool {
+        let upward = |x: Anchor| x == self.sel || self.up.contains(&x);
+        (upward(held) && upward(holder)) || (holder == self.sel && self.down.contains(&held))
+    }
+
+    /// A reference tie the selection keeps at its own ink: one that touches the
+    /// selected mark itself. Ties are a reading, not structure, so they never
+    /// join the blast radius — they just escape the receding.
+    fn tie_kept(&self, a: Anchor, b: Anchor) -> bool {
+        a == self.sel || b == self.sel
+    }
+}
+
 /// The counted words a mark writes at its foot. Every one of them stands where
 /// something is hidden; a mark that hides nothing writes none.
 fn fold_words(mark: &DataMark) -> Vec<String> {
@@ -167,10 +208,10 @@ fn fold_words(mark: &DataMark) -> Vec<String> {
     if mark.more_fields > 0 {
         folds.push(format!("+ {}", plural(mark.more_fields as usize, "more field")));
     }
-    if mark.plain_fields > 0 {
+    if mark.more_variants > 0 {
         folds.push(format!(
             "+ {}",
-            plural(mark.plain_fields as usize, "plain field")
+            plural(mark.more_variants as usize, "more variant")
         ));
     }
     if mark.held_by > 0 {
@@ -185,59 +226,32 @@ fn measure(mark: &DataMark) -> MarkView {
     let decl = decl_words(mark.vis, mark.kind);
     let head = format!("{decl} {}", mark.name);
     let locator = mark.locator();
-    let mut folds = fold_words(mark);
+    let folds = fold_words(mark);
 
     let mut widest = text_w(&head, 10.5) + if mark.changed { 12.0 } else { 0.0 };
     widest = widest.max(text_w(&locator, 8.5));
+    // A long row clips at the block's own maximum rather than stretching it
+    // past the paper's patience.
+    let wrapping = MARK_MAX_W - PAD_X;
     for row in &mark.fields {
-        widest = widest.max(text_w(&format!("{}: {}", row.name, row.decl), 10.0));
+        widest = widest.max(text_w(&format!("{}: {}", row.name, row.decl), 10.0).min(wrapping));
+    }
+    for row in &mark.variants {
+        widest = widest.max(text_w(&row.decl, 10.0).min(wrapping));
     }
     for fold in &folds {
         widest = widest.max(text_w(fold, 9.0));
     }
-    // A long declared type or a long variant list wraps rather than stretching
-    // the block past the paper's patience.
-    let wrapping = MARK_MAX_W - PAD_X;
     if !mark.ty.is_empty() {
         widest = widest.max(text_w(&mark.ty, 9.5).min(wrapping));
     }
-    let all_variants = mark.variants.join(" · ");
-    if !all_variants.is_empty() {
-        widest = widest.max(text_w(&all_variants, 10.0).min(wrapping));
-    }
     let w = (widest + PAD_X).clamp(MARK_MIN_W, MARK_MAX_W);
     let usable = w - PAD_X;
-
-    // The variant list gets three lines; past that it counts what it holds back.
-    let mut variants = all_variants;
-    if !variants.is_empty() && wrapped(&variants, 10.0, usable) > VARIANT_LINES {
-        let budget = usable * VARIANT_LINES / WRAP_SLACK;
-        let mut kept: Vec<&str> = Vec::new();
-        let mut used = 0.0;
-        for name in &mark.variants {
-            let step = text_w(name, 10.0) + text_w(" · ", 10.0);
-            if used + step > budget && !kept.is_empty() {
-                break;
-            }
-            used += step;
-            kept.push(name);
-        }
-        let left = mark.variants.len() - kept.len();
-        variants = kept.join(" · ");
-        if left > 0 {
-            folds.insert(0, format!("+ {}", plural(left, "more variant")));
-        }
-    }
 
     let ty_lines = if mark.ty.is_empty() {
         0.0
     } else {
         wrapped(&mark.ty, 9.5, usable)
-    };
-    let variant_lines = if variants.is_empty() {
-        0.0
-    } else {
-        wrapped(&variants, 10.0, usable)
     };
     let fold_block = if folds.is_empty() {
         0.0
@@ -248,7 +262,7 @@ fn measure(mark: &DataMark) -> MarkView {
         + HEAD_H
         + ty_lines * TY_H
         + mark.fields.len() as f64 * ROW_H
-        + variant_lines * ROW_H
+        + mark.variants.len() as f64 * ROW_H
         + fold_block
         + LOC_H
         + PAD_BOTTOM;
@@ -261,7 +275,7 @@ fn measure(mark: &DataMark) -> MarkView {
         is_static: mark.is_static(),
         fields: mark.fields.clone(),
         ty: mark.ty.clone(),
-        variants,
+        variants: mark.variants.clone(),
         folds,
         locator,
         path: mark.path.clone(),
@@ -440,49 +454,81 @@ pub fn build_chart(model: &DataModel) -> Built {
 // Rendering.
 // ---------------------------------------------------------------------------
 
-/// The one run of a declared type that names the type it holds, so
-/// `Vec<FileDetail>` reads as the wrapper it is around the type it reaches.
-/// Everything is quoted as written; only the ink pressure changes.
-fn split_decl(decl: &str, target: &str) -> (String, String, String) {
-    let whole = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-    if !target.is_empty() {
-        let mut at = 0usize;
-        while let Some(found) = decl[at..].find(target) {
-            let start = at + found;
-            let end = start + target.len();
-            if !whole(decl[..start].chars().next_back()) && !whole(decl[end..].chars().next()) {
-                return (
-                    decl[..start].to_string(),
-                    target.to_string(),
-                    decl[end..].to_string(),
-                );
+/// One quoted row, split into token runs: `(class, run, held)`. A mark's field
+/// and variant rows are quotations, so inside them color is token class, by
+/// the plate's own grammar — keywords, uppercase-initial names and lifetimes,
+/// numbers, punctuation. The one run that names the row's held workspace type
+/// is bold on top of its class, so `Vec<FileDetail>` still reads as the
+/// wrapper it is around the type it reaches.
+fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool)> {
+    const KEYWORDS: [&str; 8] = ["dyn", "mut", "impl", "fn", "pub", "crate", "const", "as"];
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out: Vec<(&'static str, String, bool)> = Vec::new();
+    let mut chars = text.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if ident(c) {
+            let mut run = String::new();
+            while chars.peek().copied().is_some_and(ident) {
+                run.push(chars.next().unwrap());
             }
-            at = end;
+            let class = if c.is_ascii_digit() {
+                "tok-num"
+            } else if KEYWORDS.contains(&run.as_str()) {
+                "tok-kw"
+            } else if c.is_uppercase() {
+                "tok-type"
+            } else {
+                ""
+            };
+            let held = !target.is_empty() && run == target;
+            out.push((class, run, held));
+        } else if c == '\'' {
+            let mut run = String::from(chars.next().unwrap());
+            while chars.peek().copied().is_some_and(ident) {
+                run.push(chars.next().unwrap());
+            }
+            out.push(("tok-type", run, false));
+        } else {
+            let mut run = String::new();
+            while chars.peek().copied().is_some_and(|c| !ident(c) && c != '\'') {
+                run.push(chars.next().unwrap());
+            }
+            out.push(("tok-punct", run, false));
         }
     }
-    (decl.to_string(), String::new(), String::new())
+    out
 }
 
 /// One type's block: what it is, what it holds, and where it is written. The
-/// whole block is the link to its definition plate — a field row names a type,
-/// it does not go anywhere the block does not.
+/// whole block is the link to its selection — clicking it keeps the chart and
+/// inks its blast radius; the selected block clicked again deselects. Its
+/// definition plate stays one step further, on the selection sheet's link.
 #[component]
-fn MarkPlate(view: MarkView) -> Element {
+fn MarkPlate(view: MarkView, selected: bool) -> Element {
     let nav = use_navigator();
     let (w, h) = view.size;
-    let path = view.path.clone();
-    let label = view.label.clone();
+    let to = if selected {
+        Route::DataOverview {}
+    } else {
+        data_type_route(&view.path, &view.label)
+    };
+    let title = if selected {
+        format!("{} {} — selected · click again to deselect", view.decl, view.name)
+    } else {
+        format!("{} {} — {} · select it", view.decl, view.name, view.locator)
+    };
+    let push = to.clone();
     rsx! {
         a {
             class: "data-mark",
             class: if view.is_static { "is-root" },
             style: "width: {w}px; height: {h}px;",
-            href: item_route(&view.path, &view.label).to_string(),
-            title: "{view.decl} {view.name} — {view.locator} · open its definition",
+            href: to.to_string(),
+            title: "{title}",
             onclick: move |e: Event<MouseData>| {
                 e.prevent_default();
                 e.stop_propagation();
-                nav.push(item_route(&path, &label));
+                nav.push(push.clone());
             },
             header { class: "dm-head",
                 span { class: "dm-kw", "{view.decl}" }
@@ -492,25 +538,41 @@ fn MarkPlate(view: MarkView) -> Element {
                 }
             }
             if !view.ty.is_empty() {
-                p { class: "dm-ty", "{view.ty}" }
-            }
-            for (i , row) in view.fields.iter().enumerate() {
-                {
-                    let (before, held, after) = split_decl(&row.decl, &row.target);
-                    rsx! {
-                        p { key: "{i}", class: "dm-row",
-                            span { class: "dm-fname", "{row.name}: " }
-                            "{before}"
-                            if !held.is_empty() {
-                                span { class: "dm-held", "{held}" }
-                            }
-                            "{after}"
+                p { class: "dm-ty",
+                    for (j , (class , run , held)) in spans(&view.ty, "").into_iter().enumerate() {
+                        span {
+                            key: "{j}",
+                            class: if !class.is_empty() { "{class}" },
+                            class: if held { "dm-held" },
+                            "{run}"
                         }
                     }
                 }
             }
-            if !view.variants.is_empty() {
-                p { class: "dm-var", "{view.variants}" }
+            for (i , row) in view.fields.iter().enumerate() {
+                p { key: "{i}", class: "dm-row",
+                    span { class: "dm-fname", "{row.name}: " }
+                    for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
+                        span {
+                            key: "{j}",
+                            class: if !class.is_empty() { "{class}" },
+                            class: if held { "dm-held" },
+                            "{run}"
+                        }
+                    }
+                }
+            }
+            for (i , row) in view.variants.iter().enumerate() {
+                p { key: "v{i}", class: "dm-var",
+                    for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
+                        span {
+                            key: "{j}",
+                            class: if !class.is_empty() { "{class}" },
+                            class: if held { "dm-held" },
+                            "{run}"
+                        }
+                    }
+                }
             }
             if !view.folds.is_empty() {
                 div { class: "dm-folds",
@@ -526,10 +588,10 @@ fn MarkPlate(view: MarkView) -> Element {
 
 /// Node view for the data chart.
 #[component]
-fn DataNode(ctx: NodeViewCtx<DataNodeData>) -> Element {
+fn DataNode(ctx: NodeViewCtx<DataNodeData>, selected: bool) -> Element {
     match ctx.node.data.clone() {
         DataNodeData::Mark(view) => rsx! {
-            MarkPlate { view }
+            MarkPlate { view, selected }
         },
         DataNodeData::Fold(row) => {
             let (w, h) = row.size;
@@ -629,7 +691,12 @@ fn arrowhead(b: Point, ctrl: Point, size: f64) -> String {
 /// it. Hovering either end of a wire brings it up to full ink, which is how a
 /// folded wire is given back.
 #[component]
-fn WireLayer(holds: Vec<WireView>, ties: Vec<WireView>, hot: Signal<Option<Anchor>>) -> Element {
+fn WireLayer(
+    holds: Vec<WireView>,
+    ties: Vec<WireView>,
+    hot: Signal<Option<Anchor>>,
+    kin: Option<KinView>,
+) -> Element {
     let hot = hot();
     let wire = |w: &WireView, family: &'static str, side: f64| {
         let (d, ctrl) = curve(w.from, w.to, side);
@@ -639,12 +706,29 @@ fn WireLayer(holds: Vec<WireView>, ties: Vec<WireView>, hot: Signal<Option<Ancho
             0.25 * w.from.y + 0.5 * ctrl.y + 0.25 * w.to.y,
         );
         let is_hot = hot.is_some_and(|h| h == w.a || h == w.b);
+        // The selection's ink: a hold inside the blast radius keeps full
+        // pressure (folded ones ink back in); a tie touching the selection
+        // keeps its own; everything else recedes with the unrelated marks.
+        let is_ref = family.ends_with("data-ref");
+        let is_kin = kin
+            .as_ref()
+            .is_some_and(|k| !is_ref && k.wire_kin(w.a, w.b));
+        let is_dim = kin.as_ref().is_some_and(|k| {
+            !is_kin
+                && if is_ref {
+                    !k.tie_kept(w.a, w.b)
+                } else {
+                    true
+                }
+        });
         rsx! {
             g {
                 key: "{w.key}",
                 class: "{family} {w.class}",
                 class: if !w.rest { "is-folded" },
                 class: if is_hot { "is-hot" },
+                class: if is_kin { "is-kin" },
+                class: if is_dim { "is-dim" },
                 path {
                     class: "wire-path",
                     d,
@@ -679,29 +763,38 @@ fn WireLayer(holds: Vec<WireView>, ties: Vec<WireView>, hot: Signal<Option<Ancho
     }
 }
 
-/// Chrome insets at the data altitude: the cartouche column on the left, and
-/// nothing on the right — the chart has no selection sheet in v1.
-fn chrome_insets(narrow: bool) -> (f64, f64, f64, f64) {
+/// Chrome insets at the data altitude: the cartouche column on the left, and —
+/// while a type is selected — the selection sheet on the right. The narrow
+/// layout docks the sheet at the foot and stays a serviceable fallback.
+fn chrome_insets(narrow: bool, panel: bool) -> (f64, f64, f64, f64) {
     if narrow {
         (312.0, 20.0, 70.0, 12.0)
     } else {
-        (56.0, 24.0, 24.0, 284.0)
+        (56.0, if panel { 330.0 } else { 24.0 }, 24.0, 284.0)
     }
 }
 
 /// Below this the block letters stop being letters; the reviewer pans instead.
 const MIN_CHART_ZOOM: f64 = 0.22;
 
+/// The camera as the reviewer last left it. Session state that must survive
+/// route-variant remounts, like the code map's globals: opening a definition
+/// plate unmounts the chart, and coming back must give the reader back their
+/// own pan and zoom, not a fresh framing — the camera carries the mental map
+/// (the Kept-Ground rule). `f` still refits on demand.
+static CAMERA: GlobalSignal<Option<Viewport>> = Signal::global(|| None);
+
 fn frame_chart(
     flow: dioxus_flow::prelude::FlowHandle<DataNodeData>,
     bounds: Rect,
+    panel: bool,
     duration_ms: u64,
 ) {
     let Some(core) = flow.core() else { return };
     let Some((w, h)) = window_size() else {
         return;
     };
-    let (t, r, b, l) = chrome_insets(narrow_viewport());
+    let (t, r, b, l) = chrome_insets(narrow_viewport(), panel);
     let free_w = (w - l - r).max(120.0);
     let free_h = (h - t - b).max(120.0);
     let fit = (free_w / bounds.width.max(1.0)).min(free_h / bounds.height.max(1.0)) * 0.94;
@@ -715,9 +808,8 @@ fn frame_chart(
     );
 }
 
-/// Keyboard at the data altitude: `f` refits. There is no sub-focus to climb
-/// out of yet, so Escape does nothing here; `←` and `→` retrace the trail from
-/// the shell, as they do on every route.
+/// Keyboard at the data altitude: `f` refits, Escape deselects; `←` and `→`
+/// retrace the trail from the shell, as they do on every route.
 const DATA_KEYS_JS: &str = r#"
 if (window.__slopifyKeys) {
     document.removeEventListener('keydown', window.__slopifyKeys);
@@ -726,16 +818,17 @@ window.__slopifyKeys = (e) => {
     const t = e.target, tag = t && t.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
-    if (e.key === 'f') dioxus.send(e.key);
+    if (['f', 'Escape'].includes(e.key)) dioxus.send(e.key);
 };
 document.addEventListener('keydown', window.__slopifyKeys);
 "#;
 
 /// The data chart, mounted for `/data`.
 #[component]
-pub fn DataChart(graph: CodeGraph) -> Element {
+pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
     let code = use_code();
     let flow = dioxus_flow::use_flow_handle::<DataNodeData>();
+    let nav = use_navigator();
 
     // `graph` is a prop, not a signal; the reading toggle is a signal and
     // tracks itself.
@@ -746,16 +839,51 @@ pub fn DataChart(graph: CodeGraph) -> Element {
         }
     }));
 
+    // The route's selection, resolved to the chart's anchors: the mark, its
+    // transitive holders, and what it directly holds. `None` while nothing is
+    // selected, or when the route names a type this survey does not draw.
+    let kin: Memo<Option<KinView>> = use_memo(use_reactive((&sel,), move |(sel,)| {
+        let (path, label) = sel?;
+        let b = built.read();
+        let id = b.nodes.iter().find_map(|n| match &n.data {
+            DataNodeData::Mark(m) if m.path == path && m.label == label => Some(m.id),
+            _ => None,
+        })?;
+        let at = Anchor::Mark(id);
+        let pairs: Vec<(Anchor, Anchor)> = b.holds.iter().map(|w| (w.a, w.b)).collect();
+        let up = upstream(&pairs, at);
+        let down = pairs
+            .iter()
+            .filter(|(_, holder)| *holder == at)
+            .map(|(held, _)| *held)
+            .collect();
+        Some(KinView { sel: at, up, down })
+    }));
+
+    // Whether a selection stands, for the keyboard hook and the pane click —
+    // both outlive any one render, so they read a signal, not the prop.
+    let sel_on: Signal<bool> = use_signal(|| false);
+    use_effect(use_reactive((&sel.is_some(),), move |(on,)| {
+        let mut sel_on = sel_on;
+        if *sel_on.peek() != on {
+            sel_on.set(on);
+        }
+    }));
+
     let nodes: Signal<Vec<FlowNode<DataNodeData>>> = use_signal(Vec::new);
     let framed = use_signal(|| false);
     let mut hot: Signal<Option<Anchor>> = use_signal(|| None);
+    // True once the flow's core is live; the camera mirror below waits on it.
+    let core_live: Signal<bool> = use_signal(|| false);
 
     use_effect(move || {
         let b = built();
         let mut nodes = nodes;
         nodes.set(b.nodes);
-        // Camera discipline: the first paint frames the chart, and after that
-        // only an explicit refit moves it.
+        // Camera discipline: the first paint seats the reader where they left
+        // the chart, and frames it only when there is nothing to give back (a
+        // fresh session). After that, only an explicit refit moves it —
+        // selecting and deselecting never do.
         #[cfg(target_arch = "wasm32")]
         {
             let mut framed = framed;
@@ -764,37 +892,70 @@ pub fn DataChart(graph: CodeGraph) -> Element {
             }
             framed.set(true);
             let frame = b.frame;
+            let panel = *sel_on.peek();
+            let mut core_live = core_live;
             spawn(async move {
                 gloo_timers::future::TimeoutFuture::new(150).await;
-                if let Some(frame) = frame {
-                    frame_chart(flow, frame, 0);
+                // The canvas mounts on its own beat; wait for its core
+                // (bounded) rather than framing into the void.
+                for _ in 0..40 {
+                    if flow.core().is_some() {
+                        break;
+                    }
+                    gloo_timers::future::TimeoutFuture::new(50).await;
+                }
+                core_live.set(true);
+                if let Some(vp) = *CAMERA.peek() {
+                    flow.set_viewport(vp, 0);
+                } else if let Some(frame) = frame {
+                    frame_chart(flow, frame, panel, 0);
                 }
             });
         }
         #[cfg(not(target_arch = "wasm32"))]
         {
-            let _ = framed;
+            let _ = (framed, core_live);
             if let Some(frame) = b.frame {
-                frame_chart(flow, frame, 0);
+                frame_chart(flow, frame, false, 0);
             }
         }
+    });
+
+    // Mirror every camera move into the store, so the next mount can give the
+    // reader back their place. The store has no reactive readers; the mount
+    // logic peeks it, so per-frame writes during a pan or glide stay cheap.
+    use_effect(move || {
+        if !core_live() {
+            return;
+        }
+        let Some(core) = flow.core() else { return };
+        *CAMERA.write() = Some(*core.viewport.read());
     });
 
     use_hook(move || {
         spawn(async move {
             let mut eval = document::eval(DATA_KEYS_JS);
             while let Ok(key) = eval.recv::<String>().await {
-                if key == "f"
-                    && let Some(bounds) = Rect::bounds(built.peek().nodes.iter().map(|n| n.rect()))
-                {
-                    let duration = if prefers_reduced_motion() { 0 } else { 400 };
-                    frame_chart(flow, bounds, duration);
+                match key.as_str() {
+                    "f" => {
+                        if let Some(bounds) =
+                            Rect::bounds(built.peek().nodes.iter().map(|n| n.rect()))
+                        {
+                            let duration = if prefers_reduced_motion() { 0 } else { 400 };
+                            frame_chart(flow, bounds, *sel_on.peek(), duration);
+                        }
+                    }
+                    "Escape" if *sel_on.peek() => {
+                        nav.push(Route::DataOverview {});
+                    }
+                    _ => {}
                 }
             }
         });
     });
 
     let edges: Signal<Vec<dioxus_flow::prelude::Edge>> = use_signal(Vec::new);
+    let panel = sel.is_some();
 
     rsx! {
         div { class: "absolute inset-0",
@@ -805,19 +966,32 @@ pub fn DataChart(graph: CodeGraph) -> Element {
                 handle: flow,
                 nodes_draggable: false,
                 delete_key: false,
+                // Bare paper deselects, the way Escape does.
+                on_pane_click: move |_| {
+                    if *sel_on.peek() {
+                        nav.push(Route::DataOverview {});
+                    }
+                },
                 node_view: move |ctx: NodeViewCtx<DataNodeData>| {
                     let anchor = ctx.node.data.anchor();
+                    let kin_class = kin
+                        .read()
+                        .as_ref()
+                        .map(|k| k.node_class(anchor))
+                        .unwrap_or("");
+                    let selected = kin_class == "is-sel";
                     rsx! {
                         div {
                             class: "data-node",
+                            class: if !kin_class.is_empty() { "{kin_class}" },
                             onmouseenter: move |_| hot.set(Some(anchor)),
                             onmouseleave: move |_| hot.set(None),
-                            DataNode { ctx }
+                            DataNode { ctx, selected }
                         }
                     }
                 },
                 {
-                    let (top, right, bottom, left) = chrome_insets(narrow_viewport());
+                    let (top, right, bottom, left) = chrome_insets(narrow_viewport(), panel);
                     rsx! {
                         FitInsets { top, right, bottom, left }
                     }
@@ -830,6 +1004,7 @@ pub fn DataChart(graph: CodeGraph) -> Element {
                         holds: built.read().holds.clone(),
                         ties: built.read().ties.clone(),
                         hot,
+                        kin: kin(),
                     }
                 }
                 dioxus_flow::prelude::Controls {}
@@ -872,8 +1047,8 @@ mod tests {
                 })
                 .collect(),
             more_fields: 0,
-            plain_fields: 0,
             variants: Vec::new(),
+            more_variants: 0,
             ty: String::new(),
             held_by: 0,
         }
@@ -892,24 +1067,47 @@ mod tests {
     }
 
     #[test]
-    fn a_long_variant_list_counts_what_it_holds_back() {
+    fn a_variant_row_raises_the_block_and_the_fold_counts_the_rest() {
         let mut long = mark("Tok", ItemKind::Enum, vec![]);
-        long.variants = (0..40).map(|i| format!("Variant{i}")).collect();
+        long.variants = vec![
+            FieldRow {
+                name: String::new(),
+                decl: "File(String, String)".to_string(),
+                target: String::new(),
+            };
+            3
+        ];
+        long.more_variants = 12;
+        let bare = measure(&mark("Tok", ItemKind::Enum, vec![]));
         let view = measure(&long);
-        assert!(view.variants.split(" · ").count() < 40);
-        assert!(view.folds.iter().any(|f| f.contains("more variants")));
+        assert!(view.size.1 > bare.size.1);
+        assert!(view.folds.iter().any(|f| f.contains("12 more variants")));
     }
 
     #[test]
-    fn the_held_type_is_the_inked_run_of_its_declaration() {
-        assert_eq!(
-            split_decl("Vec<FileDetail>", "FileDetail"),
-            ("Vec<".into(), "FileDetail".into(), ">".into())
-        );
+    fn the_held_type_is_the_bold_run_of_its_quotation() {
+        let runs = spans("Vec<FileDetail>", "FileDetail");
+        let held: Vec<&str> = runs
+            .iter()
+            .filter(|(_, _, held)| *held)
+            .map(|(_, run, _)| run.as_str())
+            .collect();
+        assert_eq!(held, vec!["FileDetail"]);
         // A name inside a longer name is not the name.
+        assert!(
+            spans("Vec<FileDetail>", "Detail")
+                .iter()
+                .all(|(_, _, held)| !held)
+        );
+        // Token classes follow the plate's grammar: uppercase-initial names
+        // are types, the rest of the row is idents and punctuation.
+        let classes: Vec<(&str, &str)> = runs
+            .iter()
+            .map(|(class, run, _)| (*class, run.as_str()))
+            .collect();
         assert_eq!(
-            split_decl("Vec<FileDetail>", "Detail"),
-            ("Vec<FileDetail>".into(), String::new(), String::new())
+            classes,
+            vec![("tok-type", "Vec"), ("tok-punct", "<"), ("tok-type", "FileDetail"), ("tok-punct", ">")]
         );
     }
 }

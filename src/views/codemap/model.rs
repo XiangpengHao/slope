@@ -486,7 +486,7 @@ mod tests {
             parent,
             fan_in: 0,
             impls: Vec::new(),
-            plain_fields: 0,
+            field_rows: Vec::new(),
             variants: Vec::new(),
             ty: String::new(),
         }

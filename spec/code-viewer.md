@@ -45,6 +45,11 @@ mode: **Operate**.
 - **Arrow keys retrace the review.** Every focus is a URL, so `←` / `→` are
   the browser's back and forward, globally, on every route (typing fields
   keep their caret keys).
+- **The camera survives the round trip** (2026-08-19). The map's pan and zoom
+  are session state, like the fold toggles: opening a focus plate and coming
+  back — by any path, back button included — restores the camera exactly as
+  the reviewer left it. The map frames itself only on a fresh session; `f`
+  refits on demand. The same rule holds on `/data`.
 
 ## The six mechanisms
 

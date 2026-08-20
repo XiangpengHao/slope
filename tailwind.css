@@ -588,6 +588,7 @@ details.fold:not([open]) > summary::after {
 .atlas .data-node {
   width: 100%;
   height: 100%;
+  transition: opacity 400ms ease-out;
 }
 .atlas .data-mark {
   display: block;
@@ -619,13 +620,13 @@ details.fold:not([open]) > summary::after {
 }
 .atlas .dm-kw {
   flex: none;
-  color: var(--color-ink-soft);
+  color: var(--color-tok-kw);
 }
 .atlas .dm-nm {
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: 700;
-  color: var(--color-ink);
+  color: var(--color-tok-type);
 }
 .atlas .data-mark:hover .dm-nm {
   text-decoration: underline;
@@ -641,15 +642,15 @@ details.fold:not([open]) > summary::after {
 .atlas .dm-ty {
   font-size: 9.5px;
   line-height: 14px;
-  color: var(--color-ink-soft);
   overflow-wrap: anywhere;
 }
 .atlas .dm-ty,
-.atlas .dm-row {
-  color: var(--color-ink-soft);
+.atlas .dm-row,
+.atlas .dm-var {
+  color: var(--color-ink);
 }
-/* One holding field, quoted: its name, then its declared type with the one run
-   that names the held type at full ink. */
+/* One field, quoted as written: its name, then its declared type, with the
+   one run that names a held workspace type bold. */
 .atlas .dm-row {
   font-size: 10px;
   line-height: 15px;
@@ -658,22 +659,38 @@ details.fold:not([open]) > summary::after {
   text-overflow: ellipsis;
 }
 .atlas .dm-fname {
-  color: var(--color-ink-soft);
+  color: var(--color-ink);
 }
 .atlas .dm-held {
-  color: var(--color-ink);
-  font-weight: 500;
+  font-weight: 600;
 }
-/* An enum's variants, as written, read across the block. */
+/* An enum's variants as written, one row each, payloads included. */
 .atlas .dm-var {
   font-size: 10px;
   line-height: 15px;
-  color: var(--color-ink-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* A mark's rows are quotations: inside them color is token class — the
+   plate's own palette — and it stops at the block's frame. The counted folds
+   and the locator below stay in the chart's monochrome voice. */
+.atlas .data-mark .tok-kw {
+  color: var(--color-tok-kw);
+}
+.atlas .data-mark .tok-type {
+  color: var(--color-tok-type);
+}
+.atlas .data-mark .tok-num {
+  color: var(--color-tok-num);
+}
+.atlas .data-mark .tok-punct {
+  color: var(--color-tok-punct);
 }
 /* What the mark holds back, counted. A mark that hides nothing draws no rule. */
 .atlas .dm-folds {
   margin-top: 3px;
-  padding-top: 2px;
+  padding-top: 3px;
   border-top: 1px dotted color-mix(in srgb, var(--color-ink-line) 70%, transparent);
 }
 .atlas .dm-fold {
@@ -806,9 +823,53 @@ details.fold:not([open]) > summary::after {
 .atlas .data-wire.is-hot .wire-label {
   fill: var(--color-ink);
 }
+
+/* The selection's ink. The chosen block wears the app's focus ring; its blast
+   radius — the transitive holders a shape change could reach, and what it
+   directly holds — keeps full pressure, folded holds inking back in; every
+   other mark and wire recedes to a lighter pressure. A reading, never a
+   re-layout: nothing moves, and the camera holds still. */
+.atlas .data-node.is-dim {
+  opacity: 0.35;
+}
+/* A receded block still answers a look. */
+.atlas .data-node.is-dim:hover {
+  opacity: 1;
+}
+.atlas .data-node.is-sel .data-mark {
+  border-color: var(--color-ink);
+  outline: 1.5px solid var(--color-ink);
+  outline-offset: 2px;
+}
+.atlas .data-wire {
+  transition: opacity 400ms ease-out;
+}
+.atlas .data-wire.is-dim {
+  opacity: 0.15;
+}
+.atlas .data-wire.is-folded.is-kin {
+  display: inline;
+}
+.atlas .data-wire.is-kin .wire-path {
+  stroke: var(--color-ink);
+}
+.atlas .data-wire.is-kin .wire-head {
+  fill: var(--color-ink);
+}
+.atlas .data-wire.is-kin .wire-path,
+.atlas .data-wire.is-kin .wire-head {
+  opacity: 1;
+}
+.atlas .data-wire.is-kin .wire-label {
+  fill: var(--color-ink);
+}
 @media (prefers-reduced-motion: reduce) {
   .atlas .data-wire {
     animation: none;
+    transition: none;
+  }
+  .atlas .data-node {
+    transition: none;
   }
 }
 

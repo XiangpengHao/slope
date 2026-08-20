@@ -27,6 +27,16 @@ states it in one line ("every changed type sits in views::codemap").
   labeled with rust's own words. Crate-root items sit in the crate's own
   frame. One level of module frames only — deeper module paths stay in the
   locator.
+- **Within a frame, the ownership forest** (user decision 2026-08-19, from a
+  two-structure comp against this workspace's real graph). Marks seat as
+  trees: every type under its one heaviest same-frame `Owns` holder, ownership
+  depth as layers, so an owns edge is usually a short line between neighbors.
+  Statics, unheld types, high-fan-in types, and types owned only from other
+  modules are the frame's roots. A type never seats outside its own module —
+  the frame stays belongs-to — so cross-frame ownership stays drawn ink, and
+  module coupling at data precision is visible instead of arranged away.
+  The other dealt structure, physical containment (blocks inside blocks), was
+  declined at rest; if it returns it returns as a focus gesture.
 - **Edges = holding, plus a reference reading.** Two families:
   1. **Holds** (structure, always drawn): `from` has a field whose type walk
      reaches `to`. Kind and wrapper are written, never invented (see below).
@@ -43,9 +53,20 @@ states it in one line ("every changed type sits in views::codemap").
 - **Privacy folds types, not statics.** Private structs/enums never draw as
   marks; each frame counts them (`+ 5 private types`) and any holds edge
   touching one lands on that counted fold row, the way ties land on gates.
-- **Clicking a type goes to its definition plate** (`/code/file/..?item=`) —
-  the plate already quotes the source and lists references; the data chart
-  adds no second plate in v1.
+- **Clicking a type selects it** (revised 2026-08-19, user-confirmed after
+  review; it replaced the earlier click-to-plate decision). Selection is a URL
+  (`/data/type/:..path?item=`) and a reading: the selected block wears the
+  app's focus ring, everything a shape change to it could reach — its
+  transitive holders, walked holder-ward over the holds edges — keeps full
+  ink with its wires (folded ones ink back in), what it directly holds keeps
+  ink one hop down, ties touching the selection keep their own, and every
+  other mark and wire recedes to a lighter pressure. Nothing moves and the
+  camera holds still. A selection sheet (right column) names the selection,
+  lists who holds it and what it holds — each row re-centers the selection —
+  states the blast radius in words (`a shape change here reaches 9 more types
+  upstream.`), and carries the one step further: `open its definition →` to
+  the code plate. Escape, bare paper, or clicking the selected block again
+  deselects; the definition plate itself is never duplicated.
 
 ## The walk (how holds edges are computed)
 
@@ -65,14 +86,16 @@ semantic type is walked:
   Borrows > plain); its kind follows the same order.
 - A workspace struct/enum/trait reached by the walk becomes an edge target;
   external types are wrappers and atoms, never marks. A field whose walk
-  reaches no workspace type counts as one **plain field**.
+  reaches no workspace type draws no edge — its row is still quoted.
 - Type aliases resolve through HIR (a `TrailStep` field walks as
-  `Option<String>` — plain). Generic parameters on the holder are holes and
-  count as plain. Nothing is guessed; the legend carries the wrapper table
-  and the rule.
+  `Option<String>`). Generic parameters on the holder are holes: the walk
+  reads nothing through them. Nothing is guessed; the legend carries the
+  wrapper table and the rule.
 
-Field rows on a mark quote the source: the field name and its declared type
-exactly as written (`details: Vec<FileDetail>`), never a reconstruction.
+Every field on a mark is quoted from the source in declaration order: the
+field name and its declared type exactly as written (`details:
+Vec<FileDetail>`), never a reconstruction (revised 2026-08-19; plain fields
+were counted before, and the reviewer asked for the fields themselves).
 
 ## Wire model
 
@@ -84,9 +107,11 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
   fields: Vec<(String, String)> }` — `from` and `to` are `ItemMark` ids;
   `fields` holds each holding field as written: (name, declared type).
   A static's edge uses the static's mark as `from`.
-- `ItemMark` gains: `plain_fields: u32` (structs: fields whose walk found no
-  workspace type), `variants: Vec<String>` (enums: variant names as written),
-  `ty: String` (statics: the declared type as written; empty otherwise).
+- `ItemMark` gains: `field_rows: Vec<(String, String)>` (structs and unions:
+  every field as written, in declaration order — name, declared type),
+  `variants: Vec<String>` (enums: variants as written, payloads and
+  discriminants included), `ty: String` (statics: the declared type as
+  written; empty otherwise).
 - `CodeGraph` gains `holds: Vec<HoldEdge>`.
 - Reference ties at type precision are computed on the client from the
   existing `item_edges`: each endpoint climbs `parent` to its outermost mark;
@@ -110,6 +135,13 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
   label band on the border (`mod views` mono 500; the crate name where
   more than one crate exists). Each frame's counted fold row collects its
   private types.
+- **Seating order inside a frame**: statics first (the frame's root
+  register), then trees by subtree size, then the high-fan-in leaves
+  (`held by n types`, never seated under a parent and never parents
+  themselves), then the counted fold rows. The primary holder is the
+  heaviest same-frame `Owns` holder by field count, ties broken by survey
+  order; a cycle keeps the earlier seat and draws the closing edge; a type
+  owned solely by private code seats under the frame's private fold row.
 - **Holds edges**: quadratic hairlines bowed toward open paper, arrowhead on
   the holder. Owns solid; Shares dashed with the wrapper word on the line
   (paper halo); Borrows dotted with `&`; Dyn dashed with `dyn`.
@@ -121,8 +153,10 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
   fan-in + 2 if changed) into a counted row: `+ 23 more types`. A fold
   counts; an open frame states no tally.
 - Layout is a pure function of (marks, edges, measured sizes) —
-  deterministic, blocks measured before placement, frames packed toward a
-  landscape sheet.
+  deterministic, blocks measured before placement. Each frame lays its
+  forest as tidy trees: children in a row under their parent, the parent
+  centered over them, layers by ownership depth; trees then shelve toward a
+  landscape frame, and frames pack toward a landscape sheet as before.
 
 ## Chrome
 
@@ -136,8 +170,13 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
   the static mark, `held by n` folds, `M`, the plain-field fold, then the
   honesty notes (wrapper table, what the walk does not chart, unresolved
   counts).
-- Route: `/data`. Escape climbs to `/data` from nothing (no sub-focus in
-  v1); `f` refits; `←`/`→` retrace history as everywhere.
+- Routes: `/data` (the whole chart) and `/data/type/:..path?item=` (one
+  selection). Escape deselects to `/data`; `f` refits (reserving the sheet's
+  column while one is open); `←`/`→` retrace history as everywhere.
+- The camera survives the round trip (2026-08-19): pan and zoom are session
+  state, so leaving for a definition plate (or another altitude) and coming
+  back restores the camera exactly as the reviewer left it. The chart frames
+  itself only on a fresh session.
 - Loading: the shared survey's constellation moment (same index as `/code`).
   Failure: plain-words plate; the other altitudes keep working.
 
@@ -153,9 +192,8 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
 
 ## Open decisions
 
-- A data-side selection sheet (held by / holds / lifecycle per type) — v1
-  links to the code plate instead.
-- Lifecycle bands (born / mutated / read / consumed from fn signatures).
+- Lifecycle on the selection sheet (born / mutated / read / consumed from fn
+  signatures) — the sheet exists (held by / holds); lifecycle does not.
 - Item-level diff marks (shape diff of a type against the base revision).
 - Search on `/data` (the code search exists; jumping to data marks does not).
 - Whether traits deserve resting marks or appear only as `dyn` targets.

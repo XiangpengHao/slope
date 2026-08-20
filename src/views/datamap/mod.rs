@@ -23,16 +23,56 @@ use dioxus::prelude::*;
 use crate::Route;
 use crate::api::CodeGraph;
 use crate::views::codemap::use_code;
-use crate::views::datamap::chrome::{DataCartouche, DataLegend};
+use crate::views::datamap::chrome::{DataCartouche, DataLegend, DataSheet};
 use crate::views::datamap::map::DataChart;
 use crate::views::datamap::model::DataModel;
+use crate::views::survey::use_code_graph;
+
+/// The selection the current route asks for: the defining file, then the label
+/// the type's definition plate selects by.
+pub fn data_selection(route: &Route) -> Option<(String, String)> {
+    match route {
+        Route::DataType { path, item } => Some((path.join("/"), item.clone())),
+        _ => None,
+    }
+}
+
+/// The route that selects one type on the chart.
+pub fn data_type_route(path: &str, item: &str) -> Route {
+    Route::DataType {
+        path: path.split('/').map(str::to_string).collect(),
+        item: item.to_string(),
+    }
+}
 
 /// `/data` — the whole chart. The chart lives in the survey shell; this route
-/// adds nothing else. There is no sub-focus at this altitude in v1: selecting a
-/// type climbs to its definition plate at the code altitude.
+/// adds nothing else.
 #[component]
 pub fn DataOverview() -> Element {
     rsx! {}
+}
+
+/// `/data/type/:..path?:item` — one type selected. On the chart, what a shape
+/// change to it could reach keeps its ink; this sheet says who holds it and
+/// what it holds. Its definition plate stays one step further, on the sheet's
+/// own link. The key carries the whole selection, so re-centering starts the
+/// sheet's folds closed.
+#[component]
+pub fn DataType(path: Vec<String>, item: String) -> Element {
+    let Some(graph) = use_code_graph() else {
+        return rsx! {};
+    };
+    let joined = path.join("/");
+    rsx! {
+        div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-auto z-10 flex items-end sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:items-start sm:p-3",
+            DataSheet {
+                key: "{joined}|{item}",
+                graph,
+                path: joined.clone(),
+                item,
+            }
+        }
+    }
 }
 
 /// The data chart and its furniture. Mounted by the survey shell, which has
@@ -40,6 +80,8 @@ pub fn DataOverview() -> Element {
 #[component]
 pub fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
     let code = use_code();
+    let route = use_route::<Route>();
+    let sel = data_selection(&route);
     // The cartouche and the legend need the survey's totals, not its geometry:
     // one pass over the wire model, kept until the survey itself changes. The
     // reading toggle is peeked, not read: it moves which ties rest on the
@@ -49,7 +91,7 @@ pub fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Elem
     }));
 
     rsx! {
-        DataChart { graph }
+        DataChart { graph, sel }
         Outlet::<Route> {}
         div { class: "pointer-events-none absolute bottom-3 left-3 top-3 z-10 hidden w-64 flex-col gap-2 sm:flex",
             DataCartouche {
