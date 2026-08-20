@@ -8,8 +8,11 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{WorkspaceGraph, workspace_graph};
-use crate::views::atlas::Chart;
+use crate::views::atlas::{Chart, DrawnCap};
 use crate::views::chrome::{Legend, SearchBox, TitleBlock};
+use crate::views::codemap::CodeState;
+use crate::views::codemap::map::CodeCamera;
+use crate::views::datamap::map::DataCamera;
 use crate::views::survey::SurveyShell;
 
 type GraphResource = Resource<Result<WorkspaceGraph, ServerFnError>>;
@@ -110,17 +113,11 @@ impl Trail {
     }
 }
 
-// The review session's state lives in globals, not component scope: the
-// router remounts parts of the tree across route-variant changes, and the
-// trail must outlive every remount.
-static TRAIL: GlobalSignal<Trail> = Signal::global(Trail::default);
-static VISITED: GlobalSignal<HashSet<String>> = Signal::global(HashSet::new);
-static ANNOUNCE: GlobalSignal<String> = Signal::global(String::new);
-static DIR: GlobalSignal<DirFilter> = Signal::global(DirFilter::default);
-static SELECTED: GlobalSignal<Vec<String>> = Signal::global(Vec::new);
-
 /// Shared review state: the trail, which crates were visited, the edge
-/// direction filter, and the screen-reader announcement line.
+/// direction filter, and the screen-reader announcement line. Provided as a
+/// context by the shell — the one scope that survives every route change —
+/// so the trail outlives the route-component remounts, and every app
+/// instance (a test's `VirtualDom` included) owns its own copy.
 #[derive(Clone, Copy)]
 pub struct AtlasState {
     pub trail: Signal<Trail>,
@@ -134,14 +131,20 @@ pub struct AtlasState {
     pub selected: Signal<Vec<String>>,
 }
 
-pub fn use_atlas() -> AtlasState {
-    AtlasState {
-        trail: TRAIL.signal(),
-        visited: VISITED.signal(),
-        announce: ANNOUNCE.signal(),
-        dir: DIR.signal(),
-        selected: SELECTED.signal(),
+impl AtlasState {
+    pub(crate) fn new() -> Self {
+        Self {
+            trail: Signal::new(Trail::default()),
+            visited: Signal::new(HashSet::new()),
+            announce: Signal::new(String::new()),
+            dir: Signal::new(DirFilter::default()),
+            selected: Signal::new(Vec::new()),
+        }
     }
+}
+
+pub fn use_atlas() -> AtlasState {
+    use_context()
 }
 
 /// The browser's back button, from code: one step back along the trail.
@@ -177,7 +180,16 @@ pub fn AtlasShell() -> Element {
     let resource: GraphResource = use_resource(workspace_graph);
     use_context_provider(|| resource);
 
-    let atlas = use_atlas();
+    // Every store of review-session state is provided here, on the layout
+    // above every route: the router remounts route components across
+    // route-variant changes, and the trail, disclosure, and camera memories
+    // must outlive every remount. Views reach them through context, so a
+    // test can mount any view under a provider of its own.
+    let atlas = use_context_provider(AtlasState::new);
+    use_context_provider(DrawnCap::new);
+    use_context_provider(CodeState::new);
+    use_context_provider(CodeCamera::new);
+    use_context_provider(DataCamera::new);
 
     // The back/forward keys live on the shell, not the views: they must
     // survive every route change, and they never need a channel back.
@@ -381,5 +393,101 @@ fn SurveyFailed(message: String, resource: GraphResource) -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use dioxus::dioxus_core::NoOpMutations;
+
+    use super::*;
+
+    /// A miniature shell: provides the review state the way [`AtlasShell`]
+    /// does, and takes one trail step on mount.
+    fn shell() -> Element {
+        let mut atlas = use_context_provider(AtlasState::new);
+        use_hook(move || atlas.trail.write().note(Some("alpha".to_string())));
+        rsx! {}
+    }
+
+    // Why the state lives in context, not globals: every mounted app owns
+    // its own review session, so a test can drive one shell's trail without
+    // a second shell — or the next test — seeing it move.
+    #[test]
+    fn each_mounted_shell_owns_its_own_review_state() {
+        let mut one = VirtualDom::new(shell);
+        one.rebuild_in_place();
+        let mut two = VirtualDom::new(shell);
+        two.rebuild_in_place();
+
+        // Walk the first shell a step further; the second must not move.
+        one.in_scope(ScopeId::APP, || {
+            let mut trail = consume_context::<AtlasState>().trail;
+            trail.write().note(Some("beta".to_string()));
+        });
+
+        let walked = |vdom: &VirtualDom| {
+            vdom.in_scope(ScopeId::APP, || {
+                consume_context::<AtlasState>().trail.peek().walked()
+            })
+        };
+        assert_eq!(walked(&one), vec!["alpha", "beta"]);
+        assert_eq!(walked(&two), vec!["alpha"]);
+    }
+
+    // What providing state on the layout leans on: the router keeps a layout
+    // mounted while the route variant under it changes. A probe layout counts
+    // its mounts; navigating between two variants must not add one.
+    #[derive(Debug, Clone, Routable, PartialEq)]
+    enum Probe {
+        #[layout(ProbeShell)]
+        #[route("/")]
+        One {},
+        #[route("/two/:name")]
+        Two { name: String },
+    }
+
+    #[component]
+    fn ProbeShell() -> Element {
+        let mounts = use_context::<std::rc::Rc<std::cell::Cell<u32>>>();
+        use_hook(move || mounts.set(mounts.get() + 1));
+        rsx! {
+            Outlet::<Probe> {}
+        }
+    }
+
+    #[component]
+    fn One() -> Element {
+        rsx! {}
+    }
+
+    #[component]
+    fn Two(name: String) -> Element {
+        rsx! {}
+    }
+
+    #[test]
+    fn the_layout_survives_route_variant_changes() {
+        fn app() -> Element {
+            rsx! {
+                Router::<Probe> {}
+            }
+        }
+        let mounts = std::rc::Rc::new(std::cell::Cell::new(0u32));
+        let mut vdom = VirtualDom::new(app).with_root_context(mounts.clone());
+        vdom.rebuild_in_place();
+        assert_eq!(mounts.get(), 1);
+
+        // Navigate `/` → `/two/serde`, the shape of `/` → `/crate/serde`.
+        vdom.in_scope(ScopeId::APP, || {
+            dioxus::history::history().push("/two/serde".to_string());
+        });
+        vdom.render_immediate(&mut NoOpMutations);
+        vdom.render_immediate(&mut NoOpMutations);
+        assert_eq!(
+            mounts.get(),
+            1,
+            "the layout remounted across a route-variant change"
+        );
     }
 }

@@ -267,8 +267,8 @@ mode: **Operate**.
   wire), dedents it, and lexes it with `ra_ap_syntax` into per-line runs
   tagged with a token class (keyword, doc, comment, string, number, lifetime,
   attribute, type, fn, macro, ident, punctuation, space). No new dependency,
-  nothing on the wasm client. Fetched per (file, item) and cached in a global
-  signal beside the file details.
+  nothing on the wasm client. Fetched per (file, item) and cached in the
+  shell's session state (a context on the layout) beside the file details.
 - Runs carry their targets: the scan keeps every resolved reference's
   name-token byte range per file (`CodeIndex::ref_spans` — method and field
   names, a path's last segment; references inside macro expansions map back

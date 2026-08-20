@@ -13,9 +13,12 @@ readable — ownership is in the types. `Arc<Mutex<T>>` says shared mutable
 state in the signature; `&'a T` says view; a `static` says state no type
 holds. The chart draws exactly that. Visitor mode: **Operate**.
 
-The diff story this altitude tells: which types a change added or touched,
-and whether the change moved state across a sharing boundary. The cartouche
-states it in one line ("every changed type sits in views::codemap").
+The diff story this altitude tells (built 2026-08-19, from an approved
+prototype): the **structural diff**. The chart is drawn against the base
+revision in its own grammar — added marks flare, removed marks stand as
+ghosts, appeared and disappeared edges go with them, and change kinds are
+written in the tools' own words. The cartouche states it in one line ("the
+diff lands in api and views").
 
 ## Decisions (user-confirmed)
 
@@ -98,6 +101,51 @@ field name and its declared type exactly as written (`details:
 Vec<FileDetail>`), never a reconstruction (revised 2026-08-19; plain fields
 were counted before, and the reviewer asked for the fields themselves).
 
+## The structural diff (built 2026-08-19)
+
+One rule at every altitude, landed here first: the diff is drawn in the
+map's own grammar, at the map's own granularity.
+
+- **Base edition, read syntactically** (`src/analyze/basediff.rs`). For each
+  changed file, `file_at_base` fetches the text as the base wrote it and
+  `ra_ap_syntax` parses it — no name resolution, no second rust-analyzer
+  run. Declarations match by kind and name (inline-module paths included);
+  a removed relation's target is matched by name against the types the
+  chart knows, ambiguous names are counted, and the legend states the
+  method. A full semantic survey of the base would slot in behind the same
+  wire model; this is the cheap edition by user decision ("syntactic first,
+  keep the full survey in mind").
+- **Letters are git's own**: `A` added since the base, `M` declaration
+  changed, `D` removed. A file-level change no longer marks a type: the
+  letter is the declaration's own delta, so an untouched type in a touched
+  file stays quiet. A diff-touched block wears the flare on its own frame.
+- **Ghosts.** A removed type or static is drawn from the base edition —
+  dashed frame, rows quoted as the base wrote them, locator
+  `src/views/shell.rs:113 (base)` — and seats in the frame its path names.
+  Its sheet says "removed since the base"; its definition link is replaced
+  by "its definition left the working copy."
+- **Rows.** An added field or variant wears the diff's `+` in flare; a
+  dropped one is quoted from the base, struck, and seated where it stood
+  (a same-named field whose type changed is both, the diff's own idiom for
+  a changed line). The resting row window stretches to the last diff row,
+  so diff rows never hide behind a fold.
+- **Edges.** A holding edge the base could not have drawn (either end
+  added, or every drawing field added) takes flare with `added` on the
+  line, after the wrapper's word. An edge only the base had is re-drawn
+  flare-dashed with `removed` — from the base's dropped rows and the
+  ghosts' own, by name. A pair that still holds through another field
+  draws no removed edge. Diff edges never fold and never lose their flare
+  to hover or selection ink.
+- **The recede.** While the diff has anything to say, untouched marks and
+  fold rows rest at a lighter pressure (hover restores); the diff-touched
+  never fold, whatever the budget. A clean diff draws none of this.
+- **Words.** The cartouche: `7 added · 13 removed · 13 changed` (no noun —
+  statics count too) and "the diff lands in api and views". The sheet
+  quotes the selection's own change rows (`+ delta: Delta`,
+  `− changed: bool` struck), marks hold rows with their far end's letter
+  and the edge's event word, and a ghost's blast line reads "the removal
+  reaches n more types upstream."
+
 ## Wire model
 
 Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
@@ -113,6 +161,14 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
   `variants: Vec<String>` (enums: variants as written, payloads and
   discriminants included), `ty: String` (statics: the declared type as
   written; empty otherwise).
+- The structural diff (2026-08-19): `ItemMark` gains `delta: Delta`
+  (`Same` / `Added` / `Changed`), `fields_added` / `variants_added`
+  (indexes into the quoted rows) and `fields_removed` / `variants_removed`
+  (base rows with the working-copy index they seat before). `HoldEdge`
+  gains `event: Option<HoldEvent>` (`Added` / `Removed`); removed edges are
+  synthesized from the base rows. `CodeGraph` gains
+  `ghosts: Vec<GhostMark>` — removed types and statics quoted from the
+  base, their ids continuing after `items` so edges can land on them.
 - `CodeGraph` gains `holds: Vec<HoldEdge>`.
 - Reference ties at type precision are computed on the client from the
   existing `item_edges`: each endpoint climbs `parent` to its outermost mark;
@@ -127,7 +183,8 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
   keyword-blue, the name at 700 — type-teal for a struct or union, purple for
   an enum (decided 2026-08-19, user-confirmed), so a product type and a sum
   type read apart at chart zoom, where the keyword is the small run and the
-  name is the one that carries. An amber `M` where the defining file changed.
+  name is the one that carries. An amber `A`, `M`, or `D` where the
+  structural diff has something to say about the declaration itself.
   Body: every field quoted as written and every variant quoted whole
   (payloads and discriminants included), colored by token class the way a
   definition plate colors its source, with the one run naming a held
@@ -182,12 +239,14 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
 - Cartouche (top-left): workspace name, the altitude ladder
   `dependencies · code · data` (all three cartouches gain the third rung),
   facts (`54 structs · 18 enums · 11 roots`), the diff line, the amber
-  changed counts, and the insight line naming the top-level modules that
-  hold changed types.
+  structural-diff counts (`7 added · 13 removed · 13 changed`), and the
+  insight line naming the top-level modules the diff landed in.
 - The `references` toggle rides the cartouche (uses / used by / both).
 - Legend beneath the cartouche: the three edge families with drawn samples,
   the static mark, the two name colors (`Wire` · `HoldKind`), `held by n`
-  folds, `M`, the row fold and what selecting the block gives back, then the
+  folds, the structural diff's key (`A`/`M`/`D`, `+`/`−` rows, added and
+  removed wire samples, the recede), the row fold and what selecting the
+  block gives back, then the
   honesty notes (wrapper table, that a plain type name is external and draws
   no line, what the walk does not chart, unresolved counts).
 - Routes: `/data` (the whole chart) and `/data/type/:..path?item=` (one
@@ -214,6 +273,13 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
 
 - Lifecycle on the selection sheet (born / mutated / read / consumed from fn
   signatures) — the sheet exists (held by / holds); lifecycle does not.
-- Item-level diff marks (shape diff of a type against the base revision).
+- A full semantic survey of the base revision (exact base edges) behind the
+  same wire model — the syntactic edition is the committed first step, not
+  the last word.
+- The code altitude's pass of the same grammar: `A`/`D`/`M`/`R` on file
+  blocks, added/removed/signature-changed/body-changed on item rows, and
+  the untouched-callers split on the definition plate.
+- Renames and moves as drawn traces (a matched removed+added pair is
+  already read as a move, silently; it draws nothing yet).
 - Search on `/data` (the code search exists; jumping to data marks does not).
 - Whether traits deserve resting marks or appear only as `dyn` targets.

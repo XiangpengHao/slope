@@ -4,28 +4,42 @@
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, HoldKind};
+use crate::api::{CodeGraph, Delta, HoldEvent, HoldKind};
 use crate::views::codemap::chrome::{Altitude, AltitudeSwitch, decl_words, plural};
 use crate::views::codemap::{RefDir, item_route, use_code};
 use crate::views::datamap::data_type_route;
-use crate::views::datamap::model::{Anchor, DataFacts, DataModel, upstream};
+use crate::views::datamap::model::{Anchor, DataFacts, DataModel, RowState, upstream};
 
-/// Which top-level modules a change landed in, in plain words. The chart shows
+/// Which top-level modules the diff landed in, in plain words. The chart shows
 /// a reviewer where the amber is; the cartouche says it out loud, because that
 /// one sentence is the answer to why they climbed to this altitude.
 fn insight(modules: &[String]) -> Option<String> {
     match modules {
         [] => None,
-        [one] => Some(format!("changed types sit in {one} alone")),
-        [a, b] => Some(format!("changed types sit in {a} and {b}")),
+        [one] => Some(format!("the diff lands in {one} alone")),
+        [a, b] => Some(format!("the diff lands in {a} and {b}")),
         rest => {
             let (last, first) = rest.split_last()?;
-            Some(format!(
-                "changed types sit in {} and {last}",
-                first.join(", ")
-            ))
+            Some(format!("the diff lands in {} and {last}", first.join(", ")))
         }
     }
+}
+
+/// The structural diff's own line: only what happened, in git's order. The
+/// counts cover types and statics alike, so no noun — the marks are right
+/// there on the chart.
+fn diff_words(facts: &DataFacts) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    if facts.added > 0 {
+        parts.push(format!("{} added", facts.added));
+    }
+    if facts.removed > 0 {
+        parts.push(format!("{} removed", facts.removed));
+    }
+    if facts.changed > 0 {
+        parts.push(format!("{} changed", facts.changed));
+    }
+    parts.join(" · ")
 }
 
 /// The data chart's title block: what the workspace holds, what the diff moved,
@@ -45,15 +59,13 @@ pub fn DataCartouche(facts: DataFacts, workspace: String, diff_line: String) -> 
                 div { class: "mt-2 space-y-1 border-t border-ink-line pt-2 font-data text-[10.5px] leading-relaxed text-ink",
                     AltitudeSwitch { at: Altitude::Data }
                     p { class: "text-ink-soft", "{diff_line}" }
-                    if facts.changed > 0 {
-                        p { class: "text-flare",
-                            "{plural(facts.changed, \"type\")} in changed files"
-                        }
+                    if !diff_words(&facts).is_empty() {
+                        p { class: "text-flare", "{diff_words(&facts)}" }
                         if let Some(insight) = insight {
                             p { class: "text-ink-soft", "{insight}" }
                         }
                     } else {
-                        p { class: "text-ink-soft", "no files changed" }
+                        p { class: "text-ink-soft", "no shape changes since the base" }
                     }
                 }
             }
@@ -124,45 +136,59 @@ struct HoldRow {
     to: Option<Route>,
     decl: String,
     name: String,
-    changed: bool,
+    letter: Option<&'static str>,
     word: String,
+    /// The relation's own diff event, in its word.
+    event: Option<&'static str>,
 }
 
 /// The rows one side of the selection draws, from each hold's far end. A
 /// fold-row end names its count and its module instead of a type — the
 /// chart's own words for what it does not draw.
-fn hold_rows(model: &DataModel, holds: Vec<(&Anchor, HoldKind, &str)>) -> Vec<HoldRow> {
+fn hold_rows(
+    model: &DataModel,
+    holds: Vec<(&Anchor, HoldKind, &str, Option<HoldEvent>)>,
+) -> Vec<HoldRow> {
     let by_id: std::collections::HashMap<u32, &crate::views::datamap::model::DataMark> =
         model.marks.iter().map(|m| (m.id, m)).collect();
     holds
         .into_iter()
-        .map(|(anchor, kind, via)| match anchor {
-            Anchor::Mark(id) => {
-                let mark = by_id.get(id);
-                HoldRow {
-                    to: mark.map(|m| data_type_route(&m.path, &m.label)),
-                    decl: mark.map(|m| decl_words(m.vis, m.kind)).unwrap_or_default(),
-                    name: mark.map(|m| m.name.clone()).unwrap_or_default(),
-                    changed: mark.is_some_and(|m| m.changed),
-                    word: hold_word(kind, via),
+        .map(|(anchor, kind, via, event)| {
+            let event = match event {
+                Some(HoldEvent::Added) => Some("added"),
+                Some(HoldEvent::Removed) => Some("removed"),
+                None => None,
+            };
+            match anchor {
+                Anchor::Mark(id) => {
+                    let mark = by_id.get(id);
+                    HoldRow {
+                        to: mark.map(|m| data_type_route(&m.path, &m.label)),
+                        decl: mark.map(|m| decl_words(m.vis, m.kind)).unwrap_or_default(),
+                        name: mark.map(|m| m.name.clone()).unwrap_or_default(),
+                        letter: mark.and_then(|m| m.letter()),
+                        word: hold_word(kind, via),
+                        event,
+                    }
                 }
-            }
-            Anchor::Private(frame) | Anchor::More(frame) => {
-                let frame = &model.frames[*frame as usize];
-                let count = if matches!(anchor, Anchor::Private(_)) {
-                    format!("+ {}", plural(frame.private as usize, "private type"))
-                } else {
-                    format!("+ {}", plural(frame.more as usize, "more type"))
-                };
-                let place = frame
-                    .label(model.multi_crate)
-                    .unwrap_or_else(|| frame.krate.clone());
-                HoldRow {
-                    to: None,
-                    decl: String::new(),
-                    name: format!("{count} · {place}"),
-                    changed: false,
-                    word: hold_word(kind, via),
+                Anchor::Private(frame) | Anchor::More(frame) => {
+                    let frame = &model.frames[*frame as usize];
+                    let count = if matches!(anchor, Anchor::Private(_)) {
+                        format!("+ {}", plural(frame.private as usize, "private type"))
+                    } else {
+                        format!("+ {}", plural(frame.more as usize, "more type"))
+                    };
+                    let place = frame
+                        .label(model.multi_crate)
+                        .unwrap_or_else(|| frame.krate.clone());
+                    HoldRow {
+                        to: None,
+                        decl: String::new(),
+                        name: format!("{count} · {place}"),
+                        letter: None,
+                        word: hold_word(kind, via),
+                        event,
+                    }
                 }
             }
         })
@@ -188,15 +214,21 @@ fn HoldList(rows: Vec<HoldRow>) -> Element {
                                 span { class: "shrink-0 text-ink-soft", "{row.decl}" }
                             }
                             span { class: "truncate font-medium text-ink", "{row.name}" }
-                            if row.changed {
-                                span { class: "shrink-0 font-bold text-flare", "M" }
+                            if let Some(letter) = row.letter {
+                                span { class: "shrink-0 font-bold text-flare", "{letter}" }
                             }
                             span { class: "ml-auto shrink-0 text-[9px] text-ink-soft", "{row.word}" }
+                            if let Some(event) = row.event {
+                                span { class: "shrink-0 text-[9px] text-flare", "{event}" }
+                            }
                         }
                     } else {
                         span { class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] text-ink-soft",
                             span { class: "truncate", "{row.name}" }
                             span { class: "ml-auto shrink-0 text-[9px]", "{row.word}" }
+                            if let Some(event) = row.event {
+                                span { class: "shrink-0 text-[9px] text-flare", "{event}" }
+                            }
                         }
                     }
                 }
@@ -252,7 +284,7 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
             .holds
             .iter()
             .filter(|h| h.held == at)
-            .map(|h| (&h.holder, h.kind, h.via.as_str()))
+            .map(|h| (&h.holder, h.kind, h.via.as_str(), h.event))
             .collect(),
     );
     let holds: Vec<HoldRow> = hold_rows(
@@ -261,9 +293,32 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
             .holds
             .iter()
             .filter(|h| h.holder == at)
-            .map(|h| (&h.held, h.kind, h.via.as_str()))
+            .map(|h| (&h.held, h.kind, h.via.as_str(), h.event))
             .collect(),
     );
+    // The selection's own diff, in words: its letter's sentence, then every
+    // added and dropped row exactly as the block draws them.
+    let change_rows: Vec<(&'static str, String, bool)> = mark
+        .fields
+        .iter()
+        .chain(mark.variants.iter())
+        .filter_map(|row| {
+            let mk = row.state.marker()?;
+            let text = if row.name.is_empty() {
+                row.decl.clone()
+            } else {
+                format!("{}: {}", row.name, row.decl)
+            };
+            Some((mk, text, row.state == RowState::Removed))
+        })
+        .collect();
+    let change_line = if mark.ghost {
+        Some("removed since the base — this block quotes the base edition.")
+    } else if mark.delta == Delta::Added {
+        Some("added since the base.")
+    } else {
+        None
+    };
     // The blast radius in one line: how much further than its direct holders
     // a change to this shape travels.
     let pairs: Vec<(Anchor, Anchor)> = model.holds.iter().map(|h| (h.held, h.holder)).collect();
@@ -289,15 +344,35 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
                 h2 { class: "mt-1.5 flex items-baseline gap-1.5 font-data text-[15px]",
                     span { class: "shrink-0 text-[11px] text-ink-soft", "{decl}" }
                     span { class: "truncate font-semibold text-ink", "{mark.name}" }
-                    if mark.changed {
+                    if let Some(letter) = mark.letter() {
                         span {
                             class: "shrink-0 font-bold text-flare",
-                            title: "changed since the diff base",
-                            "M"
+                            title: match letter {
+                                "A" => "added since the diff base",
+                                "D" => "removed since the diff base — quoted from the base edition",
+                                _ => "declaration changed since the diff base",
+                            },
+                            "{letter}"
                         }
                     }
                 }
                 p { class: "mt-0.5 font-data text-[9.5px] text-ink-soft", "{mark.locator()}" }
+                if let Some(line) = change_line {
+                    p { class: "mt-1 font-data text-[10px] leading-relaxed text-flare", "{line}" }
+                }
+                if !change_rows.is_empty() {
+                    div { class: "mt-1 space-y-0.5 font-data text-[10px] leading-snug",
+                        for (i , (mk , text , gone)) in change_rows.iter().enumerate() {
+                            p { key: "{i}", class: "flex items-baseline gap-1",
+                                span { class: "shrink-0 font-bold text-flare", "{mk}" }
+                                span {
+                                    class: if *gone { "text-ink-soft line-through" } else { "text-ink" },
+                                    "{text}"
+                                }
+                            }
+                        }
+                    }
+                }
             }
             div { class: "min-h-0 flex-1 overflow-y-auto px-4 pb-3",
                 h3 { class: "mt-1 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
@@ -312,7 +387,11 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
                 }
                 if beyond > 0 {
                     p { class: "mt-1 px-1 font-data text-[10px] leading-relaxed text-ink-soft",
-                        "a shape change here reaches {plural(beyond, \"more type\")} upstream."
+                        if mark.ghost {
+                            "the removal reaches {plural(beyond, \"more type\")} upstream."
+                        } else {
+                            "a shape change here reaches {plural(beyond, \"more type\")} upstream."
+                        }
                     }
                 }
                 h3 { class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
@@ -327,10 +406,16 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
                 }
             }
             div { class: "border-t border-ink-line px-4 py-2",
-                Link {
-                    class: "font-data text-[9.5px] tracking-[0.12em] uppercase text-ink underline underline-offset-4 hover:text-ink-soft",
-                    to: item_route(&mark.path, &mark.label),
-                    "open its definition →"
+                if mark.ghost {
+                    p { class: "font-data text-[9.5px] text-ink-soft",
+                        "its definition left the working copy."
+                    }
+                } else {
+                    Link {
+                        class: "font-data text-[9.5px] tracking-[0.12em] uppercase text-ink underline underline-offset-4 hover:text-ink-soft",
+                        to: item_route(&mark.path, &mark.label),
+                        "open its definition →"
+                    }
                 }
             }
         }
@@ -459,8 +544,43 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                         }
                     }
                     p {
-                        span { class: "text-flare", "M" }
-                        span { class: "text-ink-soft", " — defined in a file the diff touched" }
+                        span { class: "font-bold text-flare", "A" }
+                        span { class: "text-ink-soft", " added since the base · " }
+                        span { class: "font-bold text-flare", "M" }
+                        span { class: "text-ink-soft", " declaration changed · " }
+                        span { class: "font-bold text-flare", "D" }
+                        span { class: "text-ink-soft",
+                            " removed — a dashed ghost quoting the base edition. a diff-touched block wears the flare on its own frame."
+                        }
+                    }
+                    p {
+                        span { class: "font-bold text-flare", "+" }
+                        span { class: "text-ink-soft", " field or variant added · " }
+                        span { class: "font-bold text-flare", "−" }
+                        span { class: "text-ink-soft",
+                            " removed — struck, quoted from the base, seated where it stood."
+                        }
+                    }
+                    div { class: "flex items-start gap-2",
+                        WireSample { dash: "is-owns is-added", width: 1.4 }
+                        span {
+                            span { class: "text-ink", "added" }
+                            span { class: "text-ink-soft",
+                                " — a holding edge the base did not have, its word on the line."
+                            }
+                        }
+                    }
+                    div { class: "flex items-start gap-2",
+                        WireSample { dash: "is-owns is-removed" }
+                        span {
+                            span { class: "text-ink", "removed" }
+                            span { class: "text-ink-soft",
+                                " — a holding edge only the base had, re-drawn from its edition."
+                            }
+                        }
+                    }
+                    p { class: "text-ink-soft",
+                        "while the diff has anything to say, untouched types rest at a lighter pressure; hovering restores them. a clean diff draws none of this."
                     }
                     p {
                         span { class: "dm-nm", "Wire" }
@@ -528,6 +648,9 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                     }
                     p {
                         "type parameters are holes: their fields quote as written, and the walk reads nothing through them."
+                    }
+                    p {
+                        "the structural diff reads the base edition of each changed file syntactically: declarations match by kind and name, and a removed relation\u{2019}s target is matched by name — never type-resolved."
                     }
                     if facts.trait_holds > 0 {
                         p {

@@ -578,6 +578,12 @@ fn survey_attached(
             field_rows: std::mem::take(&mut walk.field_rows[id]),
             variants: std::mem::take(&mut walk.variants[id]),
             ty: std::mem::take(&mut walk.ty[id]),
+            // The structural diff writes these once the graph stands.
+            delta: crate::api::Delta::Same,
+            fields_added: Vec::new(),
+            fields_removed: Vec::new(),
+            variants_added: Vec::new(),
+            variants_removed: Vec::new(),
         });
     }
 
@@ -588,11 +594,11 @@ fn survey_attached(
         *in_files.entry(to).or_default() += 1;
     }
 
-    // The epoch's touch, by path — the same diff the crate altitude reads.
-    let changed: HashSet<String> = super::vcs::detect_diff(dir)
-        .changed_files
-        .into_iter()
-        .collect();
+    // The epoch's touch — the same diff the crate altitude reads. The full
+    // diff stays around: the structural pass below reads base editions of the
+    // changed files through it.
+    let diff = super::vcs::detect_diff(dir);
+    let changed: HashSet<String> = diff.changed_files.iter().cloned().collect();
 
     let files: Vec<FileInfo> = raw
         .iter()
@@ -698,16 +704,22 @@ fn survey_attached(
         ));
     }
 
+    let mut graph = CodeGraph {
+        files,
+        refs,
+        items,
+        item_edges,
+        holds: walk.holds,
+        ghosts: Vec::new(),
+        unresolved,
+        notes,
+    };
+    // The structural diff: per-declaration deltas, ghosts for what the base
+    // had, and added/removed hold events, read syntactically from the base.
+    super::basediff::apply(dir, &diff, &mut graph, &sources, &details);
+
     Ok(CodeIndex {
-        graph: CodeGraph {
-            files,
-            refs,
-            items,
-            item_edges,
-            holds: walk.holds,
-            unresolved,
-            notes,
-        },
+        graph,
         details,
         sources,
         ref_spans,
@@ -786,7 +798,7 @@ fn compact(text: impl ToString) -> String {
 /// Visibility as declared. `pub(crate)`, `pub(super)`, and `pub(in path)`
 /// stop at the crate boundary and must not read as `pub`; `pub(self)` is no
 /// wider than no `pub` at all.
-fn vis_kind(vis: Option<ast::Visibility>) -> Vis {
+pub(super) fn vis_kind(vis: Option<ast::Visibility>) -> Vis {
     match vis.map(|v| v.kind()) {
         None | Some(VisibilityKind::PubSelf) => Vis::Private,
         Some(VisibilityKind::Pub) => Vis::Pub,

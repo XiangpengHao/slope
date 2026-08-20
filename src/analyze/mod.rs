@@ -1,6 +1,7 @@
 //! Server-side workspace analysis: `cargo metadata` for the resolved graph,
 //! the detected VCS for the diff, manifest comparison for dependency events.
 
+mod basediff;
 pub mod code;
 mod data;
 mod manifest;

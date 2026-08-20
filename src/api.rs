@@ -223,6 +223,58 @@ pub struct FileRef {
     pub count: u32,
 }
 
+/// How an item's own declaration differs from the diff base — the structural
+/// diff. Computed syntactically: the base edition of each changed file is
+/// parsed (never type-resolved) and declarations are matched by kind and
+/// name, so it is exact about added, removed, and rewritten declarations and
+/// says nothing about what it cannot see. Items the base already had, in
+/// files the diff never touched, are `Same` by construction.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Delta {
+    /// Written at the base exactly as it is now.
+    #[default]
+    Same,
+    /// Not at the base: this epoch added it.
+    Added,
+    /// At the base with different text: this epoch rewrote it.
+    Changed,
+}
+
+/// A holding relation's own diff event. `Added` edges are live edges the base
+/// did not have; `Removed` edges are re-drawn from the base edition and exist
+/// only as diff ink — the working copy no longer has the field that drew them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum HoldEvent {
+    Added,
+    Removed,
+}
+
+/// A type or static the base had that the working copy dropped. The data
+/// chart draws it as a ghost — dashed frame, rows quoted from the base
+/// edition — so a removed type leaves a mark instead of vanishing. Its `id`
+/// continues after [`CodeGraph::items`], so a [`HoldEdge`] can land on it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct GhostMark {
+    /// `items.len() + index into ghosts` — one id space with the live marks.
+    pub id: u32,
+    /// The file that declared it at the base, relative to the workspace root.
+    /// The file itself may be gone too.
+    pub path: String,
+    /// The crate that file belongs to.
+    pub krate: String,
+    pub name: String,
+    pub kind: ItemKind,
+    pub vis: Vis,
+    /// 1-based line in the base edition of the file.
+    pub line: u32,
+    /// Fields as the base wrote them: (name, declared type).
+    pub field_rows: Vec<(String, String)>,
+    /// An enum's variants as the base wrote them.
+    pub variants: Vec<String>,
+    /// A static's declared type at the base.
+    pub ty: String,
+}
+
 /// One landmark the map may engrave: an item, seated in the containment tree
 /// (crate → directory → file → type → method), with the weight that decides
 /// whether it clears the altitude's bar.
@@ -265,6 +317,18 @@ pub struct ItemMark {
     /// A static's declared type, as written. Empty for everything that is not
     /// a static.
     pub ty: String,
+    /// How this declaration differs from the diff base.
+    pub delta: Delta,
+    /// Fields added since the base: indexes into `field_rows`.
+    pub fields_added: Vec<u32>,
+    /// Fields the base had that the working copy dropped, quoted from the
+    /// base: (insert before this index of `field_rows`, name, declared type).
+    pub fields_removed: Vec<(u32, String, String)>,
+    /// Variants added since the base: indexes into `variants`.
+    pub variants_added: Vec<u32>,
+    /// Variants the base had that the working copy dropped, quoted from the
+    /// base: (insert before this index of `variants`, the variant as written).
+    pub variants_removed: Vec<(u32, String)>,
 }
 
 /// What a field says about the state its type reaches: whether the holder
@@ -304,6 +368,10 @@ pub struct HoldEdge {
     /// name is its index; an enum payload's is its variant's name; a static's
     /// is the static's own name.
     pub fields: Vec<(String, String)>,
+    /// This relation against the diff base: `None` = the base held it too.
+    /// A `Removed` edge is not structure — the working copy no longer has the
+    /// field that drew it — and either end may name a ghost.
+    pub event: Option<HoldEvent>,
 }
 
 /// A reference between two items, aggregated per pair. Endpoints carry their
@@ -334,8 +402,12 @@ pub struct CodeGraph {
     pub item_edges: Vec<ItemEdge>,
     /// Which type holds which, and through what wrapper — the data
     /// altitude's structure. Every surveyed type is here, private ones
-    /// included.
+    /// included. Edges carrying a [`HoldEvent`] are the structural diff's:
+    /// `Removed` ones are re-drawn from the base edition.
     pub holds: Vec<HoldEdge>,
+    /// Types and statics the base had that the working copy dropped. Their
+    /// ids continue after `items`, so `holds` can land on them.
+    pub ghosts: Vec<GhostMark>,
     /// Names the survey could not resolve (type-inference limits). They are
     /// not on the chart; the words on the plate must say so.
     pub unresolved: u32,

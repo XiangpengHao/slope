@@ -259,6 +259,7 @@ pub(super) fn walk<'db>(
             kind,
             via,
             fields,
+            event: None,
         })
         .collect();
     holds.sort_by(|a, b| {
@@ -276,7 +277,7 @@ pub(super) fn walk<'db>(
 /// One variant as its source writes it: the name, its payload types, and its
 /// discriminant, with whitespace runs collapsed so a record variant broken
 /// across lines still reads as one row. Nothing is reconstructed.
-fn variant_text(variant: &ast::Variant, name: &str) -> String {
+pub(super) fn variant_text(variant: &ast::Variant, name: &str) -> String {
     let collapse = |node: &SyntaxNode| {
         node.text()
             .to_string()
@@ -453,7 +454,7 @@ fn fields_of<'db>(
 /// to one space — the only edit, so a type broken across lines still reads as
 /// one row. Nothing is reconstructed, abbreviated, or resolved: the reader
 /// sees the words that are in the file.
-fn type_text(ty: Option<ast::Type>) -> String {
+pub(super) fn type_text(ty: Option<ast::Type>) -> String {
     let Some(ty) = ty else {
         return String::new();
     };

@@ -19,14 +19,16 @@ use dioxus_flow::WorldLayer;
 use dioxus_flow::prelude::{Flow, Node as FlowNode, NodeViewCtx, Point, Rect, Side, Size, Viewport};
 
 use crate::Route;
-use crate::api::{CodeGraph, HoldKind, ItemKind};
+use crate::api::{CodeGraph, HoldEvent, HoldKind, ItemKind};
 use crate::views::codemap::chrome::{decl_words, plural};
 use crate::views::codemap::map::{narrow_viewport, prefers_reduced_motion, tie_ends, window_size};
 use crate::views::codemap::tree::{Placed, text_w};
 use crate::views::codemap::use_code;
 use crate::views::datamap::data_type_route;
 use crate::views::datamap::layout::{self, DataLayout, Sizes};
-use crate::views::datamap::model::{Anchor, DataMark, DataModel, FIELD_CAP, FieldRow, upstream};
+use crate::views::datamap::model::{
+    Anchor, DataMark, DataModel, FIELD_CAP, FieldRow, RowState, upstream,
+};
 
 // ---------------------------------------------------------------------------
 // Mark furniture, in flow units — one unit is one CSS pixel at zoom 1. These
@@ -88,7 +90,10 @@ pub struct MarkView {
     /// `pub struct`, `static` — what rust writes in front of the name.
     pub decl: String,
     pub name: String,
-    pub changed: bool,
+    /// The structural diff's letter, in git's alphabet: `A`, `D`, or `M`.
+    pub letter: Option<&'static str>,
+    /// A removed type, quoted from the base edition and drawn dashed.
+    pub ghost: bool,
     pub is_static: bool,
     /// A sum type. Its name takes the palette's other type color, so struct
     /// and enum tell apart at a glance the keyword can only be read at.
@@ -141,6 +146,15 @@ impl DataNodeData {
             DataNodeData::Fold(f) => f.anchor,
         }
     }
+
+    /// The diff touched this node: it keeps full pressure while the rest of a
+    /// dirty chart recedes.
+    fn touched(&self) -> bool {
+        match self {
+            DataNodeData::Mark(m) => m.letter.is_some(),
+            DataNodeData::Fold(_) => false,
+        }
+    }
 }
 
 /// A frame, placed, with the label it wears on its border.
@@ -166,6 +180,8 @@ pub struct WireView {
     pub rest: bool,
     /// The kind's dash grammar, as a CSS class.
     pub class: &'static str,
+    /// The structural diff's class — `is-added` / `is-removed` — or empty.
+    pub event: &'static str,
 }
 
 /// Everything one build of the chart draws.
@@ -176,6 +192,8 @@ pub struct Built {
     pub holds: Vec<WireView>,
     pub ties: Vec<WireView>,
     pub frame: Option<Rect>,
+    /// The diff touched this chart: untouched marks rest at lighter pressure.
+    pub dirty: bool,
 }
 
 /// The selection's ink. One chosen mark; everything a shape change to it could
@@ -253,20 +271,34 @@ fn measure(mark: &DataMark) -> MarkView {
     let decl = decl_words(mark.vis, mark.kind);
     let head = format!("{decl} {}", mark.name);
     let locator = mark.locator();
-    let shown_fields = mark.fields.len().min(FIELD_CAP);
-    let shown_variants = mark.variants.len().min(FIELD_CAP);
+    let letter = mark.letter();
+    // Diff rows never rest hidden: the resting window stretches down to the
+    // last added or removed row, and only what follows them still folds.
+    let window = |rows: &[FieldRow]| -> usize {
+        let need = rows
+            .iter()
+            .rposition(|r| r.state != RowState::Same)
+            .map(|at| at + 1)
+            .unwrap_or(0);
+        rows.len().min(FIELD_CAP.max(need))
+    };
+    let shown_fields = window(&mark.fields);
+    let shown_variants = window(&mark.variants);
     let (folds, open_folds) = fold_words(mark, shown_fields, shown_variants);
 
-    let mut widest = text_w(&head, 10.5) + if mark.changed { 12.0 } else { 0.0 };
+    let mut widest = text_w(&head, 10.5) + if letter.is_some() { 12.0 } else { 0.0 };
     widest = widest.max(text_w(&locator, 8.5));
     // A long row clips at the block's own maximum rather than stretching it
-    // past the paper's patience.
+    // past the paper's patience. A marked row carries its `+`/`−` in front.
     let wrapping = MARK_MAX_W - PAD_X;
+    let marker_w = |row: &FieldRow| if row.state == RowState::Same { 0.0 } else { 11.0 };
     for row in &mark.fields {
-        widest = widest.max(text_w(&format!("{}: {}", row.name, row.decl), 10.0).min(wrapping));
+        widest = widest.max(
+            (text_w(&format!("{}: {}", row.name, row.decl), 10.0) + marker_w(row)).min(wrapping),
+        );
     }
     for row in &mark.variants {
-        widest = widest.max(text_w(&row.decl, 10.0).min(wrapping));
+        widest = widest.max((text_w(&row.decl, 10.0) + marker_w(row)).min(wrapping));
     }
     for fold in &folds {
         widest = widest.max(text_w(fold, 9.0));
@@ -300,7 +332,8 @@ fn measure(mark: &DataMark) -> MarkView {
         id: mark.id,
         decl,
         name: mark.name.clone(),
-        changed: mark.changed,
+        letter,
+        ghost: mark.ghost,
         is_static: mark.is_static(),
         is_enum: mark.kind == ItemKind::Enum,
         fields: mark.fields.clone(),
@@ -428,22 +461,38 @@ pub fn build_chart(model: &DataModel) -> Built {
         .collect();
 
     // The arrowhead rests on the holder, so the wire runs held → holder.
+    // A diff event writes its own word on the line, after the wrapper's.
     let holds: Vec<WireView> = model
         .holds
         .iter()
         .filter_map(|hold| {
             let (a, b) = (placed.rect(hold.held)?, placed.rect(hold.holder)?);
             let (from, to) = tie_ends(a, b);
+            let event_word = match hold.event {
+                Some(HoldEvent::Added) => Some("added"),
+                Some(HoldEvent::Removed) => Some("removed"),
+                None => None,
+            };
+            let label = match event_word {
+                Some(word) if hold.via.is_empty() => Some(word.to_string()),
+                Some(word) => Some(format!("{} · {word}", hold.via)),
+                None => (!hold.via.is_empty()).then(|| hold.via.clone()),
+            };
             Some(WireView {
                 key: hold.key(),
                 from,
                 to,
                 a: hold.held,
                 b: hold.holder,
-                label: (!hold.via.is_empty()).then(|| hold.via.clone()),
+                label,
                 width: hold_width(hold.kind),
                 rest: hold.rest,
                 class: hold_class(hold.kind),
+                event: match hold.event {
+                    Some(HoldEvent::Added) => "is-added",
+                    Some(HoldEvent::Removed) => "is-removed",
+                    None => "",
+                },
             })
         })
         .collect();
@@ -465,6 +514,7 @@ pub fn build_chart(model: &DataModel) -> Built {
                 width: tie_width(tie.count),
                 rest: tie.rest,
                 class: "is-ref",
+                event: "",
             })
         })
         .collect();
@@ -481,6 +531,7 @@ pub fn build_chart(model: &DataModel) -> Built {
         holds,
         ties,
         frame,
+        dirty: model.marks.iter().any(|m| m.letter().is_some()),
     }
 }
 
@@ -584,6 +635,8 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
         a {
             class: "data-mark",
             class: if view.is_static { "is-root" },
+            class: if view.letter.is_some() { "is-diff" },
+            class: if view.ghost { "is-ghost" },
             href: to.to_string(),
             title: "{title}",
             onclick: move |e: Event<MouseData>| {
@@ -598,8 +651,16 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
                     class: if view.is_enum { "is-sum" },
                     "{view.name}"
                 }
-                if view.changed {
-                    span { class: "dm-chg", title: "changed since the diff base", "M" }
+                if let Some(letter) = view.letter {
+                    span {
+                        class: "dm-chg",
+                        title: match letter {
+                            "A" => "added since the diff base",
+                            "D" => "removed since the diff base — quoted from the base edition",
+                            _ => "declaration changed since the diff base",
+                        },
+                        "{letter}"
+                    }
                 }
             }
             if !view.ty.is_empty() {
@@ -616,6 +677,10 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
             }
             for (i , row) in view.fields.iter().take(fields).enumerate() {
                 p { key: "{i}", class: "dm-row",
+                    class: if !row.state.class().is_empty() { "{row.state.class()}" },
+                    if let Some(mk) = row.state.marker() {
+                        span { class: "dm-mk", "{mk}" }
+                    }
                     span { class: "dm-fname", "{row.name}: " }
                     for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
                         span {
@@ -629,6 +694,10 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
             }
             for (i , row) in view.variants.iter().take(variants).enumerate() {
                 p { key: "v{i}", class: "dm-var",
+                    class: if !row.state.class().is_empty() { "{row.state.class()}" },
+                    if let Some(mk) = row.state.marker() {
+                        span { class: "dm-mk", "{mk}" }
+                    }
                     for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
                         span {
                             key: "{j}",
@@ -784,6 +853,7 @@ fn WireLayer(
             g {
                 key: "{w.key}",
                 class: "{family} {w.class}",
+                class: if !w.event.is_empty() { "{w.event}" },
                 class: if !w.rest { "is-folded" },
                 class: if is_hot { "is-hot" },
                 class: if is_kin { "is-kin" },
@@ -837,11 +907,23 @@ fn chrome_insets(narrow: bool, panel: bool) -> (f64, f64, f64, f64) {
 const MIN_CHART_ZOOM: f64 = 0.22;
 
 /// The camera as the reviewer last left it. Session state that must survive
-/// route-variant remounts, like the code map's globals: opening a definition
+/// route-variant remounts, like the code map's camera: opening a definition
 /// plate unmounts the chart, and coming back must give the reader back their
 /// own pan and zoom, not a fresh framing — the camera carries the mental map
-/// (the Kept-Ground rule). `f` still refits on demand.
-static CAMERA: GlobalSignal<Option<Viewport>> = Signal::global(|| None);
+/// (the Kept-Ground rule). `f` still refits on demand. Provided as a context
+/// by the atlas shell, which outlives every remount.
+#[derive(Clone, Copy)]
+pub(crate) struct DataCamera {
+    pub(crate) viewport: Signal<Option<Viewport>>,
+}
+
+impl DataCamera {
+    pub(crate) fn new() -> Self {
+        Self {
+            viewport: Signal::new(None),
+        }
+    }
+}
 
 fn frame_chart(
     flow: dioxus_flow::prelude::FlowHandle<DataNodeData>,
@@ -886,6 +968,7 @@ document.addEventListener('keydown', window.__slopifyKeys);
 #[component]
 pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
     let code = use_code();
+    let camera = use_context::<DataCamera>();
     let flow = dioxus_flow::use_flow_handle::<DataNodeData>();
     let nav = use_navigator();
 
@@ -964,7 +1047,7 @@ pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
                     gloo_timers::future::TimeoutFuture::new(50).await;
                 }
                 core_live.set(true);
-                if let Some(vp) = *CAMERA.peek() {
+                if let Some(vp) = *camera.viewport.peek() {
                     flow.set_viewport(vp, 0);
                 } else if let Some(frame) = frame {
                     frame_chart(flow, frame, panel, 0);
@@ -988,7 +1071,8 @@ pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
             return;
         }
         let Some(core) = flow.core() else { return };
-        *CAMERA.write() = Some(*core.viewport.read());
+        let mut saved = camera.viewport;
+        saved.set(Some(*core.viewport.read()));
     });
 
     use_hook(move || {
@@ -1039,10 +1123,16 @@ pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
                         .map(|k| k.node_class(anchor))
                         .unwrap_or("");
                     let selected = kin_class == "is-sel";
+                    // On a dirty chart, whatever the diff never touched rests
+                    // at a lighter pressure; a selection's own ink outranks it.
+                    let rest = kin_class.is_empty()
+                        && built.read().dirty
+                        && !ctx.node.data.touched();
                     rsx! {
                         div {
                             class: "data-node",
                             class: if !kin_class.is_empty() { "{kin_class}" },
+                            class: if rest { "is-rest" },
                             onmouseenter: move |_| hot.set(Some(anchor)),
                             onmouseleave: move |_| hot.set(None),
                             DataNode { ctx, selected }
@@ -1096,13 +1186,15 @@ mod tests {
             label: name.to_string(),
             path: "src/api.rs".to_string(),
             line: 10,
-            changed: false,
+            delta: crate::api::Delta::Same,
+            ghost: false,
             fields: fields
                 .into_iter()
                 .map(|(name, decl, target)| FieldRow {
                     name: name.to_string(),
                     decl: decl.to_string(),
                     target: target.to_string(),
+                    state: RowState::Same,
                 })
                 .collect(),
             variants: Vec::new(),
@@ -1130,6 +1222,7 @@ mod tests {
             name: String::new(),
             decl: "File(String, String)".to_string(),
             target: String::new(),
+            state: RowState::Same,
         };
         let mut long = mark("Tok", ItemKind::Enum, vec![]);
         long.variants = vec![row.clone(); FIELD_CAP + 12];
@@ -1162,6 +1255,7 @@ mod tests {
                     "u32".to_string()
                 },
                 target: String::new(),
+                state: RowState::Same,
             })
             .collect();
         let view = measure(&wide);

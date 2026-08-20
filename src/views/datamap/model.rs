@@ -21,7 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::api::{CodeGraph, HoldKind, ItemKind, ItemMark, Vis};
+use crate::api::{CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, ItemMark, Vis};
 use crate::views::codemap::RefDir;
 use crate::views::codemap::model::Containment;
 
@@ -114,6 +114,36 @@ impl Frame {
     }
 }
 
+/// One quoted row's own diff state, in the diff's own idiom: an added row
+/// wears `+`, a dropped one is quoted from the base and struck.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum RowState {
+    #[default]
+    Same,
+    Added,
+    Removed,
+}
+
+impl RowState {
+    /// The diff's own marker for the row.
+    pub fn marker(self) -> Option<&'static str> {
+        match self {
+            RowState::Same => None,
+            RowState::Added => Some("+"),
+            RowState::Removed => Some("−"),
+        }
+    }
+
+    /// The row's CSS class, empty for an untouched row.
+    pub fn class(self) -> &'static str {
+        match self {
+            RowState::Same => "",
+            RowState::Added => "is-add",
+            RowState::Removed => "is-del",
+        }
+    }
+}
+
 /// One holding field, quoted from the source: the name as written and the
 /// declared type as written. Nothing here is reconstructed.
 #[derive(Clone, PartialEq, Debug)]
@@ -123,6 +153,9 @@ pub struct FieldRow {
     /// The held type's name — the one run of the declaration drawn in full ink,
     /// so `Vec<FileDetail>` reads as the wrapper it is around the type it holds.
     pub target: String,
+    /// The row against the diff base. A `Removed` row is the base's, seated
+    /// where it stood.
+    pub state: RowState,
 }
 
 /// One type, static, or union with a block on the paper.
@@ -138,8 +171,11 @@ pub struct DataMark {
     /// The defining file, relative to the workspace root.
     pub path: String,
     pub line: u32,
-    /// Its file changed since the diff base.
-    pub changed: bool,
+    /// How its own declaration differs from the diff base.
+    pub delta: Delta,
+    /// The base had it, the working copy does not: a ghost, drawn dashed from
+    /// the base edition.
+    pub ghost: bool,
     /// Fields, quoted as written in declaration order — every one of them.
     /// A resting block draws [`FIELD_CAP`] and counts the rest on its foot.
     pub fields: Vec<FieldRow>,
@@ -165,9 +201,28 @@ impl DataMark {
         self.kind == ItemKind::Static
     }
 
-    /// Where it is written: `src/views/codemap/model.rs:278`.
+    /// Where it is written: `src/views/codemap/model.rs:278`. A ghost's line
+    /// is the base edition's, and says so.
     pub fn locator(&self) -> String {
-        format!("{}:{}", self.path, self.line)
+        if self.ghost {
+            format!("{}:{} (base)", self.path, self.line)
+        } else {
+            format!("{}:{}", self.path, self.line)
+        }
+    }
+
+    /// The letter the mark wears, in git's own alphabet: `A`dded since the
+    /// base, `D` for a ghost, `M` for a rewritten declaration. `None` where
+    /// the base wrote it exactly as it stands — whatever its file did.
+    pub fn letter(&self) -> Option<&'static str> {
+        if self.ghost {
+            return Some("D");
+        }
+        match self.delta {
+            Delta::Added => Some("A"),
+            Delta::Changed => Some("M"),
+            Delta::Same => None,
+        }
     }
 }
 
@@ -187,13 +242,16 @@ pub struct Hold {
     /// Drawn at rest. A folded edge stays in the set and inks in the moment the
     /// reader hovers either of its ends.
     pub rest: bool,
+    /// The relation against the diff base. Diff ink never folds: an edge with
+    /// an event always rests.
+    pub event: Option<HoldEvent>,
 }
 
 impl Hold {
     pub fn key(&self) -> String {
         format!(
-            "{:?}>{:?}:{:?}:{}",
-            self.held, self.holder, self.kind, self.via
+            "{:?}>{:?}:{:?}:{}:{:?}",
+            self.held, self.holder, self.kind, self.via, self.event
         )
     }
 }
@@ -253,9 +311,11 @@ pub struct DataModel {
     pub enums: usize,
     /// Statics, plus every drawn type no other type holds.
     pub roots: usize,
-    /// Drawn types whose defining file changed.
+    /// The structural diff's counts over the drawn marks.
+    pub added: usize,
+    pub removed: usize,
     pub changed: usize,
-    /// Top-level modules holding a changed type, in name order.
+    /// Top-level modules holding a diff-touched type, in name order.
     pub changed_modules: Vec<String>,
     /// Holds edges whose held end is a workspace trait. Traits get no mark of
     /// their own in v1, so these have nowhere to land.
@@ -269,6 +329,8 @@ pub struct DataFacts {
     pub structs: usize,
     pub enums: usize,
     pub roots: usize,
+    pub added: usize,
+    pub removed: usize,
     pub changed: usize,
     pub changed_modules: Vec<String>,
     pub trait_holds: usize,
@@ -283,6 +345,8 @@ impl DataModel {
             structs: self.structs,
             enums: self.enums,
             roots: self.roots,
+            added: self.added,
+            removed: self.removed,
             changed: self.changed,
             changed_modules: self.changed_modules.clone(),
             trait_holds: self.trait_holds,
@@ -399,8 +463,32 @@ impl DataModel {
         let changed_file: Vec<bool> = graph.files.iter().map(|f| f.changed).collect();
         let file_changed = |file: u32| changed_file.get(file as usize).copied().unwrap_or(false);
 
+        // Ghosts share the marks' id space, continuing after `items`.
+        let ghost_of = |id: u32| -> Option<&GhostMark> {
+            (id as usize)
+                .checked_sub(graph.items.len())
+                .and_then(|at| graph.ghosts.get(at))
+        };
+        let kind_of = |id: u32| -> Option<ItemKind> {
+            graph
+                .items
+                .get(id as usize)
+                .map(|m| m.kind)
+                .or_else(|| ghost_of(id).map(|g| g.kind))
+        };
+        let name_of = |id: u32| -> String {
+            graph
+                .items
+                .get(id as usize)
+                .map(|m| m.name.clone())
+                .or_else(|| ghost_of(id).map(|g| g.name.clone()))
+                .unwrap_or_default()
+        };
+        let ghost_key =
+            |g: &GhostMark| (g.krate.clone(), module_of(&g.path).map(str::to_string));
+
         // ---- Which marks are drawn, and which fold. ------------------------
-        let mut degree = vec![0u32; graph.items.len()];
+        let mut degree = vec![0u32; graph.items.len() + graph.ghosts.len()];
         for edge in &graph.holds {
             if let Some(d) = degree.get_mut(edge.from as usize) {
                 *d += 1;
@@ -425,12 +513,17 @@ impl DataModel {
 
         // Over budget, the quietest types fold to their frame's counted row.
         // Statics never fold: eleven of them are the whole session's state.
+        // Neither does anything the diff touched — the diff is what the
+        // reviewer came for.
         let mut folded: HashSet<u32> = HashSet::new();
         if drawn.len() > MARK_BUDGET {
             let mut ranked: Vec<u32> = drawn
                 .iter()
                 .copied()
-                .filter(|&m| graph.items[m as usize].kind != ItemKind::Static)
+                .filter(|&m| {
+                    graph.items[m as usize].kind != ItemKind::Static
+                        && graph.items[m as usize].delta == Delta::Same
+                })
                 .collect();
             ranked.sort_by_key(|&m| {
                 let mark = &graph.items[m as usize];
@@ -463,6 +556,7 @@ impl DataModel {
             .chain(folded.iter())
             .chain(private.iter())
             .filter_map(|&m| key_of(m).cloned())
+            .chain(graph.ghosts.iter().map(&ghost_key))
             .collect();
         keys.sort();
         keys.dedup();
@@ -508,11 +602,19 @@ impl DataModel {
             key_of(mark).and_then(|key| frame_index.get(key).copied())
         };
 
-        let mut anchor_of: Vec<Option<Anchor>> = vec![None; graph.items.len()];
+        let mut anchor_of: Vec<Option<Anchor>> =
+            vec![None; graph.items.len() + graph.ghosts.len()];
         for &m in &drawn {
             if let Some(frame) = frame_of(m) {
                 frames[frame as usize].marks.push(m);
                 anchor_of[m as usize] = Some(Anchor::Mark(m));
+            }
+        }
+        // Ghosts are always drawn: a removed type is diff ink, never folded.
+        for ghost in &graph.ghosts {
+            if let Some(&frame) = frame_index.get(&ghost_key(ghost)) {
+                frames[frame as usize].marks.push(ghost.id);
+                anchor_of[ghost.id as usize] = Some(Anchor::Mark(ghost.id));
             }
         }
         for &m in &private {
@@ -532,7 +634,8 @@ impl DataModel {
 
         // ---- Holds: every edge, landed on an anchor. -----------------------
         let mut trait_holds = 0usize;
-        let mut acc: HashMap<(Anchor, Anchor, HoldKind, String), u32> = HashMap::new();
+        let mut acc: HashMap<(Anchor, Anchor, HoldKind, String, Option<HoldEvent>), u32> =
+            HashMap::new();
         for edge in &graph.holds {
             let (holder, held) = (
                 anchor_of.get(edge.from as usize).copied().flatten(),
@@ -554,30 +657,46 @@ impl DataModel {
             if holder == held {
                 continue;
             }
-            *acc.entry((held, holder, edge.kind, edge.via.clone()))
+            *acc.entry((held, holder, edge.kind, edge.via.clone(), edge.event))
                 .or_default() += edge.fields.len() as u32;
         }
         let mut holds: Vec<Hold> = acc
             .into_iter()
-            .map(|((held, holder, kind, via), fields)| Hold {
+            .map(|((held, holder, kind, via, event), fields)| Hold {
                 held,
                 holder,
                 kind,
                 via,
                 fields,
                 rest: true,
+                event,
             })
             .collect();
+        let event_ord = |e: Option<HoldEvent>| match e {
+            None => 0u8,
+            Some(HoldEvent::Added) => 1,
+            Some(HoldEvent::Removed) => 2,
+        };
         holds.sort_by(|a, b| {
-            (a.held, a.holder, a.kind as u8, &a.via).cmp(&(b.held, b.holder, b.kind as u8, &b.via))
+            (a.held, a.holder, a.kind as u8, &a.via, event_ord(a.event)).cmp(&(
+                b.held,
+                b.holder,
+                b.kind as u8,
+                &b.via,
+                event_ord(b.event),
+            ))
         });
 
         // Who holds what. The arrowhead rests on the holder, so a type's fan-in
         // is the set of edges leaving it — and a type more than three drawn
         // types hold folds them all to a count on its own mark, where hovering
-        // either end inks them back in.
+        // either end inks them back in. A removed edge is diff ink, not
+        // structure: it neither counts toward the fold nor ever joins it.
         let mut fan_in: HashMap<Anchor, HashSet<Anchor>> = HashMap::new();
         for hold in &holds {
+            if hold.event == Some(HoldEvent::Removed) {
+                continue;
+            }
             fan_in.entry(hold.held).or_default().insert(hold.holder);
         }
         // Only a drawn mark may fold its fan-in: it has a foot to say `held by
@@ -591,7 +710,7 @@ impl DataModel {
             .map(|(anchor, holders)| (*anchor, holders.len() as u32))
             .collect();
         for hold in &mut holds {
-            hold.rest = !folded_fan.contains_key(&hold.held);
+            hold.rest = hold.event.is_some() || !folded_fan.contains_key(&hold.held);
         }
 
         // ---- Seating: the ownership forest inside each frame. ---------------
@@ -616,7 +735,12 @@ impl DataModel {
             let Some(home) = frame_of(id) else { continue };
             let mut weight: HashMap<Anchor, u32> = HashMap::new();
             for hold in &holds {
-                if hold.held != seat || hold.kind != HoldKind::Owns || hold.holder == seat {
+                if hold.held != seat
+                    || hold.kind != HoldKind::Owns
+                    || hold.holder == seat
+                    // A removed edge is not structure; it seats nothing.
+                    || hold.event == Some(HoldEvent::Removed)
+                {
                     continue;
                 }
                 if folded_fan.contains_key(&hold.holder) {
@@ -673,7 +797,7 @@ impl DataModel {
                 .collect();
             roots.sort_by_key(|&m| {
                 (
-                    graph.items[m as usize].kind != ItemKind::Static,
+                    kind_of(m) != Some(ItemKind::Static),
                     std::cmp::Reverse(subtree_size(Anchor::Mark(m), &seated)),
                     m,
                 )
@@ -706,17 +830,17 @@ impl DataModel {
         // which run of a row names a workspace type, and that run alone is
         // drawn bold. `graph.holds` arrives sorted, so the same survey always
         // writes the same block.
-        let drawn_set: HashSet<u32> = drawn.iter().copied().collect();
+        let drawn_set: HashSet<u32> = drawn
+            .iter()
+            .copied()
+            .chain(graph.ghosts.iter().map(|g| g.id))
+            .collect();
         let mut target_of: HashMap<(u32, String), String> = HashMap::new();
         for edge in &graph.holds {
             if !drawn_set.contains(&edge.from) {
                 continue;
             }
-            let target = graph
-                .items
-                .get(edge.to as usize)
-                .map(|m| m.name.clone())
-                .unwrap_or_default();
+            let target = name_of(edge.to);
             for (name, _) in &edge.fields {
                 // One field can reach two workspace types (`Arc<(A, B)>`); its
                 // row bolds the first, and the edges still say the rest.
@@ -725,45 +849,99 @@ impl DataModel {
                     .or_insert_with(|| target.clone());
             }
         }
+        let target = |id: u32, name: &str| -> String {
+            target_of
+                .get(&(id, name.to_string()))
+                .cloned()
+                .unwrap_or_default()
+        };
+        let vname = |written: &str| -> String {
+            written
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect()
+        };
+        // The base's dropped rows seat back where they stood, struck, so the
+        // diff reads in place. Insertions run back to front, so every
+        // recorded index still means what it meant.
+        let weave = |rows: &mut Vec<FieldRow>, removed: &mut Vec<(usize, FieldRow)>| {
+            removed.sort_by_key(|(before, _)| *before);
+            for (before, row) in removed.drain(..).rev() {
+                let at = before.min(rows.len());
+                rows.insert(at, row);
+            }
+        };
 
-        let marks: Vec<DataMark> = drawn
+        let mut marks: Vec<DataMark> = drawn
             .iter()
             .filter_map(|&id| {
                 let mark = &graph.items[id as usize];
                 let frame = frame_of(id)?;
                 let file = graph.files.get(mark.file as usize)?;
-                let fields: Vec<FieldRow> = mark
+                let mut fields: Vec<FieldRow> = mark
                     .field_rows
                     .iter()
-                    .map(|(name, decl)| FieldRow {
+                    .enumerate()
+                    .map(|(at, (name, decl))| FieldRow {
                         name: name.clone(),
                         decl: decl.clone(),
-                        target: target_of
-                            .get(&(id, name.clone()))
-                            .cloned()
-                            .unwrap_or_default(),
+                        target: target(id, name),
+                        state: if mark.fields_added.contains(&(at as u32)) {
+                            RowState::Added
+                        } else {
+                            RowState::Same
+                        },
                     })
                     .collect();
+                let mut dropped: Vec<(usize, FieldRow)> = mark
+                    .fields_removed
+                    .iter()
+                    .map(|(before, name, decl)| {
+                        (
+                            *before as usize,
+                            FieldRow {
+                                name: name.clone(),
+                                decl: decl.clone(),
+                                target: target(id, name),
+                                state: RowState::Removed,
+                            },
+                        )
+                    })
+                    .collect();
+                weave(&mut fields, &mut dropped);
                 // A variant's row is its whole written form; the edge that
                 // knows its target is filed under the variant's bare name.
-                let variants: Vec<FieldRow> = mark
+                let mut variants: Vec<FieldRow> = mark
                     .variants
                     .iter()
-                    .map(|written| {
-                        let vname: String = written
-                            .chars()
-                            .take_while(|c| c.is_alphanumeric() || *c == '_')
-                            .collect();
-                        FieldRow {
-                            name: String::new(),
-                            decl: written.clone(),
-                            target: target_of
-                                .get(&(id, vname))
-                                .cloned()
-                                .unwrap_or_default(),
-                        }
+                    .enumerate()
+                    .map(|(at, written)| FieldRow {
+                        name: String::new(),
+                        decl: written.clone(),
+                        target: target(id, &vname(written)),
+                        state: if mark.variants_added.contains(&(at as u32)) {
+                            RowState::Added
+                        } else {
+                            RowState::Same
+                        },
                     })
                     .collect();
+                let mut dropped: Vec<(usize, FieldRow)> = mark
+                    .variants_removed
+                    .iter()
+                    .map(|(before, written)| {
+                        (
+                            *before as usize,
+                            FieldRow {
+                                name: String::new(),
+                                decl: written.clone(),
+                                target: target(id, &vname(written)),
+                                state: RowState::Removed,
+                            },
+                        )
+                    })
+                    .collect();
+                weave(&mut variants, &mut dropped);
                 Some(DataMark {
                     id,
                     frame,
@@ -773,20 +951,60 @@ impl DataModel {
                     label: mark.label.clone(),
                     path: file.path.clone(),
                     line: mark.line,
-                    changed: file.changed,
+                    delta: mark.delta,
+                    ghost: false,
                     fields,
                     variants,
                     ty: mark.ty.clone(),
                     // A static's one edge is filed under the static's own
                     // name, the way a field's is under the field's.
-                    ty_target: target_of
-                        .get(&(id, mark.name.clone()))
-                        .cloned()
-                        .unwrap_or_default(),
+                    ty_target: target(id, &mark.name),
                     held_by: folded_fan.get(&Anchor::Mark(id)).copied().unwrap_or(0),
                 })
             })
             .collect();
+        // Ghosts: whole blocks quoted from the base edition. Their rows are
+        // the base's own — the block's dashed frame and `D` say the rest.
+        for ghost in &graph.ghosts {
+            let Some(&frame) = frame_index.get(&ghost_key(ghost)) else {
+                continue;
+            };
+            marks.push(DataMark {
+                id: ghost.id,
+                frame,
+                kind: ghost.kind,
+                vis: ghost.vis,
+                name: ghost.name.clone(),
+                label: ghost.name.clone(),
+                path: ghost.path.clone(),
+                line: ghost.line,
+                delta: Delta::Same,
+                ghost: true,
+                fields: ghost
+                    .field_rows
+                    .iter()
+                    .map(|(name, decl)| FieldRow {
+                        name: name.clone(),
+                        decl: decl.clone(),
+                        target: target(ghost.id, name),
+                        state: RowState::Same,
+                    })
+                    .collect(),
+                variants: ghost
+                    .variants
+                    .iter()
+                    .map(|written| FieldRow {
+                        name: String::new(),
+                        decl: written.clone(),
+                        target: target(ghost.id, &vname(written)),
+                        state: RowState::Same,
+                    })
+                    .collect(),
+                ty: ghost.ty.clone(),
+                ty_target: target(ghost.id, &ghost.name),
+                held_by: 0,
+            });
+        }
 
         // ---- Reference ties, at type precision. ----------------------------
         let containment = Containment::build(graph);
@@ -857,21 +1075,28 @@ impl DataModel {
         }
 
         // ---- Facts. ---------------------------------------------------------
+        // The workspace's counts are the working copy's: a ghost is drawn,
+        // never counted as current code.
         let structs = marks
             .iter()
-            .filter(|m| matches!(m.kind, ItemKind::Struct | ItemKind::Union))
+            .filter(|m| !m.ghost && matches!(m.kind, ItemKind::Struct | ItemKind::Union))
             .count();
-        let enums = marks.iter().filter(|m| m.kind == ItemKind::Enum).count();
+        let enums = marks
+            .iter()
+            .filter(|m| !m.ghost && m.kind == ItemKind::Enum)
+            .count();
         // A root is state nothing else holds: every static, and every type no
         // other type has a field of.
         let roots = marks
             .iter()
-            .filter(|m| !fan_in.contains_key(&Anchor::Mark(m.id)))
+            .filter(|m| !m.ghost && !fan_in.contains_key(&Anchor::Mark(m.id)))
             .count();
-        let changed = marks.iter().filter(|m| m.changed).count();
+        let added = marks.iter().filter(|m| m.delta == Delta::Added).count();
+        let removed = marks.iter().filter(|m| m.ghost).count();
+        let changed = marks.iter().filter(|m| m.delta == Delta::Changed).count();
         let mut changed_modules: Vec<String> = marks
             .iter()
-            .filter(|m| m.changed)
+            .filter(|m| m.letter().is_some())
             .map(|m| {
                 let frame = &frames[m.frame as usize];
                 frame.module.clone().unwrap_or_else(|| frame.krate.clone())
@@ -890,6 +1115,8 @@ impl DataModel {
             structs,
             enums,
             roots,
+            added,
+            removed,
             changed,
             changed_modules,
             trait_holds,
@@ -900,7 +1127,7 @@ impl DataModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{FileInfo, HoldEdge, ItemEdge};
+    use crate::api::{Delta, FileInfo, HoldEdge, HoldEvent, ItemEdge};
 
     fn file(id: u32, path: &str, changed: bool) -> FileInfo {
         FileInfo {
@@ -934,6 +1161,11 @@ mod tests {
             field_rows: Vec::new(),
             variants: Vec::new(),
             ty: String::new(),
+            delta: Delta::Same,
+            fields_added: Vec::new(),
+            fields_removed: Vec::new(),
+            variants_added: Vec::new(),
+            variants_removed: Vec::new(),
         }
     }
 
@@ -979,6 +1211,7 @@ mod tests {
                     kind: HoldKind::Owns,
                     via: String::new(),
                     fields: vec![("wire".into(), "Wire".into())],
+                    event: None,
                 },
                 HoldEdge {
                     from: 2,
@@ -986,6 +1219,7 @@ mod tests {
                     kind: HoldKind::Owns,
                     via: String::new(),
                     fields: vec![("wire".into(), "Wire".into())],
+                    event: None,
                 },
                 HoldEdge {
                     from: 3,
@@ -993,8 +1227,10 @@ mod tests {
                     kind: HoldKind::Shares,
                     via: "Arc".into(),
                     fields: vec![("CACHE".into(), "OnceCell<Arc<Index>>".into())],
+                    event: None,
                 },
             ],
+            ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
         }
@@ -1047,8 +1283,60 @@ mod tests {
         let index = model.marks.iter().find(|m| m.name == "Index").unwrap();
         assert_eq!(index.fields.len(), 1);
         assert_eq!(index.fields[0].target, "Wire");
-        assert!(index.changed);
-        assert_eq!(model.changed_modules, vec!["analyze".to_string()]);
+        // A changed file no longer marks a type by itself: the letter is the
+        // declaration's own delta.
+        assert_eq!(index.letter(), None);
+        assert!(model.changed_modules.is_empty());
+    }
+
+    #[test]
+    fn the_diff_draws_ghosts_and_interleaves_base_rows() {
+        let mut g = graph();
+        let ghost_id = g.items.len() as u32;
+        // The working copy dropped `refs: Vec<FileRef>` from `Index`, and
+        // `FileRef` itself.
+        g.items[1].delta = Delta::Changed;
+        g.items[1].fields_removed = vec![(1, "refs".into(), "Vec<FileRef>".into())];
+        g.ghosts.push(crate::api::GhostMark {
+            id: ghost_id,
+            path: "src/api.rs".into(),
+            krate: "slopify".into(),
+            name: "FileRef".into(),
+            kind: ItemKind::Struct,
+            vis: Vis::Pub,
+            line: 9,
+            field_rows: vec![("from".into(), "u32".into())],
+            variants: Vec::new(),
+            ty: String::new(),
+        });
+        g.holds.push(HoldEdge {
+            from: 1,
+            to: ghost_id,
+            kind: HoldKind::Owns,
+            via: String::new(),
+            fields: vec![("refs".into(), "Vec<FileRef>".into())],
+            event: Some(HoldEvent::Removed),
+        });
+        let model = DataModel::build(&g, RefDir::Uses);
+        let ghost = model.marks.iter().find(|m| m.name == "FileRef").unwrap();
+        assert!(ghost.ghost);
+        assert_eq!(ghost.letter(), Some("D"));
+        assert_eq!(ghost.locator(), "src/api.rs:9 (base)");
+        // The removed edge is drawn, resting, from the ghost to its holder.
+        assert!(model.holds.iter().any(|h| h.held == Anchor::Mark(ghost_id)
+            && h.holder == Anchor::Mark(1)
+            && h.event == Some(HoldEvent::Removed)
+            && h.rest));
+        // The base's row seats back where it stood, struck.
+        let index = model.marks.iter().find(|m| m.name == "Index").unwrap();
+        assert_eq!(index.letter(), Some("M"));
+        assert_eq!(index.fields.len(), 2);
+        assert_eq!(index.fields[1].name, "refs");
+        assert_eq!(index.fields[1].state, RowState::Removed);
+        assert_eq!((model.removed, model.changed), (1, 1));
+        assert_eq!(model.changed_modules, vec!["analyze".to_string(), "api".to_string()]);
+        // A ghost is drawn, never counted as current code.
+        assert_eq!(model.structs, 2);
     }
 
     #[test]
@@ -1072,6 +1360,7 @@ mod tests {
                 .iter()
                 .map(|name| ((*name).to_string(), "T".to_string()))
                 .collect(),
+            event: None,
         }
     }
 
@@ -1115,6 +1404,7 @@ mod tests {
                 holds(6, 2, &["node"]),
                 holds(7, 0, &["wire"]),
             ],
+            ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
         }
@@ -1243,6 +1533,7 @@ mod tests {
             ],
             item_edges: Vec::new(),
             holds: vec![holds(0, 1, &["b"]), holds(1, 0, &["a"])],
+            ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
         };

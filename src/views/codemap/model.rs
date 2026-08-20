@@ -489,6 +489,11 @@ mod tests {
             field_rows: Vec::new(),
             variants: Vec::new(),
             ty: String::new(),
+            delta: crate::api::Delta::Same,
+            fields_added: Vec::new(),
+            fields_removed: Vec::new(),
+            variants_added: Vec::new(),
+            variants_removed: Vec::new(),
         }
     }
 
@@ -531,6 +536,7 @@ mod tests {
                 },
             ],
             holds: Vec::new(),
+            ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
         }

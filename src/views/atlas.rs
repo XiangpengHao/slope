@@ -623,16 +623,29 @@ window.__slopifyKeys = (e) => {
 document.addEventListener('keydown', window.__slopifyKeys);
 "#;
 
-/// The ring cap the chart last painted. This is a global because the router
-/// remounts the layout when the route variant changes (`/` ↔ `/crate/:name`),
-/// which throws the chart's DOM away: without a memory of the geometry the
-/// reader was just looking at, an expansion can only be drawn as a jump.
-static DRAWN_CAP: GlobalSignal<Option<u32>> = Signal::global(|| None);
+/// The ring cap the chart last painted. Provided as a context by the atlas
+/// shell because stepping to another altitude (`/` ↔ `/code`) unmounts the
+/// chart and throws its DOM away: without a memory of the geometry the
+/// reader was just looking at, an expansion after a return could only be
+/// drawn as a jump.
+#[derive(Clone, Copy)]
+pub(crate) struct DrawnCap {
+    pub(crate) cap: Signal<Option<u32>>,
+}
+
+impl DrawnCap {
+    pub(crate) fn new() -> Self {
+        Self {
+            cap: Signal::new(None),
+        }
+    }
+}
 
 /// The rings chart, mounted once for the whole session.
 #[component]
 pub fn Chart(graph: WorkspaceGraph) -> Element {
     let atlas = use_atlas();
+    let drawn_cap = use_context::<DrawnCap>().cap;
     let flow = dioxus_flow::use_flow_handle::<StarData>();
     let nav = use_navigator();
 
@@ -681,19 +694,20 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
     // paint used — including across a remount — and then slides to the target
     // one frame later, so the stars and ring guides have a position to travel
     // from and the expansion is drawn as a move.
-    let drawn = use_signal(|| DRAWN_CAP.peek().unwrap_or(*cap.peek()));
+    let drawn = use_signal(|| drawn_cap.peek().unwrap_or(*cap.peek()));
     use_effect(move || {
         let target = cap();
         let mut drawn = drawn;
+        let mut drawn_cap = drawn_cap;
         if *drawn.peek() == target {
-            if *DRAWN_CAP.peek() != Some(target) {
-                *DRAWN_CAP.write() = Some(target);
+            if *drawn_cap.peek() != Some(target) {
+                drawn_cap.set(Some(target));
             }
             return;
         }
         if prefers_reduced_motion() {
             drawn.set(target);
-            *DRAWN_CAP.write() = Some(target);
+            drawn_cap.set(Some(target));
             return;
         }
         spawn(async move {
@@ -702,7 +716,7 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
             #[cfg(target_arch = "wasm32")]
             gloo_timers::future::TimeoutFuture::new(32).await;
             drawn.set(target);
-            *DRAWN_CAP.write() = Some(target);
+            drawn_cap.set(Some(target));
         });
     });
     // The geometry: angles are cap-independent, so a cap change only slides

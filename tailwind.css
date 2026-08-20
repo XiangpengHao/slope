@@ -616,6 +616,59 @@ details.fold:not([open]) > summary::after {
   border-left: 2.5px solid var(--color-ink);
   padding-left: 5.5px;
 }
+/* The structural diff's ink. A diff-touched block wears the flare on its own
+   frame, not only its letter; a ghost — a type only the base has — keeps the
+   frame but dashed, its text at the ghost's pressure. */
+.atlas .data-mark.is-diff,
+.atlas .data-mark.is-diff:hover {
+  border-color: var(--color-flare);
+}
+.atlas .data-mark.is-ghost {
+  border-style: dashed;
+}
+.atlas .data-mark.is-ghost .dm-kw,
+.atlas .data-mark.is-ghost .dm-nm,
+.atlas .data-mark.is-ghost .dm-ty,
+.atlas .data-mark.is-ghost .dm-ty span,
+.atlas .data-mark.is-ghost .dm-row,
+.atlas .data-mark.is-ghost .dm-row span,
+.atlas .data-mark.is-ghost .dm-var,
+.atlas .data-mark.is-ghost .dm-var span {
+  color: var(--color-ink-soft);
+}
+/* A row's own diff marker, in the diff's own idiom. The marker escapes a
+   struck row's line-through by being its own inline block. */
+.atlas .dm-mk {
+  display: inline-block;
+  width: 9px;
+  font-weight: 700;
+  color: var(--color-flare);
+  text-decoration: none;
+}
+.atlas .dm-row.is-del,
+.atlas .dm-var.is-del {
+  text-decoration: line-through;
+}
+.atlas .dm-row.is-del,
+.atlas .dm-row.is-del span,
+.atlas .dm-var.is-del,
+.atlas .dm-var.is-del span {
+  color: var(--color-ink-soft);
+}
+.atlas .dm-row.is-del .dm-mk,
+.atlas .dm-var.is-del .dm-mk {
+  color: var(--color-flare);
+}
+/* While the diff has anything to say, whatever it never touched rests at a
+   lighter pressure; hovering gives a block back its full ink. */
+.atlas .data-node.is-rest,
+.atlas .data-foldrow.is-rest {
+  opacity: 0.62;
+}
+.atlas .data-node.is-rest:hover,
+.atlas .data-foldrow.is-rest:hover {
+  opacity: 1;
+}
 .atlas .dm-head {
   display: flex;
   align-items: baseline;
@@ -838,6 +891,51 @@ details.fold:not([open]) > summary::after {
 }
 .atlas .data-wire.is-hot .wire-label {
   fill: var(--color-ink);
+}
+/* The structural diff's edges. Added takes the dep chart's manifest grammar —
+   flare, slightly firmer; removed is flare dashed at lower pressure, re-drawn
+   from the base edition. The flare outranks hover and kin ink: a diff edge is
+   diff ink whatever else is happening around it. */
+.atlas .data-wire.is-added .wire-path {
+  stroke: var(--color-flare);
+}
+.atlas .data-wire.is-added .wire-head {
+  fill: var(--color-flare);
+}
+.atlas .data-wire.is-added .wire-label {
+  fill: var(--color-flare);
+}
+.atlas .data-wire.is-removed .wire-path {
+  stroke: var(--color-flare);
+  stroke-dasharray: 9 5;
+  opacity: 0.65;
+}
+.atlas .data-wire.is-removed .wire-head {
+  fill: var(--color-flare);
+  opacity: 0.65;
+}
+.atlas .data-wire.is-removed .wire-label {
+  fill: var(--color-flare);
+}
+.atlas .data-wire.is-hot.is-added .wire-path,
+.atlas .data-wire.is-hot.is-removed .wire-path,
+.atlas .data-wire.is-kin.is-added .wire-path,
+.atlas .data-wire.is-kin.is-removed .wire-path {
+  stroke: var(--color-flare);
+  opacity: 1;
+}
+.atlas .data-wire.is-hot.is-added .wire-head,
+.atlas .data-wire.is-hot.is-removed .wire-head,
+.atlas .data-wire.is-kin.is-added .wire-head,
+.atlas .data-wire.is-kin.is-removed .wire-head {
+  fill: var(--color-flare);
+  opacity: 1;
+}
+.atlas .data-wire.is-hot.is-added .wire-label,
+.atlas .data-wire.is-hot.is-removed .wire-label,
+.atlas .data-wire.is-kin.is-added .wire-label,
+.atlas .data-wire.is-kin.is-removed .wire-label {
+  fill: var(--color-flare);
 }
 
 /* The selection's ink. The chosen block wears the app's focus ring; its blast

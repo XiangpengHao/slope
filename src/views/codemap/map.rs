@@ -917,11 +917,23 @@ pub(crate) fn window_size() -> Option<(f64, f64)> {
 const MIN_MAP_ZOOM: f64 = 0.22;
 
 /// The camera as the reviewer last left it. Session state that must survive
-/// route-variant remounts, like the disclosure globals: opening a focus plate
+/// route-variant remounts, like the disclosure state: opening a focus plate
 /// unmounts the map, and coming back must give the reader back their own pan
 /// and zoom, not a fresh framing — the camera carries the mental map (the
-/// Kept-Ground rule). `f` still refits on demand.
-static CAMERA: GlobalSignal<Option<Viewport>> = Signal::global(|| None);
+/// Kept-Ground rule). `f` still refits on demand. Provided as a context by
+/// the atlas shell, which outlives every remount.
+#[derive(Clone, Copy)]
+pub(crate) struct CodeCamera {
+    pub(crate) viewport: Signal<Option<Viewport>>,
+}
+
+impl CodeCamera {
+    pub(crate) fn new() -> Self {
+        Self {
+            viewport: Signal::new(None),
+        }
+    }
+}
 
 fn frame_chart(
     flow: dioxus_flow::prelude::FlowHandle<CodeNodeData>,
@@ -977,6 +989,7 @@ document.addEventListener('keydown', window.__slopifyKeys);
 #[component]
 pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
     let code = use_code();
+    let camera = use_context::<CodeCamera>();
     let flow = dioxus_flow::use_flow_handle::<CodeNodeData>();
     let nav = use_navigator();
 
@@ -1082,7 +1095,7 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
                     // A remount is a return — from a focus plate or another
                     // altitude, never a new focus: focus changes glide above
                     // without remounting. Seat the reader where they left.
-                    if let Some(vp) = *CAMERA.peek() {
+                    if let Some(vp) = *camera.viewport.peek() {
                         flow.set_viewport(vp, 0);
                         return;
                     }
@@ -1109,7 +1122,8 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
             return;
         }
         let Some(core) = flow.core() else { return };
-        *CAMERA.write() = Some(*core.viewport.read());
+        let mut saved = camera.viewport;
+        saved.set(Some(*core.viewport.read()));
     });
 
     // Keyboard.

@@ -61,40 +61,44 @@ impl RefDir {
     }
 }
 
-// Session state that must survive route-variant remounts, like the dep
-// chart's globals.
-/// Directories the reviewer folded or unfolded by hand, as flips against
-/// the default disclosure depth.
-static TOGGLED: GlobalSignal<HashSet<u32>> = Signal::global(HashSet::new);
-/// File details already fetched, by file id: item lists and same-file
-/// references for the focus plate.
-static DETAILS: GlobalSignal<HashMap<u32, FileDetail>> = Signal::global(HashMap::new);
-/// Item source already fetched, by (file id, item id): the definition the
-/// focus plate quotes.
-static SOURCES: GlobalSignal<HashMap<(u32, u32), ItemSource>> = Signal::global(HashMap::new);
-/// Rows the reviewer expanded in place on a focus plate, by (file id, local
-/// item id). View state, not a URL: expansion never leaves the plate.
-static EXPANDED: GlobalSignal<HashSet<(u32, u32)>> = Signal::global(HashSet::new);
-/// Which reading of the map's ties is drawn.
-static REF_DIR: GlobalSignal<RefDir> = Signal::global(RefDir::default);
-
+/// Code-altitude session state that must survive route-variant remounts,
+/// like the dep chart's [`AtlasState`](crate::views::shell::AtlasState).
+/// Provided as a context by the atlas shell, which outlives every route
+/// change, so stepping through focuses — or out to the dependency chart and
+/// back — never resets it.
 #[derive(Clone, Copy)]
 pub struct CodeState {
+    /// Directories the reviewer folded or unfolded by hand, as flips against
+    /// the default disclosure depth.
     pub toggled: Signal<HashSet<u32>>,
+    /// File details already fetched, by file id: item lists and same-file
+    /// references for the focus plate.
     pub details: Signal<HashMap<u32, FileDetail>>,
+    /// Item source already fetched, by (file id, item id): the definition the
+    /// focus plate quotes.
     pub sources: Signal<HashMap<(u32, u32), ItemSource>>,
+    /// Rows the reviewer expanded in place on a focus plate, by (file id,
+    /// local item id). View state, not a URL: expansion never leaves the
+    /// plate.
     pub expanded: Signal<HashSet<(u32, u32)>>,
+    /// Which reading of the map's ties is drawn.
     pub ref_dir: Signal<RefDir>,
 }
 
-pub fn use_code() -> CodeState {
-    CodeState {
-        toggled: TOGGLED.signal(),
-        details: DETAILS.signal(),
-        sources: SOURCES.signal(),
-        expanded: EXPANDED.signal(),
-        ref_dir: REF_DIR.signal(),
+impl CodeState {
+    pub(crate) fn new() -> Self {
+        Self {
+            toggled: Signal::new(HashSet::new()),
+            details: Signal::new(HashMap::new()),
+            sources: Signal::new(HashMap::new()),
+            expanded: Signal::new(HashSet::new()),
+            ref_dir: Signal::new(RefDir::default()),
+        }
     }
+}
+
+pub fn use_code() -> CodeState {
+    use_context()
 }
 
 /// The selection the current route asks for.
