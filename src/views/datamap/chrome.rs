@@ -462,13 +462,21 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                         span { class: "text-flare", "M" }
                         span { class: "text-ink-soft", " — defined in a file the diff touched" }
                     }
+                    p {
+                        span { class: "dm-nm", "Wire" }
+                        span { class: "text-ink-soft", " · " }
+                        span { class: "dm-nm is-sum", "HoldKind" }
+                        span { class: "text-ink-soft",
+                            " — a product type\u{2019}s name and a sum type\u{2019}s take different type colors. the keyword in front of each says the same thing in rust\u{2019}s own words."
+                        }
+                    }
                     p { class: "text-ink-soft",
-                        "a block quotes every field and variant as written, colored by token class the way the definition plate colors its source. the bold run names the workspace type a field holds."
+                        "a block quotes every field and variant as written, colored by token class the way the definition plate colors its source. the bold run names the workspace type a field holds; a plain type name comes from outside the workspace, has no mark of its own, and so has no line drawn to it."
                     }
                     p {
                         span { class: "font-medium", "+ 4 more fields" }
                         span { class: "text-ink-soft",
-                            " — rows past the block's eight quoted ones. variants past theirs count the same way."
+                            " — rows past the block's eight quoted ones, held back only while it rests: selecting the block draws every field and variant it has. variants past theirs count the same way."
                         }
                     }
                     p {
@@ -535,7 +543,7 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                 div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
                     UsageRow {
                         gesture: "click a type",
-                        effect: "select it: everything a shape change could reach keeps its ink, the rest recedes, and its sheet opens. its definition is one step further, on the sheet.",
+                        effect: "select it: the block opens to every field and variant it quoted a count for, everything a shape change could reach keeps its ink, the rest recedes, and its sheet opens. its definition is one step further, on the sheet.",
                     }
                     UsageRow { gesture: "esc · bare paper", effect: "deselect" }
                     UsageRow { gesture: "hover a type", effect: "all of its edges, at full ink" }

@@ -24,6 +24,7 @@
   --color-tok-kw: #1c4f8b; /* keywords */
   --color-tok-fn: #6b3fa0; /* fn and macro names */
   --color-tok-type: #0f6a6a; /* type names and lifetimes */
+  --color-tok-sum: #6b3fa0; /* an enum's own name, on the data chart's blocks */
   --color-tok-str: #9c2f4a; /* string, char, byte literals */
   --color-tok-num: #8a2f7a; /* number literals */
   --color-tok-doc: #2f6b45; /* doc comments */
@@ -592,6 +593,12 @@ details.fold:not([open]) > summary::after {
 }
 .atlas .data-mark {
   display: block;
+  /* The box is the node's, which is the box the layout measured and the box
+     every edge lands on. The plate never restates it: an inline size would
+     have to be rewritten the instant the block is selected, and a plate that
+     redraws its rows while its inline height lags stands on its own text. */
+  width: 100%;
+  height: 100%;
   overflow: hidden;
   background: var(--color-paper);
   border: 1px solid var(--color-ink-line);
@@ -627,6 +634,12 @@ details.fold:not([open]) > summary::after {
   text-overflow: ellipsis;
   font-weight: 700;
   color: var(--color-tok-type);
+}
+/* A sum type's name in the palette's other type color: `enum` is still the
+   word in front of it, and the color is the second reading of the same fact —
+   at chart zoom the keyword is small and the name is what carries. */
+.atlas .dm-nm.is-sum {
+  color: var(--color-tok-sum);
 }
 .atlas .data-mark:hover .dm-nm {
   text-decoration: underline;
@@ -713,9 +726,12 @@ details.fold:not([open]) > summary::after {
 }
 
 /* A frame's counted fold row: the private types it never draws, or the quiet
-   ones the budget folded. Every edge that touches one lands here. */
+   ones the budget folded. Every edge that touches one lands here. It fills its
+   measured box the way a mark's plate does. */
 .atlas .data-foldrow {
   display: flex;
+  width: 100%;
+  height: 100%;
   align-items: center;
   background: var(--color-paper);
   border: 1px dotted var(--color-ink-line);
@@ -840,6 +856,24 @@ details.fold:not([open]) > summary::after {
   border-color: var(--color-ink);
   outline: 1.5px solid var(--color-ink);
   outline-offset: 2px;
+}
+/* The selected block is quoted whole: every field and variant it counted at
+   rest is drawn, so the plate grows past the box the layout gave it — down
+   only, because the box is already as wide as its widest folded row. It lifts
+   off the sheet on the plate-contact shadow and covers the neighbours that are
+   receding anyway; the box the edges land on is still the resting one, so
+   nothing else on the chart moves. `!important` beats the flow library's own
+   inline `z-index: 0` on the node, which is the only way to leave the paint
+   order the node list happens to be in. */
+.atlas .data-node.is-sel .data-mark {
+  height: auto;
+  /* Never shorter than the box it rests in, whatever the text measures to. */
+  min-height: 100%;
+  overflow: visible;
+  box-shadow: 0 1px 4px color-mix(in srgb, var(--color-ink) 14%, transparent);
+}
+.atlas .df-node:has(> .data-node.is-sel) {
+  z-index: 900 !important;
 }
 .atlas .data-wire {
   transition: opacity 400ms ease-out;

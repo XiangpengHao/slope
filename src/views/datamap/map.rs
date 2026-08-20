@@ -19,14 +19,14 @@ use dioxus_flow::WorldLayer;
 use dioxus_flow::prelude::{Flow, Node as FlowNode, NodeViewCtx, Point, Rect, Side, Size, Viewport};
 
 use crate::Route;
-use crate::api::{CodeGraph, HoldKind};
+use crate::api::{CodeGraph, HoldKind, ItemKind};
 use crate::views::codemap::chrome::{decl_words, plural};
 use crate::views::codemap::map::{narrow_viewport, prefers_reduced_motion, tie_ends, window_size};
 use crate::views::codemap::tree::{Placed, text_w};
 use crate::views::codemap::use_code;
 use crate::views::datamap::data_type_route;
 use crate::views::datamap::layout::{self, DataLayout, Sizes};
-use crate::views::datamap::model::{Anchor, DataMark, DataModel, FieldRow, upstream};
+use crate::views::datamap::model::{Anchor, DataMark, DataModel, FIELD_CAP, FieldRow, upstream};
 
 // ---------------------------------------------------------------------------
 // Mark furniture, in flow units — one unit is one CSS pixel at zoom 1. These
@@ -79,7 +79,9 @@ fn wrapped(text: &str, px: f64, usable: f64) -> f64 {
         .max(1.0)
 }
 
-/// One mark, measured and ready to engrave.
+/// One mark, measured and ready to engrave. It carries the whole quotation
+/// and says how much of it a resting block draws: selecting the block opens
+/// the rest in place, so the fold counts are a rest state, not a cut.
 #[derive(Clone, PartialEq)]
 pub struct MarkView {
     pub id: u32,
@@ -88,13 +90,27 @@ pub struct MarkView {
     pub name: String,
     pub changed: bool,
     pub is_static: bool,
+    /// A sum type. Its name takes the palette's other type color, so struct
+    /// and enum tell apart at a glance the keyword can only be read at.
+    pub is_enum: bool,
+    /// Every field, quoted as written.
     pub fields: Vec<FieldRow>,
+    /// Fields a resting block draws; the rest are counted on its foot.
+    pub shown_fields: usize,
     /// A static's declared type, as written.
     pub ty: String,
+    /// The workspace type that type holds, drawn in full ink. Empty where it
+    /// holds nothing this chart draws.
+    pub ty_target: String,
     /// An enum's variants as written, one row each (the row text in `decl`).
     pub variants: Vec<FieldRow>,
-    /// Every counted line at the foot, in words.
+    /// Variants a resting block draws.
+    pub shown_variants: usize,
+    /// Every counted line at the foot of a resting block, in words.
     pub folds: Vec<String>,
+    /// The lines that still stand when the block is open — what selecting it
+    /// cannot give back.
+    pub open_folds: Vec<String>,
     pub locator: String,
     pub path: String,
     pub label: String,
@@ -109,10 +125,12 @@ pub struct FoldView {
     pub size: (f64, f64),
 }
 
-/// One node on the data chart.
+/// One node on the data chart. A mark's view is much the wider of the two —
+/// it carries the block's whole quotation — so it travels boxed rather than
+/// making every fold row in the node list as large as a mark.
 #[derive(Clone, PartialEq)]
 pub enum DataNodeData {
-    Mark(MarkView),
+    Mark(Box<MarkView>),
     Fold(FoldView),
 }
 
@@ -201,32 +219,43 @@ impl KinView {
     }
 }
 
-/// The counted words a mark writes at its foot. Every one of them stands where
-/// something is hidden; a mark that hides nothing writes none.
-fn fold_words(mark: &DataMark) -> Vec<String> {
-    let mut folds = Vec::new();
-    if mark.more_fields > 0 {
-        folds.push(format!("+ {}", plural(mark.more_fields as usize, "more field")));
-    }
-    if mark.more_variants > 0 {
-        folds.push(format!(
+/// The counted words a mark writes at its foot: the lines a resting block
+/// draws, and the lines that survive selecting it. Every one of them stands
+/// where something is hidden; a mark that hides nothing writes none. The
+/// elided rows are the block's own, so opening it takes those lines back; a
+/// folded fan-in is the chart's, and stays counted.
+fn fold_words(mark: &DataMark, fields: usize, variants: usize) -> (Vec<String>, Vec<String>) {
+    let mut rest = Vec::new();
+    if mark.fields.len() > fields {
+        rest.push(format!(
             "+ {}",
-            plural(mark.more_variants as usize, "more variant")
+            plural(mark.fields.len() - fields, "more field")
         ));
     }
-    if mark.held_by > 0 {
-        folds.push(format!("held by {}", plural(mark.held_by as usize, "type")));
+    if mark.variants.len() > variants {
+        rest.push(format!(
+            "+ {}",
+            plural(mark.variants.len() - variants, "more variant")
+        ));
     }
-    folds
+    let mut open = Vec::new();
+    if mark.held_by > 0 {
+        open.push(format!("held by {}", plural(mark.held_by as usize, "type")));
+    }
+    rest.extend(open.iter().cloned());
+    (rest, open)
 }
 
-/// A mark, measured. The width is the widest line it must not clip; the height
-/// follows from how those lines wrap inside it.
+/// A mark, measured. The width is the widest line it must not clip — every
+/// quoted row, drawn or folded, so opening the block only ever grows it
+/// downward — and the height follows from the rows that rest inside it.
 fn measure(mark: &DataMark) -> MarkView {
     let decl = decl_words(mark.vis, mark.kind);
     let head = format!("{decl} {}", mark.name);
     let locator = mark.locator();
-    let folds = fold_words(mark);
+    let shown_fields = mark.fields.len().min(FIELD_CAP);
+    let shown_variants = mark.variants.len().min(FIELD_CAP);
+    let (folds, open_folds) = fold_words(mark, shown_fields, shown_variants);
 
     let mut widest = text_w(&head, 10.5) + if mark.changed { 12.0 } else { 0.0 };
     widest = widest.max(text_w(&locator, 8.5));
@@ -261,8 +290,8 @@ fn measure(mark: &DataMark) -> MarkView {
     let h = PAD_TOP
         + HEAD_H
         + ty_lines * TY_H
-        + mark.fields.len() as f64 * ROW_H
-        + mark.variants.len() as f64 * ROW_H
+        + shown_fields as f64 * ROW_H
+        + shown_variants as f64 * ROW_H
         + fold_block
         + LOC_H
         + PAD_BOTTOM;
@@ -273,10 +302,15 @@ fn measure(mark: &DataMark) -> MarkView {
         name: mark.name.clone(),
         changed: mark.changed,
         is_static: mark.is_static(),
+        is_enum: mark.kind == ItemKind::Enum,
         fields: mark.fields.clone(),
+        shown_fields,
         ty: mark.ty.clone(),
+        ty_target: mark.ty_target.clone(),
         variants: mark.variants.clone(),
+        shown_variants,
         folds,
+        open_folds,
         locator,
         path: mark.path.clone(),
         label: mark.label.clone(),
@@ -356,7 +390,7 @@ pub fn build_chart(model: &DataModel) -> Built {
                 node_key(Anchor::Mark(*id)),
                 view.name.clone(),
                 (at.x, at.y),
-                DataNodeData::Mark(view.clone()),
+                DataNodeData::Mark(Box::new(view.clone())),
             )
             .size(Size::new(at.w, at.h))
             .sides(Side::Left, Side::Right)
@@ -503,26 +537,53 @@ fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool)> {
 /// whole block is the link to its selection — clicking it keeps the chart and
 /// inks its blast radius; the selected block clicked again deselects. Its
 /// definition plate stays one step further, on the selection sheet's link.
+///
+/// The selected block opens: every field and variant it quoted a count for is
+/// drawn, and the plate grows past the box the layout gave it, over the
+/// neighbours that are receding anyway. Nothing else moves, and the box the
+/// edges land on is still the one it rests at.
+///
+/// The plate states no size of its own. It fills the node box the layout
+/// measured — `width: 100%`, `height: 100%` in the stylesheet — and opening it
+/// is one CSS rule releasing the height. Sizing it inline instead cannot work:
+/// dioxus's interpreter re-applies every inline property a new `style` string
+/// leaves out (so that separately-set `style:` properties survive a whole-
+/// attribute write), so dropping `height` from the string does not drop it from
+/// the element. The block then redrew its rows while keeping its resting
+/// height, and stood on its own text.
 #[component]
 fn MarkPlate(view: MarkView, selected: bool) -> Element {
     let nav = use_navigator();
-    let (w, h) = view.size;
     let to = if selected {
         Route::DataOverview {}
     } else {
         data_type_route(&view.path, &view.label)
     };
     let title = if selected {
-        format!("{} {} — selected · click again to deselect", view.decl, view.name)
+        format!(
+            "{} {} — selected, quoted whole · click again to deselect",
+            view.decl, view.name
+        )
     } else {
         format!("{} {} — {} · select it", view.decl, view.name, view.locator)
     };
+    // Open, the block draws every row it has; at rest, the rows that fit.
+    let fields = if selected {
+        view.fields.len()
+    } else {
+        view.shown_fields
+    };
+    let variants = if selected {
+        view.variants.len()
+    } else {
+        view.shown_variants
+    };
+    let folds = if selected { &view.open_folds } else { &view.folds };
     let push = to.clone();
     rsx! {
         a {
             class: "data-mark",
             class: if view.is_static { "is-root" },
-            style: "width: {w}px; height: {h}px;",
             href: to.to_string(),
             title: "{title}",
             onclick: move |e: Event<MouseData>| {
@@ -532,14 +593,18 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
             },
             header { class: "dm-head",
                 span { class: "dm-kw", "{view.decl}" }
-                span { class: "dm-nm", "{view.name}" }
+                span {
+                    class: "dm-nm",
+                    class: if view.is_enum { "is-sum" },
+                    "{view.name}"
+                }
                 if view.changed {
                     span { class: "dm-chg", title: "changed since the diff base", "M" }
                 }
             }
             if !view.ty.is_empty() {
                 p { class: "dm-ty",
-                    for (j , (class , run , held)) in spans(&view.ty, "").into_iter().enumerate() {
+                    for (j , (class , run , held)) in spans(&view.ty, &view.ty_target).into_iter().enumerate() {
                         span {
                             key: "{j}",
                             class: if !class.is_empty() { "{class}" },
@@ -549,7 +614,7 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
                     }
                 }
             }
-            for (i , row) in view.fields.iter().enumerate() {
+            for (i , row) in view.fields.iter().take(fields).enumerate() {
                 p { key: "{i}", class: "dm-row",
                     span { class: "dm-fname", "{row.name}: " }
                     for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
@@ -562,7 +627,7 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
                     }
                 }
             }
-            for (i , row) in view.variants.iter().enumerate() {
+            for (i , row) in view.variants.iter().take(variants).enumerate() {
                 p { key: "v{i}", class: "dm-var",
                     for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
                         span {
@@ -574,9 +639,9 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
                     }
                 }
             }
-            if !view.folds.is_empty() {
+            if !folds.is_empty() {
                 div { class: "dm-folds",
-                    for (i , fold) in view.folds.iter().enumerate() {
+                    for (i , fold) in folds.iter().enumerate() {
                         p { key: "{i}", class: "dm-fold", "{fold}" }
                     }
                 }
@@ -591,10 +656,9 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
 fn DataNode(ctx: NodeViewCtx<DataNodeData>, selected: bool) -> Element {
     match ctx.node.data.clone() {
         DataNodeData::Mark(view) => rsx! {
-            MarkPlate { view, selected }
+            MarkPlate { view: *view, selected }
         },
         DataNodeData::Fold(row) => {
-            let (w, h) = row.size;
             let title = match row.anchor {
                 Anchor::More(_) => {
                     "the quietest types in this module, folded to fit the chart's budget; \
@@ -605,12 +669,7 @@ fn DataNode(ctx: NodeViewCtx<DataNodeData>, selected: bool) -> Element {
                 }
             };
             rsx! {
-                p {
-                    class: "data-foldrow",
-                    style: "width: {w}px; height: {h}px;",
-                    title,
-                    "{row.words}"
-                }
+                p { class: "data-foldrow", title, "{row.words}" }
             }
         }
     }
@@ -1046,10 +1105,9 @@ mod tests {
                     target: target.to_string(),
                 })
                 .collect(),
-            more_fields: 0,
             variants: Vec::new(),
-            more_variants: 0,
             ty: String::new(),
+            ty_target: String::new(),
             held_by: 0,
         }
     }
@@ -1068,20 +1126,71 @@ mod tests {
 
     #[test]
     fn a_variant_row_raises_the_block_and_the_fold_counts_the_rest() {
+        let row = FieldRow {
+            name: String::new(),
+            decl: "File(String, String)".to_string(),
+            target: String::new(),
+        };
         let mut long = mark("Tok", ItemKind::Enum, vec![]);
-        long.variants = vec![
-            FieldRow {
-                name: String::new(),
-                decl: "File(String, String)".to_string(),
-                target: String::new(),
-            };
-            3
-        ];
-        long.more_variants = 12;
+        long.variants = vec![row.clone(); FIELD_CAP + 12];
         let bare = measure(&mark("Tok", ItemKind::Enum, vec![]));
         let view = measure(&long);
         assert!(view.size.1 > bare.size.1);
         assert!(view.folds.iter().any(|f| f.contains("12 more variants")));
+        // The block rests at eight rows and keeps the other twelve for the
+        // reader who selects it; only the fan-in count survives opening.
+        assert_eq!(view.shown_variants, FIELD_CAP);
+        assert_eq!(view.variants.len(), FIELD_CAP + 12);
+        assert!(view.open_folds.is_empty());
+        // An enum's name takes the sum-type color; a struct's does not.
+        assert!(view.is_enum);
+        assert!(!measure(&mark("Wire", ItemKind::Struct, vec![])).is_enum);
+    }
+
+    /// Opening a block may only grow it downward: the width already fits every
+    /// row it holds back, so no line reflows when the reader selects it.
+    #[test]
+    fn a_folded_rows_width_is_already_in_the_resting_block() {
+        let mut wide = mark("Wire", ItemKind::Struct, vec![]);
+        wide.fields = (0..FIELD_CAP + 1)
+            .map(|i| FieldRow {
+                name: format!("f{i}"),
+                // The folded row is the longest one in the block.
+                decl: if i == FIELD_CAP {
+                    "HashMap<String, Vec<ItemMark>>".to_string()
+                } else {
+                    "u32".to_string()
+                },
+                target: String::new(),
+            })
+            .collect();
+        let view = measure(&wide);
+        assert_eq!(view.shown_fields, FIELD_CAP);
+        assert!(view.size.0 >= text_w("f8: HashMap<String, Vec<ItemMark>>", 10.0));
+    }
+
+    /// A static's declared type bolds the workspace type it holds, and only
+    /// that: `GlobalSignal<Option<Viewport>>` reaches a dependency's type, so
+    /// nothing in the line is bold and nothing on the chart points at it.
+    #[test]
+    fn a_static_bolds_only_a_workspace_type_it_holds() {
+        let mut held = mark("TRAIL", ItemKind::Static, vec![]);
+        held.ty = "GlobalSignal<Trail>".to_string();
+        held.ty_target = "Trail".to_string();
+        let bold: Vec<String> = spans(&held.ty, &held.ty_target)
+            .into_iter()
+            .filter(|(_, _, held)| *held)
+            .map(|(_, run, _)| run)
+            .collect();
+        assert_eq!(bold, vec!["Trail".to_string()]);
+
+        let mut outside = mark("CAMERA", ItemKind::Static, vec![]);
+        outside.ty = "GlobalSignal<Option<Viewport>>".to_string();
+        assert!(
+            spans(&outside.ty, &outside.ty_target)
+                .iter()
+                .all(|(_, _, held)| !held)
+        );
     }
 
     #[test]

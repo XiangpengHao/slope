@@ -32,7 +32,9 @@ pub const MARK_BUDGET: usize = 200;
 /// mark. A type four other types reach is a hub, and its fan-in drawn in full
 /// is a star burst nobody can read.
 pub const HELD_CAP: usize = 3;
-/// Holding fields one mark quotes before it defers to a counted line.
+/// Holding fields a resting mark quotes before it defers to a counted line.
+/// The mark carries every field either way: selecting it draws them all, which
+/// is the only way to read a wide type without leaving the chart.
 pub const FIELD_CAP: usize = 8;
 /// Resting reference ties whose counts are engraved. Past this the labels are
 /// the chart's texture instead of its data.
@@ -138,19 +140,20 @@ pub struct DataMark {
     pub line: u32,
     /// Its file changed since the diff base.
     pub changed: bool,
-    /// Fields, quoted as written in declaration order, capped at
-    /// [`FIELD_CAP`].
+    /// Fields, quoted as written in declaration order — every one of them.
+    /// A resting block draws [`FIELD_CAP`] and counts the rest on its foot.
     pub fields: Vec<FieldRow>,
-    /// Fields past the cap.
-    pub more_fields: u32,
     /// An enum's variants as written — payloads and discriminants included —
-    /// quoted as rows (the row text in `decl`, `name` empty), capped at
-    /// [`FIELD_CAP`].
+    /// quoted as rows (the row text in `decl`, `name` empty), all of them.
     pub variants: Vec<FieldRow>,
-    /// Variants past the cap.
-    pub more_variants: u32,
     /// A static's declared type, as written.
     pub ty: String,
+    /// The workspace type that type reaches, if it reaches one — the run of
+    /// `ty` drawn in full ink, as a field row's `target` is. Empty where the
+    /// walk found nothing on this chart to hold, which is exactly when the
+    /// static draws no holds edge: `GlobalSignal<Option<Viewport>>` names a
+    /// type from a dependency, and a dependency has no mark to point at.
+    pub ty_target: String,
     /// Incoming holds edges folded to a count: how many types hold this one.
     /// Zero when they are all drawn.
     pub held_by: u32,
@@ -729,7 +732,7 @@ impl DataModel {
                 let mark = &graph.items[id as usize];
                 let frame = frame_of(id)?;
                 let file = graph.files.get(mark.file as usize)?;
-                let mut fields: Vec<FieldRow> = mark
+                let fields: Vec<FieldRow> = mark
                     .field_rows
                     .iter()
                     .map(|(name, decl)| FieldRow {
@@ -741,11 +744,9 @@ impl DataModel {
                             .unwrap_or_default(),
                     })
                     .collect();
-                let more_fields = fields.len().saturating_sub(FIELD_CAP) as u32;
-                fields.truncate(FIELD_CAP);
                 // A variant's row is its whole written form; the edge that
                 // knows its target is filed under the variant's bare name.
-                let mut variants: Vec<FieldRow> = mark
+                let variants: Vec<FieldRow> = mark
                     .variants
                     .iter()
                     .map(|written| {
@@ -763,8 +764,6 @@ impl DataModel {
                         }
                     })
                     .collect();
-                let more_variants = variants.len().saturating_sub(FIELD_CAP) as u32;
-                variants.truncate(FIELD_CAP);
                 Some(DataMark {
                     id,
                     frame,
@@ -776,10 +775,14 @@ impl DataModel {
                     line: mark.line,
                     changed: file.changed,
                     fields,
-                    more_fields,
                     variants,
-                    more_variants,
                     ty: mark.ty.clone(),
+                    // A static's one edge is filed under the static's own
+                    // name, the way a field's is under the field's.
+                    ty_target: target_of
+                        .get(&(id, mark.name.clone()))
+                        .cloned()
+                        .unwrap_or_default(),
                     held_by: folded_fan.get(&Anchor::Mark(id)).copied().unwrap_or(0),
                 })
             })
@@ -948,6 +951,8 @@ mod tests {
     fn graph() -> CodeGraph {
         let mut index = mark(1, 1, "Index", ItemKind::Struct, Vis::Pub);
         index.field_rows = vec![("wire".into(), "Wire".into())];
+        let mut cache = mark(3, 1, "CACHE", ItemKind::Static, Vis::Private);
+        cache.ty = "OnceCell<Arc<Index>>".to_string();
         CodeGraph {
             files: vec![
                 file(0, "src/api.rs", false),
@@ -958,7 +963,7 @@ mod tests {
                 mark(0, 0, "Wire", ItemKind::Struct, Vis::Pub),
                 index,
                 mark(2, 1, "Hidden", ItemKind::Struct, Vis::Private),
-                mark(3, 1, "CACHE", ItemKind::Static, Vis::Private),
+                cache,
             ],
             item_edges: vec![ItemEdge {
                 from_file: 1,
@@ -1035,6 +1040,10 @@ mod tests {
         let cache = model.marks.iter().find(|m| m.name == "CACHE").unwrap();
         assert!(cache.is_static());
         assert!(cache.fields.is_empty());
+        // Its edge is filed under its own name, so the quoted line knows which
+        // run to draw in full ink — the same run the drawn edge lands on.
+        assert_eq!(cache.ty, "OnceCell<Arc<Index>>");
+        assert_eq!(cache.ty_target, "Index");
         let index = model.marks.iter().find(|m| m.name == "Index").unwrap();
         assert_eq!(index.fields.len(), 1);
         assert_eq!(index.fields[0].target, "Wire");

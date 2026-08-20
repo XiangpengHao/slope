@@ -56,7 +56,8 @@ states it in one line ("every changed type sits in views::codemap").
 - **Clicking a type selects it** (revised 2026-08-19, user-confirmed after
   review; it replaced the earlier click-to-plate decision). Selection is a URL
   (`/data/type/:..path?item=`) and a reading: the selected block wears the
-  app's focus ring, everything a shape change to it could reach — its
+  app's focus ring and opens to every field and variant it quoted a count for
+  (added 2026-08-19), everything a shape change to it could reach — its
   transitive holders, walked holder-ward over the holds edges — keeps full
   ink with its wires (folded ones ink back in), what it directly holds keeps
   ink one hop down, ties touching the selection keep their own, and every
@@ -122,15 +123,33 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
 ## The map
 
 - **Marks**: one bordered block per visible pub struct/enum (hairline frame,
-  paper ground, square corners). Header: the keyword and visibility in soft
-  ink, the name in ink at 700, an amber `M` when the defining file changed.
-  Body: the holding fields quoted as written (field name soft, the run that
-  names the held type in ink 500); enums list their variant names in soft ink.
-  Foot: `+ n plain fields` where any are hidden, then the locator in 8.5px soft
-  ink. The whole block is the link to the type's definition plate — a field row
-  names a type, it does not go anywhere the block does not.
+  paper ground, square corners). Header: the keyword and visibility in
+  keyword-blue, the name at 700 — type-teal for a struct or union, purple for
+  an enum (decided 2026-08-19, user-confirmed), so a product type and a sum
+  type read apart at chart zoom, where the keyword is the small run and the
+  name is the one that carries. An amber `M` where the defining file changed.
+  Body: every field quoted as written and every variant quoted whole
+  (payloads and discriminants included), colored by token class the way a
+  definition plate colors its source, with the one run naming a held
+  workspace type bold. A plain type name is from outside the workspace: it has
+  no mark, so no line is drawn to it — which is the whole reason the bold run
+  exists. Foot: the counted folds (`+ 4 more fields`, `+ 2 more variants`,
+  `held by 6 types`), then the locator in 8.5px soft ink. The block is the
+  link to its own selection; its definition plate is one step further, on the
+  selection sheet.
+- **Eight rows per list at rest, all of them when selected** (decided
+  2026-08-19, user-confirmed). A resting block quotes eight fields and eight
+  variants and counts the rest; selecting it draws every one, and the plate
+  grows down past the box the layout gave it, over neighbours that are
+  receding anyway. The box the edges land on stays the resting one, so the
+  chart still does not move, and the resting width already fits the widest
+  folded row so no line reflows on opening. `held by n types` is the chart's
+  own fold, not the block's, and survives opening.
 - **Statics**: same block with a 2.5px ink left edge; `static NAME` header,
-  the declared type quoted beneath, locator.
+  the declared type quoted beneath with the workspace type it reaches bold,
+  locator. `GlobalSignal<Trail>` bolds `Trail` and draws the line into the
+  static; `GlobalSignal<Option<Viewport>>` bolds nothing, because `Viewport`
+  comes from a dependency and a dependency has no mark to point at.
 - **Frames**: crate frames and top-level module frames, 2.6% ink tint,
   label band on the border (`mod views` mono 500; the crate name where
   more than one crate exists). Each frame's counted fold row collects its
@@ -167,9 +186,10 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
   hold changed types.
 - The `references` toggle rides the cartouche (uses / used by / both).
 - Legend beneath the cartouche: the three edge families with drawn samples,
-  the static mark, `held by n` folds, `M`, the plain-field fold, then the
-  honesty notes (wrapper table, what the walk does not chart, unresolved
-  counts).
+  the static mark, the two name colors (`Wire` · `HoldKind`), `held by n`
+  folds, `M`, the row fold and what selecting the block gives back, then the
+  honesty notes (wrapper table, that a plain type name is external and draws
+  no line, what the walk does not chart, unresolved counts).
 - Routes: `/data` (the whole chart) and `/data/type/:..path?item=` (one
   selection). Escape deselects to `/data`; `f` refits (reserving the sheet's
   column while one is open); `←`/`→` retrace history as everywhere.
