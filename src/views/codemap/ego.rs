@@ -31,7 +31,7 @@ const ROW_CAP: usize = 3;
 /// One row of a reference column, ready to draw. Every row names something —
 /// the references that resolve to nothing nameable are the group's fold.
 #[derive(Clone, PartialEq)]
-pub struct RowView {
+struct RowView {
     kind: ItemKind,
     name: String,
     title: String,
@@ -41,7 +41,7 @@ pub struct RowView {
 
 /// One file's rows in a reference column.
 #[derive(Clone, PartialEq)]
-pub struct GroupView {
+struct GroupView {
     file: u32,
     path: String,
     total: u32,
@@ -54,7 +54,7 @@ pub struct GroupView {
 
 /// One row of a whole file's outline: an item the file defines.
 #[derive(Clone, PartialEq)]
-pub struct OutlineRow {
+struct OutlineRow {
     kind: ItemKind,
     vis: Vis,
     name: String,
@@ -68,7 +68,7 @@ pub struct OutlineRow {
 
 /// One `impl` block's methods, gathered wherever the impl is written.
 #[derive(Clone, PartialEq)]
-pub struct ImplGroup {
+struct ImplGroup {
     /// The impl header exactly as it is written: `impl Vis`, `impl Clone for Vis`.
     head: String,
     rows: Vec<ImplRow>,
@@ -76,7 +76,7 @@ pub struct ImplGroup {
 
 /// One associated item under an impl header.
 #[derive(Clone, PartialEq)]
-pub struct ImplRow {
+struct ImplRow {
     kind: ItemKind,
     vis: Vis,
     name: String,
@@ -289,7 +289,7 @@ fn EgoColumn(groups: Vec<GroupView>, head: String, outgoing: bool) -> Element {
 /// something in the workspace is a real link — Go to Definition, one click,
 /// middle-click included.
 #[component]
-pub(crate) fn CodePane(source: ItemSource) -> Element {
+fn CodePane(source: ItemSource) -> Element {
     let nav = use_navigator();
     rsx! {
         div { class: "ego-code",

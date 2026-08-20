@@ -138,9 +138,9 @@ impl Containment {
 // ---------------------------------------------------------------------------
 
 /// Landmark rows the whole map may carry before it stops being a map.
-pub const LANDMARK_BUDGET: usize = 210;
+const LANDMARK_BUDGET: usize = 210;
 /// Rows one file block engraves, however loud its items are.
-pub const BLOCK_CAP: usize = 7;
+const BLOCK_CAP: usize = 7;
 
 /// How loudly an item asks to be named: item-level fan-in, the width of its
 /// door, and whether this epoch touched its file. Private items never ask —

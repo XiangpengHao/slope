@@ -694,6 +694,12 @@ details.fold:not([open]) > summary::after {
 .atlas .dm-nm.is-sum {
   color: var(--color-tok-sum);
 }
+/* A free function's name in the palette's fn color, the same ink a definition
+   plate gives it. `pub fn` stands in front of it either way; the color is the
+   second reading, for the zoom where the keyword is too small to read. */
+.atlas .dm-nm.is-fn {
+  color: var(--color-tok-fn);
+}
 .atlas .data-mark:hover .dm-nm {
   text-decoration: underline;
   text-underline-offset: 3px;

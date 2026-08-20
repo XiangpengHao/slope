@@ -437,7 +437,7 @@ fn RefList(rows: Vec<(Route, String, String, u32)>) -> Element {
 /// direction, and hovering a block reveals the rest. `both` is the unthinned
 /// picture. Active segment wears a 1px ink border — no fills on this plate.
 #[component]
-pub fn RefDirToggle() -> Element {
+fn RefDirToggle() -> Element {
     let code = use_code();
     let current = *code.ref_dir.read();
     let seg = |label: &'static str, hint: &'static str, val: RefDir| {

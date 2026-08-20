@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, FileDetail, ItemSource};
+use crate::api::{CodeGraph, FileDetail, ItemSource, Vis};
 use crate::views::codemap::chrome::{CodeCartouche, CodeLegend, CodeSearch, CratePanel};
 use crate::views::codemap::ego::EgoPlate;
 use crate::views::codemap::map::CodeChart;
@@ -61,6 +61,56 @@ impl RefDir {
     }
 }
 
+/// Which doors earn a block of their own on the data chart. Visibility is the
+/// one thinning rule rust writes down for us, so it is the reviewer's to set:
+/// a type below the chosen door folds to its frame's counted row, the same
+/// fold privacy has always been, only now an explicit reading instead of a
+/// rule baked into the chart. Statics stand at every setting — state no type
+/// holds has nowhere else to be counted.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Doors {
+    /// `pub` only: the surface the crate publishes, and nothing behind it.
+    Pub,
+    /// `pub` and `pub(crate)` — every type with a door of any width. The
+    /// default: a reviewer reads a workspace, not a published API.
+    #[default]
+    Crate,
+    /// Every type, no-`pub` ones included. Nothing folds for visibility.
+    All,
+}
+
+impl Doors {
+    /// A type this visible gets a block rather than a place in a count.
+    pub fn admits(self, vis: Vis) -> bool {
+        match self {
+            Doors::Pub => vis == Vis::Pub,
+            Doors::Crate => vis != Vis::Private,
+            Doors::All => true,
+        }
+    }
+
+    /// The word a frame's visibility fold row counts in. At `Pub` the row
+    /// holds `pub(crate)` types beside the private ones, and *internal* is
+    /// the only word true of both.
+    pub fn fold_word(self) -> &'static str {
+        match self {
+            Doors::Pub => "internal type",
+            _ => "private type",
+        }
+    }
+
+    /// What that row says when hovered.
+    pub fn fold_title(self) -> &'static str {
+        match self {
+            Doors::Pub => {
+                "types with no door out of their crate are not drawn at this setting; \
+                 every edge that touches one lands here"
+            }
+            _ => "private types are never drawn; every edge that touches one lands here",
+        }
+    }
+}
+
 /// Code-altitude session state that must survive route-variant remounts,
 /// like the dep chart's [`AtlasState`](crate::views::shell::AtlasState).
 /// Provided as a context by the atlas shell, which outlives every route
@@ -83,6 +133,8 @@ pub struct CodeState {
     pub expanded: Signal<HashSet<(u32, u32)>>,
     /// Which reading of the map's ties is drawn.
     pub ref_dir: Signal<RefDir>,
+    /// Which doors the data chart draws a block for.
+    pub doors: Signal<Doors>,
 }
 
 impl CodeState {
@@ -93,6 +145,7 @@ impl CodeState {
             sources: Signal::new(HashMap::new()),
             expanded: Signal::new(HashSet::new()),
             ref_dir: Signal::new(RefDir::default()),
+            doors: Signal::new(Doors::default()),
         }
     }
 }
@@ -102,7 +155,7 @@ pub fn use_code() -> CodeState {
 }
 
 /// The selection the current route asks for.
-pub fn route_selection(route: &Route) -> CodeSel {
+fn route_selection(route: &Route) -> CodeSel {
     match route {
         Route::CodeCrate { name } => CodeSel::Crate(name.clone()),
         Route::CodeFile { path, item } => CodeSel::File(path.join("/"), item.clone()),

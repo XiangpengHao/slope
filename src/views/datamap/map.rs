@@ -1,10 +1,11 @@
 //! The data chart: type marks, module frames, holding edges, reference ties.
 //!
-//! One block per type the workspace declares, seated in the frame of the module
-//! that declares it, with a hairline from every held type to its holder. The
-//! block is measured before it is placed, so its plate and its box agree to the
-//! pixel, and the whole layout is a pure function of the survey — the same
-//! workspace always draws the same chart.
+//! One block per type the workspace declares — and one per free function,
+//! wearing its signature where a type wears its fields — seated in the frame of
+//! the module that declares it, with a hairline from every held type to its
+//! holder. The block is measured before it is placed, so its plate and its box
+//! agree to the pixel, and the whole layout is a pure function of the survey —
+//! the same workspace always draws the same chart.
 //!
 //! Two edge families share the paper. **Holds** is structure and is always
 //! drawn: kind is dash grammar and the wrapper writes its own word on the line.
@@ -87,56 +88,64 @@ fn wrapped(text: &str, px: f64, usable: f64) -> f64 {
 /// and says how much of it a resting block draws: selecting the block opens
 /// the rest in place, so the fold counts are a rest state, not a cut.
 #[derive(Clone, PartialEq)]
-pub struct MarkView {
-    pub id: u32,
+struct MarkView {
+    id: u32,
     /// `pub struct`, `static` — what rust writes in front of the name.
-    pub decl: String,
-    pub name: String,
+    decl: String,
+    name: String,
     /// The structural diff's letter, in git's alphabet: `A`, `D`, or `M`.
-    pub letter: Option<&'static str>,
+    letter: Option<&'static str>,
     /// A removed type, quoted from the base edition and drawn dashed.
-    pub ghost: bool,
-    pub is_static: bool,
+    ghost: bool,
+    is_static: bool,
     /// A sum type. Its name takes the palette's other type color, so struct
     /// and enum tell apart at a glance the keyword can only be read at.
-    pub is_enum: bool,
+    is_enum: bool,
+    /// A free function: its rows are parameters and its `ty` line is what it
+    /// returns, so that line reads under them instead of over them.
+    is_fn: bool,
     /// Every field, quoted as written.
-    pub fields: Vec<FieldRow>,
+    fields: Vec<FieldRow>,
     /// Fields a resting block draws; the rest are counted on its foot.
-    pub shown_fields: usize,
-    /// A static's declared type, as written.
-    pub ty: String,
+    shown_fields: usize,
+    /// A static's declared type, or a function's return type with the arrow
+    /// rust writes in front of it — as written either way.
+    ty: String,
     /// The workspace type that type holds, drawn in full ink. Empty where it
     /// holds nothing this chart draws.
-    pub ty_target: String,
+    ty_target: String,
     /// An enum's variants as written, one row each (the row text in `decl`).
-    pub variants: Vec<FieldRow>,
+    variants: Vec<FieldRow>,
     /// Variants a resting block draws.
-    pub shown_variants: usize,
+    shown_variants: usize,
     /// Every counted line at the foot of a resting block, in words.
-    pub folds: Vec<String>,
+    folds: Vec<String>,
     /// The lines that still stand when the block is open — what selecting it
     /// cannot give back.
-    pub open_folds: Vec<String>,
-    pub locator: String,
-    pub path: String,
-    pub label: String,
-    pub size: (f64, f64),
+    open_folds: Vec<String>,
+    locator: String,
+    path: String,
+    label: String,
+    size: (f64, f64),
 }
 
 /// A frame's counted fold row: what it does not draw, and how much of it.
 #[derive(Clone, PartialEq)]
-pub struct FoldView {
-    pub anchor: Anchor,
-    pub words: String,
-    pub size: (f64, f64),
+struct FoldView {
+    anchor: Anchor,
+    words: String,
+    /// Why this row stands, in words, for its hover. The visibility fold's
+    /// reason moves with the doors setting, so it is decided here rather
+    /// than guessed at from the anchor.
+    title: &'static str,
+    size: (f64, f64),
 }
 
 /// One node on the data chart. A mark's view is much the wider of the two —
 /// it carries the block's whole quotation — so it travels boxed rather than
 /// making every fold row in the node list as large as a mark.
 #[derive(Clone, PartialEq)]
-pub enum DataNodeData {
+enum DataNodeData {
     Mark(Box<MarkView>),
     Fold(FoldView),
 }
@@ -161,41 +170,41 @@ impl DataNodeData {
 
 /// A frame, placed, with the label it wears on its border.
 #[derive(Clone, PartialEq)]
-pub struct FrameView {
-    pub id: u32,
-    pub at: Placed,
-    pub label: Option<String>,
+struct FrameView {
+    id: u32,
+    at: Placed,
+    label: Option<String>,
 }
 
 /// One drawn edge — a hold or a reference tie — with its ends already found.
 #[derive(Clone, PartialEq)]
-pub struct WireView {
-    pub key: String,
-    pub from: Point,
-    pub to: Point,
-    pub a: Anchor,
-    pub b: Anchor,
+struct WireView {
+    key: String,
+    from: Point,
+    to: Point,
+    a: Anchor,
+    b: Anchor,
     /// The word engraved on the line: a wrapper for a hold, a count for a tie.
-    pub label: Option<String>,
-    pub width: f64,
+    label: Option<String>,
+    width: f64,
     /// Drawn at rest; a folded wire inks in when either end is hovered.
-    pub rest: bool,
+    rest: bool,
     /// The kind's dash grammar, as a CSS class.
-    pub class: &'static str,
+    class: &'static str,
     /// The structural diff's class — `is-added` / `is-removed` — or empty.
-    pub event: &'static str,
+    event: &'static str,
 }
 
 /// Everything one build of the chart draws.
 #[derive(Clone, PartialEq)]
-pub struct Built {
-    pub nodes: Vec<FlowNode<DataNodeData>>,
-    pub frames: Vec<FrameView>,
-    pub holds: Vec<WireView>,
-    pub ties: Vec<WireView>,
-    pub frame: Option<Rect>,
+struct Built {
+    nodes: Vec<FlowNode<DataNodeData>>,
+    frames: Vec<FrameView>,
+    holds: Vec<WireView>,
+    ties: Vec<WireView>,
+    frame: Option<Rect>,
     /// The diff touched this chart: untouched marks rest at lighter pressure.
-    pub dirty: bool,
+    dirty: bool,
 }
 
 /// The selection's ink. One chosen mark; everything a shape change to it could
@@ -204,13 +213,13 @@ pub struct Built {
 /// the chart recedes to a lighter pressure — a reading, never a re-layout, and
 /// the camera does not move.
 #[derive(Clone, PartialEq)]
-pub struct KinView {
-    pub sel: Anchor,
+struct KinView {
+    sel: Anchor,
     /// Transitive holders. A counted fold row can join — its edge is drawn —
     /// but the walk ends there.
-    pub up: HashSet<Anchor>,
+    up: HashSet<Anchor>,
     /// Directly held types.
-    pub down: HashSet<Anchor>,
+    down: HashSet<Anchor>,
 }
 
 impl KinView {
@@ -247,10 +256,14 @@ impl KinView {
 fn fold_words(mark: &DataMark, fields: usize, variants: usize) -> (Vec<String>, Vec<String>) {
     let mut rest = Vec::new();
     if mark.fields.len() > fields {
-        rest.push(format!(
-            "+ {}",
-            plural(mark.fields.len() - fields, "more field")
-        ));
+        // A function's rows are its parameters, and a count has to name what
+        // it counts in the reader's own word for it.
+        let word = if mark.is_fn() {
+            "more param"
+        } else {
+            "more field"
+        };
+        rest.push(format!("+ {}", plural(mark.fields.len() - fields, word)));
     }
     if mark.variants.len() > variants {
         rest.push(format!(
@@ -261,6 +274,14 @@ fn fold_words(mark: &DataMark, fields: usize, variants: usize) -> (Vec<String>, 
     let mut open = Vec::new();
     if mark.held_by > 0 {
         open.push(format!("held by {}", plural(mark.held_by as usize, "type")));
+    }
+    // The same fold, said for the contracts in it: a signature names a type,
+    // it does not hold one, and the count has to keep that straight.
+    if mark.named_by > 0 {
+        open.push(format!(
+            "named by {}",
+            plural(mark.named_by as usize, "signature")
+        ));
     }
     rest.extend(open.iter().cloned());
     (rest, open)
@@ -274,6 +295,13 @@ fn measure(mark: &DataMark) -> MarkView {
     let head = format!("{decl} {}", mark.name);
     let locator = mark.locator();
     let letter = mark.letter();
+    // A signature's return line wears rust's own arrow, so the block reads as
+    // the declaration it quotes rather than as a type sitting under a name.
+    let ty = if mark.is_fn() && !mark.ty.is_empty() {
+        format!("-> {}", mark.ty)
+    } else {
+        mark.ty.clone()
+    };
     // Diff rows never rest hidden: the resting window stretches down to the
     // last added or removed row, and only what follows them still folds.
     let window = |rows: &[FieldRow]| -> usize {
@@ -311,16 +339,16 @@ fn measure(mark: &DataMark) -> MarkView {
     for fold in &folds {
         widest = widest.max(text_w(fold, 9.0));
     }
-    if !mark.ty.is_empty() {
-        widest = widest.max(text_w(&mark.ty, 9.5).min(wrapping));
+    if !ty.is_empty() {
+        widest = widest.max(text_w(&ty, 9.5).min(wrapping));
     }
     let w = (widest + PAD_X).clamp(MARK_MIN_W, MARK_MAX_W);
     let usable = w - PAD_X;
 
-    let ty_lines = if mark.ty.is_empty() {
+    let ty_lines = if ty.is_empty() {
         0.0
     } else {
-        wrapped(&mark.ty, 9.5, usable)
+        wrapped(&ty, 9.5, usable)
     };
     let fold_block = if folds.is_empty() {
         0.0
@@ -344,9 +372,10 @@ fn measure(mark: &DataMark) -> MarkView {
         ghost: mark.ghost,
         is_static: mark.is_static(),
         is_enum: mark.kind == ItemKind::Enum,
+        is_fn: mark.is_fn(),
         fields: mark.fields.clone(),
         shown_fields,
-        ty: mark.ty.clone(),
+        ty,
         ty_target: mark.ty_target.clone(),
         variants: mark.variants.clone(),
         shown_variants,
@@ -360,11 +389,12 @@ fn measure(mark: &DataMark) -> MarkView {
 }
 
 /// A counted fold row, measured.
-fn measure_row(anchor: Anchor, words: String) -> FoldView {
+fn measure_row(anchor: Anchor, words: String, title: &'static str) -> FoldView {
     let w = (text_w(&words, 9.5) + 20.0).clamp(ROW_MIN_W, MARK_MAX_W);
     FoldView {
         anchor,
         words,
+        title,
         size: (w, ROW_FOLD_H),
     }
 }
@@ -390,7 +420,7 @@ fn hold_class(kind: HoldKind) -> &'static str {
 }
 
 /// Measure everything, place it, and gather what the chart draws.
-pub fn build_chart(model: &DataModel) -> Built {
+fn build_chart(model: &DataModel) -> Built {
     let mut sizes = Sizes::default();
     let mut views: HashMap<u32, MarkView> = HashMap::new();
     for mark in &model.marks {
@@ -402,15 +432,23 @@ pub fn build_chart(model: &DataModel) -> Built {
     for frame in &model.frames {
         if frame.private > 0 {
             let anchor = Anchor::Private(frame.id);
-            let words = format!("+ {}", plural(frame.private as usize, "private type"));
-            let row = measure_row(anchor, words);
+            let words = format!(
+                "+ {}",
+                plural(frame.private as usize, model.doors.fold_word())
+            );
+            let row = measure_row(anchor, words, model.doors.fold_title());
             sizes.rows.insert(anchor, row.size);
             rows.insert(anchor, row);
         }
         if frame.more > 0 {
             let anchor = Anchor::More(frame.id);
             let words = format!("+ {}", plural(frame.more as usize, "more type"));
-            let row = measure_row(anchor, words);
+            let row = measure_row(
+                anchor,
+                words,
+                "the quietest types in this module, folded to fit the chart's budget; \
+                 every edge that touches one lands here",
+            );
             sizes.rows.insert(anchor, row.size);
             rows.insert(anchor, row);
         }
@@ -665,6 +703,7 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
                 span {
                     class: "dm-nm",
                     class: if view.is_enum { "is-sum" },
+                    class: if view.is_fn { "is-fn" },
                     "{view.name}"
                 }
                 if let Some(letter) = view.letter {
@@ -679,7 +718,9 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
                     }
                 }
             }
-            if !view.ty.is_empty() {
+            // A static's declared type stands under its name; a function's
+            // return type stands under its parameters, where rust writes it.
+            if !view.ty.is_empty() && !view.is_fn {
                 p { class: "dm-ty",
                     for (j , (class , run , held)) in spans(&view.ty, &view.ty_target).into_iter().enumerate() {
                         span {
@@ -699,6 +740,18 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
                     }
                     span { class: "dm-fname", "{row.name}: " }
                     for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
+                        span {
+                            key: "{j}",
+                            class: if !class.is_empty() { "{class}" },
+                            class: if held { "dm-held" },
+                            "{run}"
+                        }
+                    }
+                }
+            }
+            if !view.ty.is_empty() && view.is_fn {
+                p { class: "dm-ty",
+                    for (j , (class , run , held)) in spans(&view.ty, &view.ty_target).into_iter().enumerate() {
                         span {
                             key: "{j}",
                             class: if !class.is_empty() { "{class}" },
@@ -743,18 +796,9 @@ fn DataNode(ctx: NodeViewCtx<DataNodeData>, selected: bool) -> Element {
         DataNodeData::Mark(view) => rsx! {
             MarkPlate { view: *view, selected }
         },
-        DataNodeData::Fold(row) => {
-            let title = match row.anchor {
-                Anchor::More(_) => {
-                    "the quietest types in this module, folded to fit the chart's budget; \
-                     every edge that touches one lands here"
-                }
-                _ => "private types are never drawn; every edge that touches one lands here",
-            };
-            rsx! {
-                p { class: "data-foldrow", title, "{row.words}" }
-            }
-        }
+        DataNodeData::Fold(row) => rsx! {
+            p { class: "data-foldrow", title: row.title, "{row.words}" }
+        },
     }
 }
 
@@ -981,11 +1025,12 @@ pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
     let flow = dioxus_flow::use_flow_handle::<DataNodeData>();
     let nav = use_navigator();
 
-    // `graph` is a prop, not a signal; the reading toggle is a signal and
-    // tracks itself.
+    // `graph` is a prop, not a signal; the two toggles are signals and track
+    // themselves — the reading moves which ties rest, the doors move which
+    // types are drawn at all, so this re-seats on either.
     let built = use_memo(use_reactive((&graph,), {
         move |(graph,)| {
-            let model = DataModel::build(&graph, *code.ref_dir.read());
+            let model = DataModel::build(&graph, *code.ref_dir.read(), *code.doors.read());
             build_chart(&model)
         }
     }));
@@ -1210,6 +1255,7 @@ mod tests {
             ty: String::new(),
             ty_target: String::new(),
             held_by: 0,
+            named_by: 0,
         }
     }
 
@@ -1293,6 +1339,47 @@ mod tests {
             spans(&outside.ty, &outside.ty_target)
                 .iter()
                 .all(|(_, _, held)| !held)
+        );
+    }
+
+    /// A function's block is a type's block wearing a signature: parameters
+    /// where a type keeps its fields, and the return type under them with
+    /// rust's own arrow — over them would read as a type, not a declaration.
+    #[test]
+    fn a_signature_block_returns_under_its_parameters() {
+        let mut survey = mark(
+            "survey",
+            ItemKind::Fn,
+            vec![("graph", "&CodeGraph", "CodeGraph")],
+        );
+        survey.ty = "Nut".to_string();
+        survey.ty_target = "Nut".to_string();
+        let view = measure(&survey);
+        assert!(view.is_fn);
+        assert_eq!(view.ty, "-> Nut");
+        // The arrow is punctuation; what it hands back is still the bold run.
+        let bold: Vec<String> = spans(&view.ty, &view.ty_target)
+            .into_iter()
+            .filter(|(_, _, held)| *held)
+            .map(|(_, run, _)| run)
+            .collect();
+        assert_eq!(bold, vec!["Nut".to_string()]);
+
+        // Past the cap the fold counts parameters, in the word for them.
+        let mut wide = mark("survey", ItemKind::Fn, vec![]);
+        wide.fields = (0..FIELD_CAP + 3)
+            .map(|i| FieldRow {
+                name: format!("p{i}"),
+                decl: "u32".to_string(),
+                target: String::new(),
+                state: RowState::Same,
+            })
+            .collect();
+        assert!(
+            measure(&wide)
+                .folds
+                .iter()
+                .any(|fold| fold == "+ 3 more params")
         );
     }
 

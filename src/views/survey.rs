@@ -14,7 +14,7 @@ use crate::api::{CodeGraph, code_graph};
 use crate::views::codemap::CodeShell;
 use crate::views::datamap::DataShell;
 
-pub type CodeResource = Resource<Result<CodeGraph, ServerFnError>>;
+type CodeResource = Resource<Result<CodeGraph, ServerFnError>>;
 
 /// The loaded code survey, for route components under this shell.
 pub fn use_code_graph() -> Option<CodeGraph> {

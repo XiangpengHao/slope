@@ -6,7 +6,7 @@ use dioxus::prelude::*;
 use crate::Route;
 use crate::api::{CodeGraph, Delta, HoldEvent, HoldKind};
 use crate::views::codemap::chrome::{Altitude, AltitudeSwitch, decl_words, plural};
-use crate::views::codemap::{RefDir, item_route, use_code};
+use crate::views::codemap::{Doors, RefDir, item_route, use_code};
 use crate::views::datamap::data_type_route;
 use crate::views::datamap::model::{Anchor, DataFacts, DataModel, RowState, upstream};
 
@@ -54,7 +54,7 @@ pub fn DataCartouche(facts: DataFacts, workspace: String, diff_line: String) -> 
                     "{workspace}"
                 }
                 p { class: "mt-1 font-data text-[10.5px] text-ink-soft",
-                    "{plural(facts.structs, \"struct\")} · {plural(facts.enums, \"enum\")} · {facts.roots} roots"
+                    "{plural(facts.structs, \"struct\")} · {plural(facts.enums, \"enum\")} · {plural(facts.fns, \"fn\")} · {facts.roots} roots"
                 }
                 div { class: "mt-2 space-y-1 border-t border-ink-line pt-2 font-data text-[10.5px] leading-relaxed text-ink",
                     AltitudeSwitch { at: Altitude::Data }
@@ -70,6 +70,7 @@ pub fn DataCartouche(facts: DataFacts, workspace: String, diff_line: String) -> 
                 }
             }
             DataRefToggle {}
+            DataDoorToggle {}
         }
     }
 }
@@ -78,7 +79,7 @@ pub fn DataCartouche(facts: DataFacts, workspace: String, diff_line: String) -> 
 /// cartouche because it acts on the whole plate, and it is the same reading the
 /// code map is set to — one reviewer, one question, at either altitude.
 #[component]
-pub fn DataRefToggle() -> Element {
+fn DataRefToggle() -> Element {
     let code = use_code();
     let current = *code.ref_dir.read();
     let seg = |label: &'static str, hint: &'static str, val: RefDir| {
@@ -108,6 +109,46 @@ pub fn DataRefToggle() -> Element {
                 {seg("uses", "each type's heaviest references out — what it reaches for", RefDir::Uses)}
                 {seg("used by", "each type's heaviest references in — who names it", RefDir::UsedBy)}
                 {seg("both", "every reference between two types, unthinned", RefDir::Both)}
+            }
+        }
+    }
+}
+
+/// Which doors earn a block. It rides on the cartouche under the reference
+/// reading because it acts on the whole plate the same way: both are readings
+/// of one survey, so moving either re-seats the chart without surveying the
+/// workspace again.
+#[component]
+fn DataDoorToggle() -> Element {
+    let code = use_code();
+    let current = *code.doors.read();
+    let seg = |label: &'static str, hint: &'static str, val: Doors| {
+        rsx! {
+            button {
+                class: "flex-1 whitespace-nowrap border px-1 py-0.5 font-data text-[9px] tracking-[0.08em] uppercase",
+                class: if current == val { "border-ink text-ink" } else { "border-transparent text-ink-soft hover:text-ink" },
+                "aria-pressed": if current == val { "true" } else { "false" },
+                title: hint,
+                onclick: move |_| {
+                    let mut doors = code.doors;
+                    doors.set(val);
+                },
+                "{label}"
+            }
+        }
+    };
+    rsx! {
+        div {
+            class: "border-t border-ink-line px-4 py-1.5",
+            role: "group",
+            "aria-label": "which types the chart draws a block for",
+            span { class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
+                "visibility"
+            }
+            div { class: "mt-1 flex items-stretch gap-0.5",
+                {seg("pub", "only types visible outside their crate get a block; every other type folds to its module's count", Doors::Pub)}
+                {seg("pub(crate)", "crate-visible types get blocks too; only types with no `pub` at all fold", Doors::Crate)}
+                {seg("private", "every type gets a block, no-`pub` ones included; nothing folds for visibility", Doors::All)}
             }
         }
     }
@@ -174,7 +215,10 @@ fn hold_rows(
                 Anchor::Private(frame) | Anchor::More(frame) => {
                     let frame = &model.frames[*frame as usize];
                     let count = if matches!(anchor, Anchor::Private(_)) {
-                        format!("+ {}", plural(frame.private as usize, "private type"))
+                        format!(
+                            "+ {}",
+                            plural(frame.private as usize, model.doors.fold_word())
+                        )
                     } else {
                         format!("+ {}", plural(frame.more as usize, "more type"))
                     };
@@ -244,16 +288,19 @@ fn HoldList(rows: Vec<HoldRow>) -> Element {
     }
 }
 
-/// One selected type's sheet: who holds it, what it holds, and the one step
-/// further to its definition. The chart keeps the selection's blast radius
-/// inked; this plate says the same thing in rows a reader can follow.
+/// One selected mark's sheet: who holds it, which contracts name it, what it
+/// holds, and the one step further to its definition. A function has only the
+/// last of those — a signature names types; nothing names a function back. The
+/// chart keeps the selection's blast radius inked; this plate says the same
+/// thing in rows a reader can follow.
 #[component]
 pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
     let code = use_code();
-    // The sheet reads holding structure, never the tie reading, so the
-    // toggle is peeked: it moves nothing on this plate.
+    // The sheet reads holding structure, never the tie reading, so that
+    // toggle is peeked: it moves nothing on this plate. The doors are read —
+    // they decide whether a held type is a link here or part of a count.
     let model = use_memo(use_reactive((&graph,), move |(graph,)| {
-        DataModel::build(&graph, *code.ref_dir.peek())
+        DataModel::build(&graph, *code.ref_dir.peek(), *code.doors.read())
     }));
     let model = model.read();
 
@@ -265,7 +312,7 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
         return rsx! {
             section { class: "plate pointer-events-auto w-full px-4 py-3 sm:w-72",
                 p { class: "font-data text-[11px] text-ink",
-                    "No type “{item}” in {path} on this survey."
+                    "Nothing named “{item}” is drawn in {path} on this survey."
                 }
                 Link {
                     class: "mt-2 inline-block font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4",
@@ -278,12 +325,28 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
 
     let at = Anchor::Mark(mark.id);
     let decl = decl_words(mark.vis, mark.kind);
+    // A function that names this type in its signature is not a holder: it
+    // keeps nothing. The two readings sit in sections of their own, so
+    // "held by" never quietly means "mentioned by".
+    let contract = |anchor: &Anchor| match anchor {
+        Anchor::Mark(id) => model.marks.iter().any(|m| m.id == *id && m.is_fn()),
+        _ => false,
+    };
     let held_by: Vec<HoldRow> = hold_rows(
         &model,
         model
             .holds
             .iter()
-            .filter(|h| h.held == at)
+            .filter(|h| h.held == at && !contract(&h.holder))
+            .map(|h| (&h.holder, h.kind, h.via.as_str(), h.event))
+            .collect(),
+    );
+    let contracts: Vec<HoldRow> = hold_rows(
+        &model,
+        model
+            .holds
+            .iter()
+            .filter(|h| h.held == at && contract(&h.holder))
             .map(|h| (&h.holder, h.kind, h.via.as_str(), h.event))
             .collect(),
     );
@@ -320,7 +383,8 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
         None
     };
     // The blast radius in one line: how much further than its direct holders
-    // a change to this shape travels.
+    // a change to this shape travels. Contracts are counted apart from shapes
+    // — a signature that has to change is not another type that has to.
     let pairs: Vec<(Anchor, Anchor)> = model.holds.iter().map(|h| (h.held, h.holder)).collect();
     let direct: std::collections::HashSet<Anchor> = model
         .holds
@@ -328,10 +392,31 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
         .filter(|h| h.held == at)
         .map(|h| h.holder)
         .collect();
-    let beyond = upstream(&pairs, at)
-        .iter()
+    let beyond: Vec<Anchor> = upstream(&pairs, at)
+        .into_iter()
         .filter(|a| matches!(a, Anchor::Mark(_)) && !direct.contains(a))
-        .count();
+        .collect();
+    let beyond_fns = beyond.iter().filter(|a| contract(a)).count();
+    let reach = match (beyond.len() - beyond_fns, beyond_fns) {
+        (0, 0) => String::new(),
+        (0, fns) => plural(fns, "more signature"),
+        (types, 0) => plural(types, "more type"),
+        (types, fns) => format!(
+            "{} and {}",
+            plural(types, "more type"),
+            plural(fns, "more signature")
+        ),
+    };
+    // What the empty "held by" says. A static is a root by nature; a type only
+    // functions name enters the chart through them; anything else with no
+    // holder and no contract is reached by nothing the chart draws at all.
+    let root_line = if mark.is_static() {
+        "no type holds it — a root."
+    } else if !contracts.is_empty() {
+        "no type holds it — it enters through the signatures below."
+    } else {
+        "nothing on this chart reaches it — no type holds it, and no signature names it."
+    };
 
     rsx! {
         section { class: "plate pointer-events-auto flex max-h-[44dvh] w-full flex-col overflow-hidden sm:max-h-full sm:w-72",
@@ -375,34 +460,53 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
                 }
             }
             div { class: "min-h-0 flex-1 overflow-y-auto px-4 pb-3",
-                h3 { class: "mt-1 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
-                    "Held by ({held_by.len()})"
-                }
-                if held_by.is_empty() {
-                    p { class: "mt-1 font-data text-[10px] text-ink-soft",
-                        "no type holds it — a root."
+                // A function holds nothing and nothing holds it: its one
+                // reading is the contract it publishes.
+                if mark.is_fn() {
+                    h3 { class: "mt-1 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
+                        "Signature names ({holds.len()})"
+                    }
+                    if holds.is_empty() {
+                        p { class: "mt-1 font-data text-[10px] text-ink-soft",
+                            "its signature names no workspace types."
+                        }
+                    } else {
+                        HoldList { rows: holds }
                     }
                 } else {
-                    HoldList { rows: held_by }
-                }
-                if beyond > 0 {
-                    p { class: "mt-1 px-1 font-data text-[10px] leading-relaxed text-ink-soft",
-                        if mark.ghost {
-                            "the removal reaches {plural(beyond, \"more type\")} upstream."
-                        } else {
-                            "a shape change here reaches {plural(beyond, \"more type\")} upstream."
+                    h3 { class: "mt-1 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
+                        "Held by ({held_by.len()})"
+                    }
+                    if held_by.is_empty() {
+                        p { class: "mt-1 font-data text-[10px] text-ink-soft", "{root_line}" }
+                    } else {
+                        HoldList { rows: held_by }
+                    }
+                    if !contracts.is_empty() {
+                        h3 { class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
+                            "In the contract of ({contracts.len()})"
+                        }
+                        HoldList { rows: contracts }
+                    }
+                    if !reach.is_empty() {
+                        p { class: "mt-1 px-1 font-data text-[10px] leading-relaxed text-ink-soft",
+                            if mark.ghost {
+                                "the removal reaches {reach} upstream."
+                            } else {
+                                "a shape change here reaches {reach} upstream."
+                            }
                         }
                     }
-                }
-                h3 { class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
-                    "Holds ({holds.len()})"
-                }
-                if holds.is_empty() {
-                    p { class: "mt-1 font-data text-[10px] text-ink-soft",
-                        "holds no workspace types."
+                    h3 { class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
+                        "Holds ({holds.len()})"
                     }
-                } else {
-                    HoldList { rows: holds }
+                    if holds.is_empty() {
+                        p { class: "mt-1 font-data text-[10px] text-ink-soft",
+                            "holds no workspace types."
+                        }
+                    } else {
+                        HoldList { rows: holds }
+                    }
                 }
             }
             div { class: "border-t border-ink-line px-4 py-2",
@@ -544,6 +648,12 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                         }
                     }
                     p {
+                        span { class: "dm-nm is-fn", "pub fn" }
+                        span { class: "text-ink-soft",
+                            " — a free function, drawn as the contract it is: its parameters quoted as rows and its return type under them. the types its signature names draw the same holding lines a field does, so a type only functions reach is no longer a root nobody holds. a method is not here — it belongs to the type its impl names — and no function body is on this chart."
+                        }
+                    }
+                    p {
                         span { class: "font-bold text-flare", "A" }
                         span { class: "text-ink-soft", " added since the base · " }
                         span { class: "font-bold text-flare", "M" }
@@ -601,15 +711,30 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                     }
                     p {
                         span { class: "font-medium", "held by 6 types" }
+                        span { class: "text-ink-soft", " · " }
+                        span { class: "font-medium", "named by 2 signatures" }
                         span { class: "text-ink-soft",
-                            " — more than three types hold this one, so its incoming edges rest folded. hover either end to ink them in."
+                            " — more than three marks reach this one, so its incoming edges rest folded; hover either end to ink them in. the two counts stay apart because a signature names a type without holding it."
                         }
                     }
                     p {
                         span { class: "font-medium", "+ 5 private types" }
                         span { class: "text-ink-soft",
-                            " — a private type is never a mark, and every holds edge touching one lands on its module's counted row."
+                            " — a type or function below the visibility setting is never a mark, and every holds edge touching one lands on its module's counted row. at "
                         }
+                        span { class: "text-ink", "pub" }
+                        span { class: "text-ink-soft",
+                            " the row counts internal types instead, and its words say so."
+                        }
+                    }
+                    p { class: "text-ink-soft",
+                        "the visibility toggle sets which doors earn a block: "
+                        span { class: "text-ink", "pub" }
+                        " draws only what leaves the crate, "
+                        span { class: "text-ink", "pub(crate)" }
+                        " adds the crate-visible types, "
+                        span { class: "text-ink", "private" }
+                        " draws every type there is. a static stands at every setting — state no type holds has nowhere else to be counted."
                     }
                     p { class: "text-ink-soft",
                         "the references toggle sets the reading: "
@@ -644,10 +769,12 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                         " as its trait. every other generic type — Vec, Box, Option, HashMap, Mutex, an unknown external — is transparent, and the walk recurses into it."
                     }
                     p {
-                        "references from free functions and trait items are not on this chart: a tie is kept only where both ends land on a drawn type."
+                        "a function body\u{2019}s references are not on this chart — only what its signature declares. the same goes for trait items: a tie is kept only where both ends land on a drawn type."
                     }
                     p {
-                        "type parameters are holes: their fields quote as written, and the walk reads nothing through them."
+                        "type parameters are holes: their fields quote as written, and the walk reads nothing through them. so is an "
+                        span { class: "text-ink", "impl Trait" }
+                        " in a signature — an anonymous parameter is still a parameter — and so is a trait bound."
                     }
                     p {
                         "the structural diff reads the base edition of each changed file syntactically: declarations match by kind and name, and a removed relation\u{2019}s target is matched by name — never type-resolved."

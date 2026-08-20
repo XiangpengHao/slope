@@ -28,7 +28,7 @@ pub fn use_graph() -> Option<WorkspaceGraph> {
 /// One step of the review trail: `None` is the whole chart, `Some(step)` a
 /// selection — crate names joined with `+`, or a whole ring as `ring:N`
 /// (crate names can contain neither `+` nor `:`).
-pub type TrailStep = Option<String>;
+type TrailStep = Option<String>;
 
 /// The ring index a trail step selects, if it is a ring step.
 pub fn step_ring(step: &str) -> Option<u32> {

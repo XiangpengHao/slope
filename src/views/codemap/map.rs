@@ -23,21 +23,21 @@ use crate::views::codemap::{CodeSel, RefDir, file_route, item_route, use_code};
 
 /// One landmark row inside a block.
 #[derive(Clone, PartialEq)]
-pub struct Row {
-    pub name: String,
+struct Row {
+    name: String,
     /// The label this item selects by in its URL.
-    pub label: String,
-    pub kind: ItemKind,
+    label: String,
+    kind: ItemKind,
     /// 1 = loudest. Engraved size follows fan-in, in three tiers.
-    pub tier: u8,
-    pub fan_in: u32,
-    pub vis: Vis,
+    tier: u8,
+    fan_in: u32,
+    vis: Vis,
 }
 
 /// One node on the code map: a file's block, or the gate of a folded
 /// directory standing in for everything inside it.
 #[derive(Clone, PartialEq)]
-pub enum CodeNodeData {
+enum CodeNodeData {
     Block {
         info: FileInfo,
         name: String,
@@ -62,16 +62,16 @@ pub enum CodeNodeData {
 /// there: its files are on the paper to be counted. Only a fold counts what it
 /// holds — that is the gate's line, not the frame's.
 #[derive(Clone, PartialEq)]
-pub struct DistrictView {
-    pub dir: u32,
-    pub at: Placed,
-    pub label: String,
+struct DistrictView {
+    dir: u32,
+    at: Placed,
+    label: String,
     /// The crate whose district this is, and its offset. Drawn only where the
     /// survey has more than one crate to tell apart.
-    pub krate: Option<(String, f64)>,
-    pub depth: u32,
-    pub root: bool,
-    pub focal: bool,
+    krate: Option<(String, f64)>,
+    depth: u32,
+    root: bool,
+    focal: bool,
 }
 
 /// The engraved label band, matched to the CSS that draws it: both segments in
@@ -98,21 +98,21 @@ fn crate_tag(krate: &str) -> String {
 /// One tie, placed: from the definition's territory to the user's, where the
 /// arrowhead rests — the way change travels.
 #[derive(Clone, PartialEq)]
-pub struct TieView {
-    pub key: String,
-    pub def: Territory,
-    pub user: Territory,
-    pub count: u32,
-    pub from: Point,
-    pub to: Point,
-    pub width: f64,
+struct TieView {
+    key: String,
+    def: Territory,
+    user: Territory,
+    count: u32,
+    from: Point,
+    to: Point,
+    width: f64,
     /// The heaviest resting ties carry their count on the paper; the lighter
     /// ones keep it folded until the reader hovers an end.
-    pub labeled: bool,
+    labeled: bool,
     /// Drawn at rest. A tie the reading folded away stays in the set and inks
     /// in when the reader hovers either of its ends — the fold is reachable,
     /// never silently cut.
-    pub rest: bool,
+    rest: bool,
 }
 
 /// Resting ties whose counts are engraved. Past this the labels would be the

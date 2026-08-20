@@ -23,8 +23,16 @@ diff lands in api and views").
 ## Decisions (user-confirmed)
 
 - **Types are the first-class citizens.** Structs and enums are the marks;
-  files, functions, and traits are secondary. A mark's home is written as a
-  locator (`codemap/model.rs:278`), not as geometry.
+  files and traits are secondary. A mark's home is written as a locator
+  (`codemap/model.rs:278`), not as geometry.
+- **Free functions are marks too** (user decision 2026-08-20). A pub fn is a
+  contract the way a pub struct is, and without them a type only functions
+  reach reads as "no type holds it — a root", which is a lie. Only *free*
+  functions (`ItemKind::Fn` with no `parent`): a method or an associated
+  function stays attributed to the type its impl names and draws no mark and
+  no edge of its own. The door setting folds a function exactly as it folds a
+  type, and the budget folds one exactly as it folds a type — only statics
+  never fold.
 - **Ground = modules, not directories.** One frame per workspace crate; inside
   it, one frame per top-level module (`mod analyze`, `mod api`, `mod views`),
   labeled with rust's own words. Crate-root items sit in the crate's own
@@ -66,10 +74,16 @@ diff lands in api and views").
   ink one hop down, ties touching the selection keep their own, and every
   other mark and wire recedes to a lighter pressure. Nothing moves and the
   camera holds still. A selection sheet (right column) names the selection,
-  lists who holds it and what it holds — each row re-centers the selection —
-  states the blast radius in words (`a shape change here reaches 9 more types
-  upstream.`), and carries the one step further: `open its definition →` to
-  the code plate. Escape, bare paper, or clicking the selected block again
+  lists who holds it, which contracts name it (`In the contract of`, kept
+  apart from `Held by` because a function keeps nothing), and what it holds —
+  each row re-centers the selection — states the blast radius in words (`a
+  shape change here reaches 9 more types and 2 more signatures upstream.`),
+  and carries the one step further: `open its definition →` to the code
+  plate. A selected function reads as its contract alone: `Signature names
+  (n)`, and no held-by section at all, because no type can hold a function.
+  The empty held-by line is a three-way truth: a static is `a root`, a type
+  only functions name `enters through the signatures below`, and a type
+  nothing at all reaches says exactly that. Escape, bare paper, or clicking the selected block again
   deselects; the definition plate itself is never duplicated.
 
 ## The walk (how holds edges are computed)
@@ -96,10 +110,26 @@ semantic type is walked:
   reads nothing through them. Nothing is guessed; the legend carries the
   wrapper table and the rule.
 
+A free function's **signature** is walked by the same rules: each parameter's
+declared type and the return type go through the same walk a field
+declaration does, so `&CodeGraph` borrows via `&`, `Signal<T>` shares via
+`Signal`, a by-value parameter owns, and `dyn Trait` lands on the trait. The
+edges run type → function, the same direction as holds: a shape change to the
+type forces the signature to change. An `async fn` is walked at the type its
+body hands back, not at the future rust-analyzer wrapped it in. A function
+*body* is not walked at all — that stays the code altitude's business. A
+`dyn Trait` in a signature lands on the trait and joins the legend's
+trait-holds count (traits still draw no marks); a trait bound and an
+`impl Trait` are holes, exactly as a type parameter is, and the legend says
+so.
+
 Every field on a mark is quoted from the source in declaration order: the
 field name and its declared type exactly as written (`details:
 Vec<FileDetail>`), never a reconstruction (revised 2026-08-19; plain fields
-were counted before, and the reviewer asked for the fields themselves).
+were counted before, and the reviewer asked for the fields themselves). A
+function's parameters are quoted the same way, the pattern as written
+(`graph: &CodeGraph`), and its return type stands in the line a static's
+declared type uses — under the rows, where rust writes it, with the arrow.
 
 ## The structural diff (built 2026-08-19)
 
@@ -119,8 +149,13 @@ map's own grammar, at the map's own granularity.
   changed, `D` removed. A file-level change no longer marks a type: the
   letter is the declaration's own delta, so an untouched type in a touched
   file stays quiet. A diff-touched block wears the flare on its own frame.
-- **Ghosts.** A removed type or static is drawn from the base edition —
-  dashed frame, rows quoted as the base wrote them, locator
+  A function's `M` is its **signature's**, not its body's: this altitude
+  quotes the signature, so a rewritten body that leaves the contract alone
+  says nothing here (it is the code altitude's news). Parameters weave the
+  same `+`/struck rows fields do.
+- **Ghosts.** A removed type, static, or free function is drawn from the base
+  edition — dashed frame, rows quoted as the base wrote them (a function's
+  are its base parameters and return type), locator
   `src/views/shell.rs:113 (base)` — and seats in the frame its path names.
   Its sheet says "removed since the base"; its definition link is replaced
   by "its definition left the working copy."
@@ -157,10 +192,14 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
   `fields` holds each holding field as written: (name, declared type).
   A static's edge uses the static's mark as `from`.
 - `ItemMark` gains: `field_rows: Vec<(String, String)>` (structs and unions:
-  every field as written, in declaration order — name, declared type),
+  every field as written, in declaration order — name, declared type; free
+  functions: every parameter, the pattern as written and its declared type),
   `variants: Vec<String>` (enums: variants as written, payloads and
   discriminants included), `ty: String` (statics: the declared type as
-  written; empty otherwise).
+  written; free functions: the return type, empty for `()` and for no return;
+  empty otherwise). A function's return-type edge is filed under the
+  function's own name in `HoldEdge::fields`, the way a static's is under the
+  static's, so one `ty_target` rule bolds both.
 - The structural diff (2026-08-19): `ItemMark` gains `delta: Delta`
   (`Same` / `Added` / `Changed`), `fields_added` / `variants_added`
   (indexes into the quoted rows) and `fields_removed` / `variants_removed`
@@ -173,8 +212,9 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
 - Reference ties at type precision are computed on the client from the
   existing `item_edges`: each endpoint climbs `parent` to its outermost mark;
   ties where both ends land on a drawn struct/enum are kept, counts summed,
-  self-ties dropped. References from free functions and trait items are not
-  on this chart; the legend says so.
+  self-ties dropped. References written in a function *body*, and trait
+  items', are not on this chart — only what a signature declares; the legend
+  says so.
 
 ## The map
 
@@ -202,6 +242,12 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
   chart still does not move, and the resting width already fits the widest
   folded row so no line reflows on opening. `held by n types` is the chart's
   own fold, not the block's, and survives opening.
+- **Functions**: the same block wearing a signature — `pub fn` header with the
+  name in the palette's fn color, one row per parameter, the return type on
+  the `-> Nut` line under them, locator. Nothing holds a function, so it is
+  always a forest root; it seats nothing under it either, because a signature
+  is not containment. Its foot counts `+ n more params` where a type counts
+  fields.
 - **Statics**: same block with a 2.5px ink left edge; `static NAME` header,
   the declared type quoted beneath with the workspace type it reaches bold,
   locator. `GlobalSignal<Trail>` bolds `Trail` and draws the line into the
@@ -212,9 +258,10 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
   more than one crate exists). Each frame's counted fold row collects its
   private types.
 - **Seating order inside a frame**: statics first (the frame's root
-  register), then trees by subtree size, then the high-fan-in leaves
-  (`held by n types`, never seated under a parent and never parents
-  themselves), then the counted fold rows. The primary holder is the
+  register), then trees by subtree size, then the free functions in survey
+  order, then the high-fan-in leaves (`held by n types` · `named by n
+  signatures`, never seated under a parent and never parents themselves),
+  then the counted fold rows. The primary holder is the
   heaviest same-frame `Owns` holder by field count, ties broken by survey
   order; a cycle keeps the earlier seat and draws the closing edge; a type
   owned solely by private code seats under the frame's private fold row.
@@ -238,7 +285,8 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
 
 - Cartouche (top-left): workspace name, the altitude ladder
   `dependencies · code · data` (all three cartouches gain the third rung),
-  facts (`54 structs · 18 enums · 11 roots`), the diff line, the amber
+  facts (`54 structs · 18 enums · 96 fns · 11 roots` — a function is never a
+  root: nothing can hold one), the diff line, the amber
   structural-diff counts (`7 added · 13 removed · 13 changed`), and the
   insight line naming the top-level modules the diff landed in.
 - The `references` toggle rides the cartouche (uses / used by / both).
@@ -271,8 +319,13 @@ Extends `CodeGraph` (src/api.rs); the survey already carries every type as an
 
 ## Open decisions
 
-- Lifecycle on the selection sheet (born / mutated / read / consumed from fn
-  signatures) — the sheet exists (held by / holds); lifecycle does not.
+- Lifecycle on the selection sheet (born / mutated / read / consumed) — the
+  signatures are on the chart now, but the sheet still reads them as holds,
+  not as a lifecycle.
+- Methods and associated functions as contracts of their own. v1 attributes
+  them to their type, so a type's own API is not on this chart.
+- A function's return type changing draws no `removed` edge, only the `M` —
+  the same fidelity a static's declared type change has.
 - A full semantic survey of the base revision (exact base edges) behind the
   same wire model — the syntactic edition is the committed first step, not
   the last word.

@@ -8,6 +8,13 @@
 //! union, and static has its fields' semantic types walked, and every
 //! workspace type the walk reaches becomes a holding edge.
 //!
+//! A free function is walked the same way, because a pub fn is a contract
+//! just as a pub struct is: its parameters and its return type are declared
+//! types, so they are walked exactly as a field declaration is. Only the
+//! signature — a body names things at the code altitude, and that is where
+//! those names stay. A method's signature belongs to the type its impl
+//! names, so the walk starts from free functions alone.
+//!
 //! Nothing here is guessed. A wrapper is a wrapper because of its name *and*
 //! the crate that defines it, so a workspace type called `Signal` stays a
 //! plain type; a field whose walk reaches no workspace type is counted, not
@@ -25,8 +32,8 @@ use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, TextRange, ast};
 
 use crate::api::{HoldEdge, HoldKind, ItemKind};
 
-/// One item the walk starts from: a struct, enum, union, or static the
-/// survey has already given a mark.
+/// One item the walk starts from: a struct, enum, union, static, or free
+/// function the survey has already given a mark.
 pub(super) struct Holder {
     /// Its [`crate::api::ItemMark::id`].
     pub mark: u32,
@@ -42,12 +49,13 @@ pub(super) struct Holder {
 pub(super) struct DataWalk {
     /// Holding edges, aggregated per (from, to, kind, via) and sorted.
     pub holds: Vec<HoldEdge>,
-    /// A struct's or union's fields, quoted in declaration order:
-    /// (name as written, declared type as written).
+    /// A struct's or union's fields — or a free function's parameters —
+    /// quoted in declaration order: (name as written, declared type as
+    /// written).
     pub field_rows: Vec<Vec<(String, String)>>,
     /// An enum's variants as written — name, payload, discriminant.
     pub variants: Vec<Vec<String>>,
-    /// A static's declared type, as written.
+    /// A static's declared type or a free function's return type, as written.
     pub ty: Vec<String>,
 }
 
@@ -167,7 +175,11 @@ pub(super) fn walk<'db>(
             .filter(|n| {
                 matches!(
                     n.kind(),
-                    SyntaxKind::STRUCT | SyntaxKind::ENUM | SyntaxKind::UNION | SyntaxKind::STATIC
+                    SyntaxKind::STRUCT
+                        | SyntaxKind::ENUM
+                        | SyntaxKind::UNION
+                        | SyntaxKind::STATIC
+                        | SyntaxKind::FN
                 )
             })
             .map(|n| (n.text_range(), n))
@@ -244,6 +256,47 @@ pub(super) fn walk<'db>(
                         &def.ty(db),
                         &mut acc,
                     );
+                }
+                ItemKind::Fn => {
+                    let Some(f) = ast::Fn::cast(node.clone()) else {
+                        continue;
+                    };
+                    let Some(def) = sema.to_def(&f) else {
+                        continue;
+                    };
+                    // The written parameters and the resolved ones stand in
+                    // the same order, and a free function has no `self` to
+                    // throw the count off — so each row keeps the words the
+                    // source wrote while the edge follows the resolved type.
+                    let quoted = f.param_list().into_iter().flat_map(|list| list.params());
+                    for (param, source) in def.params_without_self(db).iter().zip(quoted) {
+                        let name = pat_text(source.pat());
+                        let decl = type_text(source.ty());
+                        field_edges(
+                            db,
+                            mark_of_def,
+                            holder.mark,
+                            name.clone(),
+                            decl.clone(),
+                            param.ty(),
+                            &mut acc,
+                        );
+                        field_rows[mark].push((name, decl));
+                    }
+                    // The return type is the signature's own row, filed under
+                    // the function's name the way a static's type is under the
+                    // static's. A function that returns nothing says nothing.
+                    let ret_text = type_text(f.ret_type().and_then(|r| r.ty()));
+                    if ret_text.is_empty() || ret_text == "()" {
+                        continue;
+                    }
+                    ty[mark] = ret_text.clone();
+                    let name = f.name().map(|n| n.text().to_string()).unwrap_or_default();
+                    // An `async fn` returns its body's type wrapped in a
+                    // future rust-analyzer synthesized; the reader wrote the
+                    // inner one, so that is the one the walk follows.
+                    let ret = def.async_ret_type(db).unwrap_or_else(|| def.ret_type(db));
+                    field_edges(db, mark_of_def, holder.mark, name, ret_text, &ret, &mut acc);
                 }
                 _ => {}
             }
@@ -459,6 +512,21 @@ pub(super) fn type_text(ty: Option<ast::Type>) -> String {
         return String::new();
     };
     ty.syntax()
+        .text()
+        .to_string()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// A parameter's binding as the source writes it — `graph`, `mut at`, `_`.
+/// A pattern is the name the reader knows the parameter by, so it is quoted
+/// like every other row, never reduced to a position.
+pub(super) fn pat_text(pat: Option<ast::Pat>) -> String {
+    let Some(pat) = pat else {
+        return String::new();
+    };
+    pat.syntax()
         .text()
         .to_string()
         .split_whitespace()

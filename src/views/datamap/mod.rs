@@ -9,9 +9,11 @@
 //!
 //! One block per type, seated in the frame of the module that declares it, a
 //! hairline from every held type to its holder, and the code map's reference
-//! ties lifted to type precision underneath. Clicking a type opens the plate
-//! that already quotes its source, one altitude up — this altitude adds no
-//! second plate of its own.
+//! ties lifted to type precision underneath. Free functions stand beside the
+//! types, wearing their signatures: a pub fn is a contract too, and the types
+//! it names are held by it in the only sense a signature can hold anything.
+//! Clicking a mark opens the plate that already quotes its source, one
+//! altitude up — this altitude adds no second plate of its own.
 
 pub(crate) mod chrome;
 pub(crate) mod layout;
@@ -30,7 +32,7 @@ use crate::views::survey::use_code_graph;
 
 /// The selection the current route asks for: the defining file, then the label
 /// the type's definition plate selects by.
-pub fn data_selection(route: &Route) -> Option<(String, String)> {
+fn data_selection(route: &Route) -> Option<(String, String)> {
     match route {
         Route::DataType { path, item } => Some((path.join("/"), item.clone())),
         _ => None,
@@ -85,9 +87,10 @@ pub fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Elem
     // The cartouche and the legend need the survey's totals, not its geometry:
     // one pass over the wire model, kept until the survey itself changes. The
     // reading toggle is peeked, not read: it moves which ties rest on the
-    // paper, and no fact on this plate.
+    // paper, and no fact on this plate. The doors are read — they decide which
+    // types are drawn at all, so every count on the plate follows them.
     let facts = use_memo(use_reactive((&graph,), move |(graph,)| {
-        DataModel::build(&graph, *code.ref_dir.peek()).facts(graph.unresolved)
+        DataModel::build(&graph, *code.ref_dir.peek(), *code.doors.read()).facts(graph.unresolved)
     }));
 
     rsx! {

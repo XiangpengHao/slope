@@ -346,6 +346,36 @@ fn survey_attached(
         }
     }
 
+    // Containment: an item's parent is the type its impl names, or the trait
+    // that declares it. Inline modules are not containers at this altitude.
+    // The data walk below reads it: a function with no parent is free, and a
+    // free function's signature is a contract the data altitude charts.
+    let mut parent_of: Vec<Option<u32>> = vec![None; mark_at.len()];
+    for (fi, file) in raw.iter().enumerate() {
+        let by_range: HashMap<TextRange, u32> = file
+            .items
+            .iter()
+            .enumerate()
+            .map(|(li, it)| (it.range, li as u32))
+            .collect();
+        for (li, item) in file.items.iter().enumerate() {
+            let (Some(mark), Some(owner)) = (
+                mark_of[fi][li],
+                item.owner.and_then(|r| by_range.get(&r).copied()),
+            ) else {
+                continue;
+            };
+            let parent = match file.items[owner as usize].kind {
+                ItemKind::Impl => impl_self.get(&(fi as u32, owner)).copied(),
+                // A trait declares its own items; nothing else nests.
+                _ => mark_of[fi][owner as usize],
+            };
+            if parent != Some(mark) {
+                parent_of[mark as usize] = parent;
+            }
+        }
+    }
+
     // ---- Pass B: resolve references. --------------------------------------
 
     // (source file, source item, target) → count.
@@ -429,11 +459,14 @@ fn survey_attached(
         .enumerate()
         .filter_map(|(id, &(fi, li))| {
             let item = &raw[fi as usize].items[li as usize];
-            matches!(
-                item.kind,
-                ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Static
-            )
-            .then(|| data::Holder {
+            let walked = match item.kind {
+                ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Static => true,
+                // Only a free function: a method's signature is its type's
+                // business, and the type already holds the ground.
+                ItemKind::Fn => parent_of[id].is_none(),
+                _ => false,
+            };
+            walked.then_some(data::Holder {
                 mark: id as u32,
                 kind: item.kind,
                 file: fi,
@@ -445,34 +478,6 @@ fn survey_attached(
     let mut walk = data::walk(&sema, db, &efids, &holders, mark_at.len(), &data_mark);
 
     // ---- Assemble the wire model. -----------------------------------------
-
-    // Containment: an item's parent is the type its impl names, or the trait
-    // that declares it. Inline modules are not containers at this altitude.
-    let mut parent_of: Vec<Option<u32>> = vec![None; mark_at.len()];
-    for (fi, file) in raw.iter().enumerate() {
-        let by_range: HashMap<TextRange, u32> = file
-            .items
-            .iter()
-            .enumerate()
-            .map(|(li, it)| (it.range, li as u32))
-            .collect();
-        for (li, item) in file.items.iter().enumerate() {
-            let (Some(mark), Some(owner)) = (
-                mark_of[fi][li],
-                item.owner.and_then(|r| by_range.get(&r).copied()),
-            ) else {
-                continue;
-            };
-            let parent = match file.items[owner as usize].kind {
-                ItemKind::Impl => impl_self.get(&(fi as u32, owner)).copied(),
-                // A trait declares its own items; nothing else nests.
-                _ => mark_of[fi][owner as usize],
-            };
-            if parent != Some(mark) {
-                parent_of[mark as usize] = parent;
-            }
-        }
-    }
 
     let mut file_pair: HashMap<(u32, u32), u32> = HashMap::new();
     let mut item_refs: Vec<Vec<ItemRef>> = vec![Vec::new(); raw.len()];
@@ -657,6 +662,11 @@ fn survey_attached(
         "a field whose walk reaches no workspace type is counted as a plain \
          field, not drawn; generic parameters on the holder are holes and \
          count the same way"
+            .to_string(),
+        "a free function's signature is walked the same way — its parameters \
+         and its return type draw holds edges. a method's signature stays \
+         with the type its impl names, and no function body is on the data \
+         chart"
             .to_string(),
     ];
     if !proc_macros {

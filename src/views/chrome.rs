@@ -146,7 +146,7 @@ pub fn TitleBlock(graph: WorkspaceGraph, #[props(default = true)] changes_open: 
 /// selection's own panel, because it has nothing to act on without one.
 /// Active segment wears a 1px ink border — no fills on this plate, ever.
 #[component]
-pub fn DirectionToggle() -> Element {
+fn DirectionToggle() -> Element {
     let atlas = use_atlas();
     let current = *atlas.dir.read();
     let seg = |label: &'static str, hint: &'static str, val: DirFilter| {

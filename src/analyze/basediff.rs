@@ -11,8 +11,9 @@
 //! A full semantic survey of the base would slot in behind the same wire
 //! model; this is the cheap edition, not the final word.
 //!
-//! Scope (the data altitude): structs, enums, unions, and statics. The other
-//! item kinds keep `Delta::Same` until the code altitude takes its pass.
+//! Scope (the data altitude): structs, enums, unions, statics, and free
+//! functions — everything that earns a block. The other item kinds keep
+//! `Delta::Same` until the code altitude takes its pass.
 
 use std::collections::{HashMap, HashSet};
 
@@ -21,7 +22,7 @@ use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 
 use super::vcs::{Diff, file_at_base};
 use crate::api::{
-    CodeGraph, Delta, FileDetail, GhostMark, HoldEdge, HoldEvent, HoldKind, ItemKind, Vis,
+    CodeGraph, Delta, FileDetail, GhostMark, HoldEdge, HoldEvent, HoldKind, ItemKind, ItemMark, Vis,
 };
 
 /// One declaration as the base edition wrote it.
@@ -83,13 +84,18 @@ fn base_fields(list: Option<ast::FieldList>) -> Vec<(String, String)> {
 
 /// The inline-module path standing over a node (`tests::`), or `None` when
 /// the node is not on a plain module chain at all — a type declared inside a
-/// function body has no mark in the live survey, so the base reads it the
-/// same way.
+/// function body, or a function inside an impl or a trait, has no mark of its
+/// own in the live survey, so the base reads it the same way.
 fn module_prefix(node: &SyntaxNode) -> Option<String> {
     let mut names: Vec<String> = Vec::new();
     for up in node.ancestors().skip(1) {
         match up.kind() {
-            SyntaxKind::SOURCE_FILE | SyntaxKind::ITEM_LIST => {}
+            // An extern block holds no ground of its own: the live survey
+            // shelves its items on the file, and so must the base.
+            SyntaxKind::SOURCE_FILE
+            | SyntaxKind::ITEM_LIST
+            | SyntaxKind::EXTERN_BLOCK
+            | SyntaxKind::EXTERN_ITEM_LIST => {}
             SyntaxKind::MODULE => {
                 let name = ast::Module::cast(up)?.name()?.text().to_string();
                 names.push(name);
@@ -99,6 +105,20 @@ fn module_prefix(node: &SyntaxNode) -> Option<String> {
     }
     names.reverse();
     Some(names.iter().map(|n| format!("{n}::")).collect())
+}
+
+/// A parameter list as the base wrote it: the binding as written and the
+/// declared type as written — the rows a function's block quotes.
+fn base_params(list: Option<ast::ParamList>) -> Vec<(String, String)> {
+    list.into_iter()
+        .flat_map(|list| list.params())
+        .map(|p| {
+            (
+                super::data::pat_text(p.pat()),
+                super::data::type_text(p.ty()),
+            )
+        })
+        .collect()
 }
 
 /// Every charted declaration in one base edition, in source order.
@@ -111,6 +131,7 @@ fn base_decls(text: &str) -> Vec<BaseDecl> {
             SyntaxKind::ENUM => ItemKind::Enum,
             SyntaxKind::UNION => ItemKind::Union,
             SyntaxKind::STATIC => ItemKind::Static,
+            SyntaxKind::FN => ItemKind::Fn,
             _ => continue,
         };
         let Some(prefix) = module_prefix(&node) else {
@@ -181,6 +202,23 @@ fn base_decls(text: &str) -> Vec<BaseDecl> {
                     Vec::new(),
                     Vec::new(),
                     super::data::type_text(s.ty()),
+                )
+            }
+            ItemKind::Fn => {
+                let Some(f) = ast::Fn::cast(node.clone()) else {
+                    continue;
+                };
+                let Some(name) = f.name() else { continue };
+                let vis = super::code::vis_kind(f.visibility());
+                // A function that hands nothing back quotes no return line,
+                // at the base as in the working copy.
+                let ret = super::data::type_text(f.ret_type().and_then(|r| r.ty()));
+                (
+                    name.text().to_string(),
+                    vis,
+                    base_params(f.param_list()),
+                    Vec::new(),
+                    if ret == "()" { String::new() } else { ret },
                 )
             }
             _ => continue,
@@ -394,11 +432,14 @@ pub(super) fn apply(
         .iter()
         .map(|f| (f.path.as_str(), f.id))
         .collect();
-    let charted = |kind: ItemKind| {
-        matches!(
-            kind,
-            ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Static
-        )
+    // What the data chart can draw, live side. Only a free function: a method
+    // is matched under the type its impl names, never as a declaration of the
+    // file's own, and two types can each own a `build` without either being
+    // the base's free `build`.
+    let charted = |item: &ItemMark| match item.kind {
+        ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Static => true,
+        ItemKind::Fn => item.parent.is_none(),
+        _ => false,
     };
 
     // ---- Read each changed file's two editions and match by (kind, name). --
@@ -428,7 +469,7 @@ pub(super) fn apply(
             .collect();
         if let Some(file) = live_file {
             for item in graph.items.iter().filter(|i| i.file == file) {
-                if !charted(item.kind) {
+                if !charted(item) {
                     continue;
                 }
                 match base_of.remove(&(item.kind, item.name.as_str())) {
@@ -477,17 +518,25 @@ pub(super) fn apply(
     }
     for (id, decl) in matched {
         let item = &graph.items[id as usize];
-        let live_text = details
-            .get(item.file as usize)
-            .and_then(|d| d.items.get(item.local as usize))
-            .and_then(|info| {
-                sources
-                    .get(item.file as usize)
-                    .and_then(|src| src.get(info.start as usize..info.end as usize))
-            })
-            .map(collapsed)
-            .unwrap_or_default();
-        if live_text == decl.text {
+        // A function's block quotes its signature, so its signature is what
+        // this altitude reads: a rewritten body is the code altitude's news,
+        // and an `M` here would point at rows that did not move.
+        let same = if decl.kind == ItemKind::Fn {
+            item.vis == decl.vis && item.field_rows == decl.field_rows && item.ty == decl.ty
+        } else {
+            let live_text = details
+                .get(item.file as usize)
+                .and_then(|d| d.items.get(item.local as usize))
+                .and_then(|info| {
+                    sources
+                        .get(item.file as usize)
+                        .and_then(|src| src.get(info.start as usize..info.end as usize))
+                })
+                .map(collapsed)
+                .unwrap_or_default();
+            live_text == decl.text
+        };
+        if same {
             continue; // Same, moved or not: the shape is the base's shape.
         }
         let item = &mut graph.items[id as usize];
@@ -669,10 +718,28 @@ mod tests {
     pub struct Sample(u8);
 }
 fn body() { struct Local; }
+pub fn survey(dir: &Path, quiet: bool) -> Result<Index, String> { todo!() }
+fn nothing() -> () {}
+impl Wire {
+    pub fn id(&self) -> u32 { self.id }
+}
 "#;
         let decls = base_decls(text);
         let names: Vec<&str> = decls.iter().map(|d| d.name.as_str()).collect();
-        assert_eq!(names, vec!["Wire", "Kind", "CACHE", "tests::Sample"]);
+        // A free function is a declaration at this altitude; a method is its
+        // type's, and a type declared in a body has no mark in either edition.
+        assert_eq!(
+            names,
+            vec![
+                "Wire",
+                "Kind",
+                "CACHE",
+                "tests::Sample",
+                "body",
+                "survey",
+                "nothing"
+            ]
+        );
         assert_eq!(decls[0].vis, Vis::Pub);
         assert_eq!(
             decls[0].field_rows,
@@ -688,6 +755,19 @@ fn body() { struct Local; }
             decls[3].field_rows,
             vec![("0".to_string(), "u8".to_string())]
         );
+        // A signature reads as rows and a return line: the parameters as the
+        // base wrote them, the return type in the slot a static's type uses.
+        assert_eq!((decls[5].kind, decls[5].vis), (ItemKind::Fn, Vis::Pub));
+        assert_eq!(
+            decls[5].field_rows,
+            vec![
+                ("dir".to_string(), "&Path".to_string()),
+                ("quiet".to_string(), "bool".to_string())
+            ]
+        );
+        assert_eq!(decls[5].ty, "Result<Index, String>");
+        // Handing nothing back is not a return line, written either way.
+        assert!(decls[4].ty.is_empty() && decls[6].ty.is_empty());
     }
 
     #[test]

@@ -240,10 +240,11 @@ pub enum HoldEvent {
     Removed,
 }
 
-/// A type or static the base had that the working copy dropped. The data
-/// chart draws it as a ghost — dashed frame, rows quoted from the base
-/// edition — so a removed type leaves a mark instead of vanishing. Its `id`
-/// continues after [`CodeGraph::items`], so a [`HoldEdge`] can land on it.
+/// A type, static, or free function the base had that the working copy
+/// dropped. The data chart draws it as a ghost — dashed frame, rows quoted
+/// from the base edition — so a removed declaration leaves a mark instead of
+/// vanishing. Its `id` continues after [`CodeGraph::items`], so a
+/// [`HoldEdge`] can land on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct GhostMark {
     /// `items.len() + index into ghosts` — one id space with the live marks.
@@ -258,11 +259,12 @@ pub struct GhostMark {
     pub vis: Vis,
     /// 1-based line in the base edition of the file.
     pub line: u32,
-    /// Fields as the base wrote them: (name, declared type).
+    /// Fields — or a function's parameters — as the base wrote them:
+    /// (name, declared type).
     pub field_rows: Vec<(String, String)>,
     /// An enum's variants as the base wrote them.
     pub variants: Vec<String>,
-    /// A static's declared type at the base.
+    /// A static's declared type, or a function's return type, at the base.
     pub ty: String,
 }
 
@@ -297,16 +299,17 @@ pub struct ItemMark {
     /// workspace. Derives are not here: they stand in the type's own source,
     /// and a derive is not code anyone wrote.
     pub impls: Vec<String>,
-    /// A struct's or union's fields, quoted from source in declaration order:
-    /// the name as written (a tuple field's is its index) and the declared
-    /// type as written. The data chart quotes them all — what a field reaches
-    /// is on the holds edges. Empty for everything else.
+    /// A struct's or union's fields — or a free function's parameters —
+    /// quoted from source in declaration order: the name as written (a tuple
+    /// field's is its index, a parameter's is its pattern) and the declared
+    /// type as written. The data chart quotes them all — what a field or a
+    /// parameter reaches is on the holds edges. Empty for everything else.
     pub field_rows: Vec<(String, String)>,
     /// An enum's variants as written, in source order — name, payload types,
     /// and discriminant included. Empty for everything that is not an enum.
     pub variants: Vec<String>,
-    /// A static's declared type, as written. Empty for everything that is not
-    /// a static.
+    /// A static's declared type or a free function's return type, as written.
+    /// Empty for everything else, and for a function that returns nothing.
     pub ty: String,
     /// How this declaration differs from the diff base.
     pub delta: Delta,
@@ -341,11 +344,14 @@ pub enum HoldKind {
 
 /// One holding relation: `from` has one or more fields whose type walk
 /// reaches `to`. Aggregated per (from, to, kind, wrapper), so every field
-/// that says the same thing arrives on one edge. Private types are here too
+/// that says the same thing arrives on one edge. A free function's signature
+/// draws the same edges from the same walk: a parameter or a return type
+/// names a workspace type the way a field does. Private types are here too
 /// — privacy folds the chart, it does not hide a fact from it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct HoldEdge {
-    /// The holder's [`ItemMark::id`]: a struct, an enum, a union, or a static.
+    /// The holder's [`ItemMark::id`]: a struct, an enum, a union, a static,
+    /// or a free function whose signature names the held type.
     pub from: u32,
     /// The held type's [`ItemMark::id`]. Equal to `from` when a type holds
     /// itself, which linked structures really do.
@@ -357,7 +363,7 @@ pub struct HoldEdge {
     /// Every field that draws this edge, quoted from source in declaration
     /// order: (name as written, declared type as written). A tuple field's
     /// name is its index; an enum payload's is its variant's name; a static's
-    /// is the static's own name.
+    /// is the static's own name, and so is a free function's return type's.
     pub fields: Vec<(String, String)>,
     /// This relation against the diff base: `None` = the base held it too.
     /// A `Removed` edge is not structure — the working copy no longer has the
@@ -396,8 +402,8 @@ pub struct CodeGraph {
     /// included. Edges carrying a [`HoldEvent`] are the structural diff's:
     /// `Removed` ones are re-drawn from the base edition.
     pub holds: Vec<HoldEdge>,
-    /// Types and statics the base had that the working copy dropped. Their
-    /// ids continue after `items`, so `holds` can land on them.
+    /// Types, statics, and free functions the base had that the working copy
+    /// dropped. Their ids continue after `items`, so `holds` can land on them.
     pub ghosts: Vec<GhostMark>,
     /// Names the survey could not resolve (type-inference limits). They are
     /// not on the chart; the words on the plate must say so.
