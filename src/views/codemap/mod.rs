@@ -21,6 +21,7 @@ use crate::api::{CodeGraph, FileDetail, ItemSource, Vis};
 use crate::views::codemap::chrome::{CodeCartouche, CodeLegend, CodeSearch, CratePanel};
 use crate::views::codemap::ego::EgoPlate;
 use crate::views::codemap::map::CodeChart;
+use crate::views::surface::model::Folds;
 use crate::views::survey::use_code_graph;
 
 /// What the route selects on the code map.
@@ -136,6 +137,11 @@ pub struct CodeState {
     pub ref_dir: Signal<RefDir>,
     /// Which doors the data chart draws a block for.
     pub doors: Signal<Doors>,
+    /// Modules the reviewer folded on the surface chart, each by the crate and
+    /// module path that names it across builds. A folded module draws its
+    /// boundary and one counted row. View state, not a URL: what the chart
+    /// draws is the reading, and the URL carries the selection.
+    pub folds: Signal<Folds>,
 }
 
 impl CodeState {
@@ -147,6 +153,7 @@ impl CodeState {
             expanded: Signal::new(HashSet::new()),
             ref_dir: Signal::new(RefDir::default()),
             doors: Signal::new(Doors::default()),
+            folds: Signal::new(Folds::new()),
         }
     }
 }

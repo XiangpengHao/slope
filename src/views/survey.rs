@@ -12,6 +12,7 @@ use dioxus::prelude::*;
 use crate::Route;
 use crate::api::{CodeGraph, code_graph};
 use crate::views::codemap::CodeShell;
+use crate::views::navigator::NavigatorShell;
 use crate::views::surface::SurfaceShell;
 
 type CodeResource = Resource<Result<CodeGraph, ServerFnError>>;
@@ -34,7 +35,11 @@ pub fn SurveyShell(workspace: String, diff_line: String) -> Element {
     let route = use_route::<Route>();
     let surface = matches!(
         route,
-        Route::SurfaceOverview {} | Route::SurfaceFocus { .. }
+        Route::SurfaceOverview {} | Route::SurfaceFocus { .. } | Route::SurfaceModFocus { .. }
+    );
+    let navigator = matches!(
+        route,
+        Route::NavigatorAgenda {} | Route::NavigatorFocus { .. }
     );
 
     let state = resource.read();
@@ -45,6 +50,13 @@ pub fn SurveyShell(workspace: String, diff_line: String) -> Element {
             },
             Some(Err(err)) => rsx! {
                 SurveyFailed { message: err.to_string(), resource }
+            },
+            Some(Ok(graph)) if navigator => rsx! {
+                NavigatorShell {
+                    graph: graph.clone(),
+                    workspace: workspace.clone(),
+                    diff_line: diff_line.clone(),
+                }
             },
             Some(Ok(graph)) if surface => rsx! {
                 SurfaceShell {

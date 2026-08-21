@@ -36,11 +36,23 @@ use crate::views::surface::map::SurfaceChart;
 use crate::views::surface::model::SurfaceModel;
 use crate::views::survey::use_code_graph;
 
-/// The selection the current route asks for: the defining file, then the label
-/// the type's definition plate selects by.
-fn selection(route: &Route) -> Option<(String, String)> {
+/// What the route selects on the chart. Both readings recede everything they
+/// do not reach; neither ever moves a block or the camera.
+#[derive(Clone, PartialEq, Debug)]
+pub enum SurfaceSel {
+    /// One contract: the defining file, then the label the type's definition
+    /// plate selects by.
+    Mark(String, String),
+    /// One module boundary, by the name a fold and a URL both use: the crate,
+    /// then the module path as rust nests it.
+    Mod(Vec<String>),
+}
+
+/// The selection the current route asks for.
+fn selection(route: &Route) -> Option<SurfaceSel> {
     match route {
-        Route::SurfaceFocus { path, item } => Some((path.join("/"), item.clone())),
+        Route::SurfaceFocus { path, item } => Some(SurfaceSel::Mark(path.join("/"), item.clone())),
+        Route::SurfaceModFocus { module } => Some(SurfaceSel::Mod(module.clone())),
         _ => None,
     }
 }
@@ -51,6 +63,12 @@ pub fn mark_route(path: &str, item: &str) -> Route {
         path: path.split('/').map(str::to_string).collect(),
         item: item.to_string(),
     }
+}
+
+/// The route that selects one module frame — the whole boundary, by the key
+/// that names it in every build.
+pub fn mod_route(key: Vec<String>) -> Route {
+    Route::SurfaceModFocus { module: key }
 }
 
 /// `/surface` — the whole chart. The chart lives in the survey shell; this
@@ -83,6 +101,16 @@ pub fn SurfaceFocus(path: Vec<String>, item: String) -> Element {
     }
 }
 
+/// `/surface/mod/:..module` — one module boundary selected. The chart is the
+/// whole reading: everything inside the boundary keeps its ink, what crosses it
+/// reads a step behind, and the other modules recede. There is no sheet — a
+/// module is a place on the paper, and the paper is already saying it.
+#[component]
+pub fn SurfaceModFocus(module: Vec<String>) -> Element {
+    let _ = module;
+    rsx! {}
+}
+
 /// The surface chart and its furniture. Mounted by the survey shell, which has
 /// already loaded the survey both it and the code map read.
 #[component]
@@ -96,8 +124,13 @@ pub fn SurfaceShell(graph: CodeGraph, workspace: String, diff_line: String) -> E
     // paper, and no fact on this plate. The doors are read — they decide which
     // types are drawn at all, so every count on the plate follows them.
     let facts = use_memo(use_reactive((&graph,), move |(graph,)| {
-        SurfaceModel::build(&graph, *code.ref_dir.peek(), *code.doors.read())
-            .facts(graph.unresolved)
+        SurfaceModel::build(
+            &graph,
+            *code.ref_dir.peek(),
+            *code.doors.read(),
+            &code.folds.read(),
+        )
+        .facts(graph.unresolved)
     }));
 
     rsx! {

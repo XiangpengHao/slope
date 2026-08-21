@@ -62,11 +62,13 @@ pub enum Altitude {
     Code,
     /// `/surface` — the contracts the code publishes, and what leans on what.
     Surface,
+    /// `/navigator` — the same survey with no chart on it: one question per
+    /// screen, and position that says relation instead of place.
+    Navigator,
 }
 
-/// The altitude line: the ladder between the three charts, and the only
-/// navigation between them. The current rung is engraved solid; the others are
-/// links.
+/// The altitude line: the ladder between the charts, and the only navigation
+/// between them. The current rung is engraved solid; the others are links.
 #[component]
 pub fn AltitudeSwitch(at: Altitude) -> Element {
     let rung = |label: &'static str, to: Route, mine: Altitude| {
@@ -87,6 +89,7 @@ pub fn AltitudeSwitch(at: Altitude) -> Element {
             {rung("dependencies", Route::Overview {}, Altitude::Deps)}
             {rung("code", Route::CodeOverview {}, Altitude::Code)}
             {rung("surface", Route::SurfaceOverview {}, Altitude::Surface)}
+            {rung("navigator", Route::NavigatorAgenda {}, Altitude::Navigator)}
         }
     }
 }

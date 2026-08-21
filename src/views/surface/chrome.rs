@@ -8,12 +8,13 @@ use crate::Route;
 use crate::api::{CodeGraph, Delta, HoldEvent, HoldKind};
 use crate::views::codemap::chrome::{Altitude, AltitudeSwitch, decl_words, plural};
 use crate::views::codemap::{Doors, RefDir, item_route, use_code};
-use crate::views::surface::mark_route;
 use crate::views::surface::model::{Anchor, RowState, SurfaceFacts, SurfaceModel, upstream};
+use crate::views::surface::{mark_route, mod_route};
 
-/// Which top-level modules the diff landed in, in plain words. The chart shows
-/// a reviewer where the amber is; the cartouche says it out loud, because that
-/// one sentence is the answer to why they climbed to this altitude.
+/// Which modules the diff landed in, each by its whole path
+/// (`views::surface`), in plain words. The chart shows a reviewer where the
+/// amber is; the cartouche says it out loud, because that one sentence is the
+/// answer to why they climbed to this altitude.
 fn insight(modules: &[String]) -> Option<String> {
     match modules {
         [] => None,
@@ -221,21 +222,30 @@ fn hold_rows(
                         event,
                     }
                 }
-                Anchor::Private(frame) | Anchor::More(frame) => {
+                Anchor::Private(frame) | Anchor::More(frame) | Anchor::Mod(frame) => {
                     let frame = &model.frames[*frame as usize];
-                    let count = if matches!(anchor, Anchor::Private(_)) {
-                        format!(
+                    let count = match anchor {
+                        Anchor::Private(_) => format!(
                             "+ {}",
                             plural(frame.private as usize, model.doors.fold_word())
-                        )
-                    } else {
-                        format!("+ {}", plural(frame.more as usize, "more item"))
+                        ),
+                        Anchor::More(_) => {
+                            format!("+ {}", plural(frame.more as usize, "more item"))
+                        }
+                        // A module the reviewer folded: the row counts the
+                        // whole boundary, and the boundary can be selected,
+                        // so this row is a link where the other two are not.
+                        _ => format!("+ {}", plural(frame.packed as usize, "item")),
                     };
-                    let place = frame
-                        .label(model.multi_crate)
-                        .unwrap_or_else(|| frame.krate.clone());
+                    // The whole path, not the chip on the border: this row is
+                    // read off the paper, where a nested `mod surface` names
+                    // three different modules.
+                    let place = match frame.module.is_empty() {
+                        true => frame.krate.clone(),
+                        false => format!("mod {}", frame.words()),
+                    };
                     HoldRow {
-                        to: None,
+                        to: matches!(anchor, Anchor::Mod(_)).then(|| mod_route(frame.key())),
                         decl: String::new(),
                         name: format!("{count} · {place}"),
                         letter: None,
@@ -352,7 +362,12 @@ pub fn SurfaceSheet(graph: CodeGraph, path: String, item: String) -> Element {
     // toggle is peeked: it moves nothing on this plate. The doors are read —
     // they decide whether a held type is a link here or part of a count.
     let model = use_memo(use_reactive((&graph,), move |(graph,)| {
-        SurfaceModel::build(&graph, *code.ref_dir.peek(), *code.doors.read())
+        SurfaceModel::build(
+            &graph,
+            *code.ref_dir.peek(),
+            *code.doors.read(),
+            &code.folds.read(),
+        )
     }));
     let model = model.read();
 
@@ -949,9 +964,9 @@ pub fn SurfaceLegend(facts: SurfaceFacts, #[props(default = true)] start_open: b
                         }
                     }
                     p {
-                        span { class: "font-medium", "+ 4 more fields" }
+                        span { class: "text-ink", "every row, always" }
                         span { class: "text-ink-soft",
-                            " — rows past the block's eight quoted ones, held back only while it rests: selecting the block draws every field, variant and method it has. variants count the same way, and methods past five of them."
+                            " — a block draws its whole declaration: every field, every variant, every method row of the band, every parameter of a signature. no row waits behind a count, so a block stands as tall as what it promises and a reader never has to open one to finish reading it."
                         }
                     }
                     p {
@@ -959,7 +974,7 @@ pub fn SurfaceLegend(facts: SurfaceFacts, #[props(default = true)] start_open: b
                         span { class: "text-ink-soft", " · " }
                         span { class: "font-medium", "named by 2 signatures" }
                         span { class: "text-ink-soft",
-                            " — more than three marks reach this one, so its incoming edges rest folded; hover either end to ink them in. the two counts stay apart because a signature names a type without holding it."
+                            " — more than three marks reach this one, so its incoming edges rest folded; hover either end to ink them in, or select either end to keep them inked. the two counts stay apart because a signature names a type without holding it."
                         }
                     }
                     p {
@@ -988,7 +1003,7 @@ pub fn SurfaceLegend(facts: SurfaceFacts, #[props(default = true)] start_open: b
                         span { class: "text-ink", "used by" }
                         " rest each mark\u{2019}s two heaviest uses edges, "
                         span { class: "text-ink", "both" }
-                        " rests every one."
+                        " rests every one. whichever the reading, the rest ink in on hover — and selecting a mark inks in every one of its uses edges at once, for as long as the selection stands, with the block at the far end of each kept readable to walk to."
                     }
                 }
                 div { class: "space-y-1 border-t border-ink-line pt-2.5 text-ink-soft",
@@ -1044,7 +1059,15 @@ pub fn SurfaceLegend(facts: SurfaceFacts, #[props(default = true)] start_open: b
                 div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
                     UsageRow {
                         gesture: "click a type",
-                        effect: "select it: the block opens to every field and variant it quoted a count for, everything a shape change could reach keeps its ink, the rest recedes, and its sheet opens. its definition is one step further, on the sheet.",
+                        effect: "select it: everything a shape change could reach keeps its ink, every body it leans on or that leans on it inks in a step behind — dashed lines and far blocks both — the rest recedes, and its sheet opens. the block itself was already quoted whole. its definition is one step further, on the sheet.",
+                    }
+                    UsageRow {
+                        gesture: "click a module\u{2019}s border",
+                        effect: "select the module: every contract inside the boundary keeps its ink, everything one hop across it reads a step behind, and the other modules recede with their frames. the border\u{2019}s label does the same.",
+                    }
+                    UsageRow {
+                        gesture: "− on a border · + on the row",
+                        effect: "fold the module to one counted row, and unfold it again. a fold is a re-layout: the chart is drawn again around what is left, the nested modules fold with it, and every edge that touched a contract inside lands on the row.",
                     }
                     UsageRow { gesture: "esc · bare paper", effect: "deselect" }
                     UsageRow { gesture: "hover a type", effect: "all of its edges, at full ink" }

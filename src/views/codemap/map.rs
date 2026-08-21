@@ -1161,6 +1161,9 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
                 handle: flow,
                 nodes_draggable: false,
                 delete_key: false,
+                // A trackpad's two-finger travel is a pan, as every canvas
+                // tool reads it; pinch (ctrl/meta wheel) zooms at the pointer.
+                pan_on_scroll: true,
                 node_view: move |ctx: NodeViewCtx<CodeNodeData>| {
                     let territory = match &ctx.node.data {
                         CodeNodeData::Block { info, .. } => Territory::File(info.id),

@@ -2,8 +2,9 @@
 //!
 //! A pure function of (frames, measured sizes): every block is measured before
 //! anything is placed, a frame's ownership forest is tidied into trees, the
-//! trees are shelved inside their module's frame, module frames are shelved
-//! inside their crate's, and the crates are shelved on the sheet. Each shelf
+//! trees are shelved inside their module's frame, a module frame is shelved
+//! inside the module above it however deep the path runs, and the crates are
+//! shelved on the sheet. Each shelf
 //! aims for a landscape box — the shape of the paper it will be read on — and
 //! never gets narrower than its widest child. The same survey always draws the
 //! same chart: no physics, no randomness, no measurement of anything the
@@ -284,15 +285,17 @@ mod tests {
 
     /// A frame whose marks all seat as roots — the shape a frame has when
     /// nothing in it owns anything else.
-    fn frame(id: u32, module: Option<&str>, parent: Option<u32>, marks: &[u32]) -> Frame {
+    fn frame(id: u32, module: &[&str], parent: Option<u32>, marks: &[u32]) -> Frame {
         Frame {
             id,
             krate: "slope".to_string(),
-            module: module.map(str::to_string),
+            module: module.iter().map(|s| (*s).to_string()).collect(),
             parent,
             marks: marks.to_vec(),
             private: 0,
             more: 0,
+            folded: false,
+            packed: 0,
             forest: marks.iter().map(|&m| Seat::leaf(Anchor::Mark(m))).collect(),
         }
     }
@@ -328,14 +331,14 @@ mod tests {
 
     #[test]
     fn marks_nest_in_their_frames_and_never_overlap() {
-        let mut api = frame(1, Some("api"), Some(0), &[0, 1, 2]);
+        let mut api = frame(1, &["api"], Some(0), &[0, 1, 2]);
         // `Wire` owns the other two, so the frame seats one tree, not three
         // loose blocks.
         api.forest = vec![seat(0, &[1, 2])];
         let frames = vec![
-            frame(0, None, None, &[9]),
+            frame(0, &[], None, &[9]),
             api,
-            frame(2, Some("views"), Some(0), &[3, 4]),
+            frame(2, &["views"], Some(0), &[3, 4]),
         ];
         let placed = layout(&frames, &sizes(&[0, 1, 2, 3, 4, 9]));
 
@@ -362,7 +365,7 @@ mod tests {
 
     #[test]
     fn a_child_seats_one_layer_under_the_parent_that_owns_it() {
-        let mut api = frame(0, Some("api"), None, &[0, 1, 2]);
+        let mut api = frame(0, &["api"], None, &[0, 1, 2]);
         api.forest = vec![seat(0, &[1, 2])];
         let placed = layout(&[api], &sizes(&[0, 1, 2]));
         let (root, left, right) = (placed.marks[&0], placed.marks[&1], placed.marks[&2]);
@@ -379,7 +382,7 @@ mod tests {
 
     #[test]
     fn a_parent_wider_than_its_children_centers_them_under_itself() {
-        let mut api = frame(0, Some("api"), None, &[0, 1]);
+        let mut api = frame(0, &["api"], None, &[0, 1]);
         api.forest = vec![seat(0, &[1])];
         let sizes = Sizes {
             marks: [(0, (240.0, 64.0)), (1, (100.0, 40.0))]
@@ -395,15 +398,43 @@ mod tests {
 
     #[test]
     fn the_same_frames_always_draw_the_same_chart() {
-        let mut api = frame(1, Some("api"), Some(0), &[0, 1]);
+        let mut api = frame(1, &["api"], Some(0), &[0, 1]);
         api.forest = vec![seat(0, &[1])];
         let frames = vec![
-            frame(0, None, None, &[]),
+            frame(0, &[], None, &[]),
             api,
-            frame(2, Some("views"), Some(0), &[2]),
+            frame(2, &["views"], Some(0), &[2]),
         ];
         let a = layout(&frames, &sizes(&[0, 1, 2]));
         let b = layout(&frames, &sizes(&[0, 1, 2]));
         assert_eq!(a, b);
+    }
+
+    /// The module tree runs as deep as the code does: `mod views::surface` is
+    /// drawn inside `mod views`, inside the crate, and every block still lands
+    /// in the frame that declares it.
+    #[test]
+    fn a_module_frame_nests_inside_the_module_above_it() {
+        let frames = vec![
+            frame(0, &[], None, &[]),
+            frame(1, &["views"], Some(0), &[0]),
+            frame(2, &["views", "surface"], Some(1), &[1]),
+            frame(3, &["views", "surface", "wire"], Some(2), &[2]),
+        ];
+        let placed = layout(&frames, &sizes(&[0, 1, 2]));
+        let of = |id: u32| placed.frames.iter().find(|(f, _)| *f == id).unwrap().1;
+        let (root, views, surface, wire) = (of(0), of(1), of(2), of(3));
+        assert!(contains(&root, &views));
+        assert!(contains(&views, &surface));
+        assert!(contains(&surface, &wire));
+        assert!(contains(&views, &placed.marks[&0]));
+        assert!(!overlaps(&surface, &placed.marks[&0]));
+        assert!(contains(&surface, &placed.marks[&1]));
+        assert!(contains(&wire, &placed.marks[&2]));
+        // Outermost first, so a nested tint lays over the one it sits in.
+        assert_eq!(
+            placed.frames.iter().map(|(id, _)| *id).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
     }
 }

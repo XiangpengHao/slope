@@ -30,10 +30,10 @@ use crate::views::codemap::map::{narrow_viewport, prefers_reduced_motion, tie_en
 use crate::views::codemap::tree::{Placed, text_w};
 use crate::views::codemap::use_code;
 use crate::views::surface::layout::{self, Sizes, SurfaceLayout};
-use crate::views::surface::mark_route;
 use crate::views::surface::model::{
-    Anchor, FIELD_CAP, FieldRow, METHOD_CAP, RowState, SurfaceMark, SurfaceModel, upstream,
+    Anchor, FieldRow, RowState, SurfaceMark, SurfaceModel, upstream,
 };
+use crate::views::surface::{SurfaceSel, mark_route, mod_route};
 
 // ---------------------------------------------------------------------------
 // Mark furniture, in flow units — one unit is one CSS pixel at zoom 1. These
@@ -88,9 +88,10 @@ fn wrapped(text: &str, px: f64, usable: f64) -> f64 {
         .max(1.0)
 }
 
-/// One mark, measured and ready to engrave. It carries the whole quotation
-/// and says how much of it a resting block draws: selecting the block opens
-/// the rest in place, so the fold counts are a rest state, not a cut.
+/// One mark, measured and ready to engrave. It carries the whole quotation and
+/// draws all of it: a declaration is not a preview, so no row of it waits
+/// behind a count (user decision, 2026-08-20). The only counted lines left at
+/// the foot are the chart's own folds — the fan-in it does not draw as ink.
 #[derive(Clone, PartialEq)]
 struct MarkView {
     id: u32,
@@ -108,10 +109,8 @@ struct MarkView {
     /// A free function: its rows are parameters and its `ty` line is what it
     /// returns, so that line reads under them instead of over them.
     is_fn: bool,
-    /// Every field, quoted as written.
+    /// Every field, quoted as written — and every one of them drawn.
     fields: Vec<FieldRow>,
-    /// Fields a resting block draws; the rest are counted on its foot.
-    shown_fields: usize,
     /// A static's declared type, or a function's return type with the arrow
     /// rust writes in front of it — as written either way.
     ty: String,
@@ -120,18 +119,12 @@ struct MarkView {
     ty_target: String,
     /// An enum's variants as written, one row each (the row text in `decl`).
     variants: Vec<FieldRow>,
-    /// Variants a resting block draws.
-    shown_variants: usize,
     /// The methods the door draws, quoted as written — the block's second
     /// band, under a rule of its own so the shape reads before the API.
     methods: Vec<FieldRow>,
-    /// Methods a resting block draws.
-    shown_methods: usize,
-    /// Every counted line at the foot of a resting block, in words.
+    /// The counted lines at the foot: the fan-in the chart folds to words.
+    /// Nothing the block quotes is ever counted there.
     folds: Vec<String>,
-    /// The lines that still stand when the block is open — what selecting it
-    /// cannot give back.
-    open_folds: Vec<String>,
     locator: String,
     path: String,
     label: String,
@@ -146,7 +139,11 @@ struct FoldView {
     /// Why this row stands, in words, for its hover. The visibility fold's
     /// reason moves with the doors setting, so it is decided here rather
     /// than guessed at from the anchor.
-    title: &'static str,
+    title: String,
+    /// The module this row stands for, where the row is a module the reviewer
+    /// folded by hand: clicking it puts the module back. The other two rows
+    /// count code the chart was never going to draw, and open onto nothing.
+    unfolds: Option<Vec<String>>,
     size: (f64, f64),
 }
 
@@ -177,12 +174,25 @@ impl SurfaceNodeData {
     }
 }
 
-/// A frame, placed, with the label it wears on its border.
+/// A frame, placed, with the label it wears on its border and the two gestures
+/// the border answers: selecting the module, and folding it.
 #[derive(Clone, PartialEq)]
 struct FrameView {
     id: u32,
+    /// The frame this one sits in, so a reading knows which boundaries are
+    /// inside the chosen one and which merely hold it.
+    parent: Option<u32>,
     at: Placed,
     label: Option<String>,
+    /// How wide that label draws, for the paper the gesture is caught on.
+    label_w: f64,
+    /// The module's name across builds: the crate, then the module path. What
+    /// the URL selects by and what a fold is remembered by.
+    key: Vec<String>,
+    /// The whole path in prose, for the words the border says on hover.
+    words: String,
+    /// The reviewer folded this module: it draws one row and nothing else.
+    folded: bool,
 }
 
 /// One drawn edge — a hold or a uses edge — with its ends already found.
@@ -212,32 +222,165 @@ struct Built {
     frames: Vec<FrameView>,
     holds: Vec<WireView>,
     ties: Vec<WireView>,
+    /// Which frame every drawn anchor is seated in — a mark's module, a
+    /// counted row's own frame. A module reading is read off this.
+    homes: HashMap<Anchor, u32>,
     frame: Option<Rect>,
     /// The diff touched this chart: untouched marks rest at lighter pressure.
     dirty: bool,
 }
 
+/// A module reading's own ink: the boundary the reviewer chose, everything
+/// seated inside it, and the frames that must not recede with the strangers —
+/// the modules nested in the chosen one, and the ones it is drawn inside,
+/// which are the paper it stands on.
+#[derive(Clone, PartialEq)]
+struct ModHome {
+    frame: u32,
+    kept: HashSet<u32>,
+    inside: HashSet<Anchor>,
+}
+
 /// The selection's ink. One chosen mark; everything a shape change to it could
-/// reach, walking holds edges holder-ward (the blast radius); and what it
-/// directly holds, one hop the other way. While a selection stands the rest of
-/// the chart recedes to a lighter pressure — a reading, never a re-layout, and
-/// the camera does not move.
+/// reach, walking holds edges holder-ward (the blast radius); what it directly
+/// holds, one hop the other way; and the marks its body leans on or that lean
+/// on it. While a selection stands the rest of the chart recedes to a lighter
+/// pressure — a reading, never a re-layout, and the camera does not move.
+///
+/// A module boundary reads the same way one altitude out: everything inside it
+/// keeps full ink, whatever crosses it reads a step behind, and the other
+/// modules recede — frames, blocks and wires alike.
 #[derive(Clone, PartialEq)]
 struct KinView {
-    sel: Anchor,
+    /// The chosen mark, where the reading is one contract's.
+    sel: Option<Anchor>,
+    /// The chosen boundary, where the reading is a module's.
+    home: Option<ModHome>,
     /// Transitive holders. A counted fold row can join — its edge is drawn —
     /// but the walk ends there.
     up: HashSet<Anchor>,
     /// Directly held types.
     down: HashSet<Anchor>,
+    /// The far ends of the uses edges touching the selection. Not the blast
+    /// radius and never counted as it — implementation coupling stops where
+    /// the body does — but neighbours all the same, and a neighbour the
+    /// reader cannot read is one the chart may as well not have drawn: an
+    /// edge that lands on a receded block says nothing.
+    near: HashSet<Anchor>,
 }
 
 impl KinView {
+    /// The selection's reading of one built chart. Both families arrive as
+    /// their drawn pairs, tail first: a hold runs held → holder, a uses edge
+    /// runs def → user.
+    fn read(sel: Anchor, holds: &[(Anchor, Anchor)], ties: &[(Anchor, Anchor)]) -> Self {
+        Self {
+            sel: Some(sel),
+            home: None,
+            up: upstream(holds, sel),
+            down: holds
+                .iter()
+                .filter(|(_, holder)| *holder == sel)
+                .map(|(held, _)| *held)
+                .collect(),
+            near: ties
+                .iter()
+                .filter_map(|&(def, user)| match (def == sel, user == sel) {
+                    (true, false) => Some(user),
+                    (false, true) => Some(def),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
+
+    /// One module's reading: the boundary, what it holds, and what crosses it.
+    /// A frame nested inside the chosen one is inside the boundary too — it is
+    /// drawn within it, and receding what a reader can see inside the line
+    /// they just chose would say the opposite of what the line says.
+    fn read_mod(
+        frame: u32,
+        frames: &[FrameView],
+        homes: &HashMap<Anchor, u32>,
+        holds: &[(Anchor, Anchor)],
+        ties: &[(Anchor, Anchor)],
+    ) -> Self {
+        let parent: HashMap<u32, Option<u32>> = frames.iter().map(|f| (f.id, f.parent)).collect();
+        let climb = |from: u32| -> Vec<u32> {
+            let mut line = Vec::new();
+            let mut at = parent.get(&from).copied().flatten();
+            while let Some(id) = at {
+                line.push(id);
+                at = parent.get(&id).copied().flatten();
+            }
+            line
+        };
+        let mut kept: HashSet<u32> = frames
+            .iter()
+            .filter(|f| f.id == frame || climb(f.id).contains(&frame))
+            .map(|f| f.id)
+            .collect();
+        let inside: HashSet<Anchor> = homes
+            .iter()
+            .filter(|(_, home)| kept.contains(home))
+            .map(|(anchor, _)| *anchor)
+            .collect();
+        kept.extend(climb(frame));
+        // One hop over the line, either family: what the module publishes to
+        // and what leans on it. Two hops would be the whole chart again.
+        let near = holds
+            .iter()
+            .chain(ties)
+            .filter_map(|&(a, b)| match (inside.contains(&a), inside.contains(&b)) {
+                (true, false) => Some(b),
+                (false, true) => Some(a),
+                _ => None,
+            })
+            .collect();
+        Self {
+            sel: None,
+            home: Some(ModHome {
+                frame,
+                kept,
+                inside,
+            }),
+            up: HashSet::new(),
+            down: HashSet::new(),
+            near,
+        }
+    }
+
+    /// How a frame's own border reads: the chosen boundary in full ink, the
+    /// boundaries it holds and the ones holding it left alone, every other
+    /// module receded. A mark's reading leaves the ground as it found it —
+    /// the blast radius is a walk between blocks, not a place on the paper.
+    fn frame_class(&self, id: u32) -> &'static str {
+        match &self.home {
+            Some(home) if home.frame == id => "is-sel",
+            Some(home) if !home.kept.contains(&id) => "is-dim",
+            _ => "",
+        }
+    }
+
     fn node_class(&self, a: Anchor) -> &'static str {
-        if a == self.sel {
+        if let Some(home) = &self.home {
+            return if home.inside.contains(&a) {
+                "is-kin"
+            } else if self.near.contains(&a) {
+                "is-near"
+            } else {
+                "is-dim"
+            };
+        }
+        if Some(a) == self.sel {
             "is-sel"
         } else if self.up.contains(&a) || self.down.contains(&a) {
             "is-kin"
+        } else if self.near.contains(&a) {
+            // A uses neighbour reads a step behind the blast radius and well
+            // clear of the recede: the two families keep their own weights,
+            // and neither is ever read as the other.
+            "is-near"
         } else {
             "is-dim"
         }
@@ -246,72 +389,54 @@ impl KinView {
     /// A holds wire inside the selection's ink: a link in the chain toward the
     /// holders, or the one hop down to what the selection holds.
     fn wire_kin(&self, held: Anchor, holder: Anchor) -> bool {
-        let upward = |x: Anchor| x == self.sel || self.up.contains(&x);
-        (upward(held) && upward(holder)) || (holder == self.sel && self.down.contains(&held))
+        if let Some(home) = &self.home {
+            // A module's published surface: every solid line the boundary
+            // touches, inside it or across it.
+            return home.inside.contains(&held) || home.inside.contains(&holder);
+        }
+        let upward = |x: Anchor| Some(x) == self.sel || self.up.contains(&x);
+        (upward(held) && upward(holder)) || (Some(holder) == self.sel && self.down.contains(&held))
     }
 
-    /// A uses edge the selection keeps at its own ink: one that touches the
-    /// selected mark itself. Implementation coupling never joins the blast
-    /// radius — a body can be rewritten without the surface moving — so these
-    /// only escape the receding.
-    fn tie_kept(&self, a: Anchor, b: Anchor) -> bool {
-        a == self.sel || b == self.sel
+    /// A uses edge the selection pins: one that touches the selected mark
+    /// itself. Implementation coupling never joins the blast radius — a body
+    /// can be rewritten without the surface moving — so these ink in beside
+    /// the radius rather than inside it, folded ones included, and hold that
+    /// ink for as long as the selection stands. Following an edge is a
+    /// reading, and a reading must survive the cursor leaving the block.
+    fn tie_near(&self, a: Anchor, b: Anchor) -> bool {
+        if let Some(home) = &self.home {
+            return home.inside.contains(&a) || home.inside.contains(&b);
+        }
+        Some(a) == self.sel || Some(b) == self.sel
     }
 }
 
-/// The counted words a mark writes at its foot: the lines a resting block
-/// draws, and the lines that survive selecting it. Every one of them stands
-/// where something is hidden; a mark that hides nothing writes none. The
-/// elided rows are the block's own, so opening it takes those lines back; a
-/// folded fan-in is the chart's, and stays counted.
-fn fold_words(
-    mark: &SurfaceMark,
-    fields: usize,
-    variants: usize,
-    methods: usize,
-) -> (Vec<String>, Vec<String>) {
-    let mut rest = Vec::new();
-    if mark.fields.len() > fields {
-        // A function's rows are its parameters, and a count has to name what
-        // it counts in the reader's own word for it.
-        let word = if mark.is_fn() {
-            "more param"
-        } else {
-            "more field"
-        };
-        rest.push(format!("+ {}", plural(mark.fields.len() - fields, word)));
-    }
-    if mark.variants.len() > variants {
-        rest.push(format!(
-            "+ {}",
-            plural(mark.variants.len() - variants, "more variant")
-        ));
-    }
-    if mark.methods.len() > methods {
-        rest.push(format!(
-            "+ {}",
-            plural(mark.methods.len() - methods, "more method")
-        ));
-    }
-    let mut open = Vec::new();
+/// The counted words a mark writes at its foot. Only the chart's own folds
+/// stand here now: a fan-in past [`HELD_CAP`](super::model) is ink the chart
+/// will not draw and has to say instead. Nothing the block quotes is counted —
+/// every field, variant, method row and parameter is drawn, so there is no
+/// hidden row left to name (user decision, 2026-08-20).
+fn fold_words(mark: &SurfaceMark) -> Vec<String> {
+    let mut folds = Vec::new();
     if mark.held_by > 0 {
-        open.push(format!("held by {}", plural(mark.held_by as usize, "type")));
+        folds.push(format!("held by {}", plural(mark.held_by as usize, "type")));
     }
     // The same fold, said for the contracts in it: a signature names a type,
     // it does not hold one, and the count has to keep that straight.
     if mark.named_by > 0 {
-        open.push(format!(
+        folds.push(format!(
             "named by {}",
             plural(mark.named_by as usize, "signature")
         ));
     }
-    rest.extend(open.iter().cloned());
-    (rest, open)
+    folds
 }
 
-/// A mark, measured. The width is the widest line it must not clip — every
-/// quoted row, drawn or folded, so opening the block only ever grows it
-/// downward — and the height follows from the rows that rest inside it.
+/// A mark, measured. The width is the widest line it must not clip and the
+/// height is every line it draws: the whole quotation stands inside the box the
+/// layout is handed, so the plate a reader meets is the plate the geometry
+/// budgeted for.
 fn measure(mark: &SurfaceMark) -> MarkView {
     let decl = decl_words(mark.vis, mark.kind);
     let head = format!("{decl} {}", mark.name);
@@ -324,20 +449,7 @@ fn measure(mark: &SurfaceMark) -> MarkView {
     } else {
         mark.ty.clone()
     };
-    // Diff rows never rest hidden: the resting window stretches down to the
-    // last added or removed row, and only what follows them still folds.
-    let window = |rows: &[FieldRow], cap: usize| -> usize {
-        let need = rows
-            .iter()
-            .rposition(|r| r.state != RowState::Same)
-            .map(|at| at + 1)
-            .unwrap_or(0);
-        rows.len().min(cap.max(need))
-    };
-    let shown_fields = window(&mark.fields, FIELD_CAP);
-    let shown_variants = window(&mark.variants, FIELD_CAP);
-    let shown_methods = window(&mark.methods, METHOD_CAP);
-    let (folds, open_folds) = fold_words(mark, shown_fields, shown_variants, shown_methods);
+    let folds = fold_words(mark);
 
     let mut widest = text_w(&head, 10.5) + if letter.is_some() { 12.0 } else { 0.0 };
     widest = widest.max(text_w(&locator, 8.5));
@@ -382,13 +494,13 @@ fn measure(mark: &SurfaceMark) -> MarkView {
     let band = if mark.methods.is_empty() {
         0.0
     } else {
-        BAND_TOP + shown_methods as f64 * ROW_H
+        BAND_TOP + mark.methods.len() as f64 * ROW_H
     };
     let h = PAD_TOP
         + HEAD_H
         + ty_lines * TY_H
-        + shown_fields as f64 * ROW_H
-        + shown_variants as f64 * ROW_H
+        + mark.fields.len() as f64 * ROW_H
+        + mark.variants.len() as f64 * ROW_H
         + band
         + fold_block
         + LOC_H
@@ -404,15 +516,11 @@ fn measure(mark: &SurfaceMark) -> MarkView {
         is_enum: mark.kind == ItemKind::Enum,
         is_fn: mark.is_fn(),
         fields: mark.fields.clone(),
-        shown_fields,
         ty,
         ty_target: mark.ty_target.clone(),
         variants: mark.variants.clone(),
-        shown_variants,
         methods: mark.methods.clone(),
-        shown_methods,
         folds,
-        open_folds,
         locator,
         path: mark.path.clone(),
         label: mark.label.clone(),
@@ -421,12 +529,13 @@ fn measure(mark: &SurfaceMark) -> MarkView {
 }
 
 /// A counted fold row, measured.
-fn measure_row(anchor: Anchor, words: String, title: &'static str) -> FoldView {
+fn measure_row(anchor: Anchor, words: String, title: String) -> FoldView {
     let w = (text_w(&words, 9.5) + 20.0).clamp(ROW_MIN_W, MARK_MAX_W);
     FoldView {
         anchor,
         words,
         title,
+        unfolds: None,
         size: (w, ROW_FOLD_H),
     }
 }
@@ -436,6 +545,7 @@ fn node_key(anchor: Anchor) -> String {
         Anchor::Mark(id) => format!("m{id}"),
         Anchor::Private(frame) => format!("p{frame}"),
         Anchor::More(frame) => format!("x{frame}"),
+        Anchor::Mod(frame) => format!("f{frame}"),
     }
 }
 
@@ -464,13 +574,37 @@ fn build_chart(model: &SurfaceModel) -> Built {
     }
     let mut rows: HashMap<Anchor, FoldView> = HashMap::new();
     for frame in &model.frames {
+        // A folded module is one row: every contract inside it, its nested
+        // modules included, and the way back out.
+        if frame.folded {
+            let anchor = Anchor::Mod(frame.id);
+            // *Item*, the word the other counted rows use: what is inside a
+            // boundary is contracts, private helpers and all, and one row
+            // standing for a whole module cannot sort them out.
+            let words = match frame.packed {
+                0 => "folded".to_string(),
+                n => format!("+ {}", plural(n as usize, "item")),
+            };
+            let mut row = measure_row(
+                anchor,
+                words,
+                format!(
+                    "{} is folded to this row — every item inside it, and inside the \
+                     modules nested in it; click to unfold",
+                    frame.words()
+                ),
+            );
+            row.unfolds = Some(frame.key());
+            sizes.rows.insert(anchor, row.size);
+            rows.insert(anchor, row);
+        }
         if frame.private > 0 {
             let anchor = Anchor::Private(frame.id);
             let words = format!(
                 "+ {}",
                 plural(frame.private as usize, model.doors.fold_word())
             );
-            let row = measure_row(anchor, words, model.doors.fold_title());
+            let row = measure_row(anchor, words, model.doors.fold_title().to_string());
             sizes.rows.insert(anchor, row.size);
             rows.insert(anchor, row);
         }
@@ -481,7 +615,8 @@ fn build_chart(model: &SurfaceModel) -> Built {
                 anchor,
                 words,
                 "the quietest contracts in this module, folded to fit the chart's budget; \
-                 every edge that touches one lands here",
+                 every edge that touches one lands here"
+                    .to_string(),
             );
             sizes.rows.insert(anchor, row.size);
             rows.insert(anchor, row);
@@ -533,11 +668,32 @@ fn build_chart(model: &SurfaceModel) -> Built {
     let frames: Vec<FrameView> = placed
         .frames
         .iter()
-        .map(|(id, at)| FrameView {
-            id: *id,
-            at: *at,
-            label: model.frames[*id as usize].label(model.multi_crate),
+        .map(|(id, at)| {
+            let frame = &model.frames[*id as usize];
+            let label = frame.label(model.multi_crate);
+            FrameView {
+                id: *id,
+                parent: frame.parent,
+                at: *at,
+                label_w: label.as_deref().map_or(0.0, |l| text_w(l, 12.0)),
+                label,
+                key: frame.key(),
+                words: frame.words(),
+                folded: frame.folded,
+            }
         })
+        .collect();
+
+    // Where everything sits, in one map: a mark in the module that declares
+    // it, a counted row in the frame that counts it.
+    let homes: HashMap<Anchor, u32> = model
+        .marks
+        .iter()
+        .map(|m| (Anchor::Mark(m.id), m.frame))
+        .chain(
+            rows.keys()
+                .filter_map(|&anchor| anchor.frame().map(|frame| (anchor, frame))),
+        )
         .collect();
 
     // The arrowhead rests on the holder, so the wire runs held → holder.
@@ -610,6 +766,7 @@ fn build_chart(model: &SurfaceModel) -> Built {
         frames,
         holds,
         ties,
+        homes,
         frame,
         dirty: model.marks.iter().any(|m| m.letter().is_some()),
     }
@@ -673,19 +830,17 @@ fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool)> {
 /// inks its blast radius; the selected block clicked again deselects. Its
 /// definition plate stays one step further, on the selection sheet's link.
 ///
-/// The selected block opens: every field and variant it quoted a count for is
-/// drawn, and the plate grows past the box the layout gave it, over the
-/// neighbours that are receding anyway. Nothing else moves, and the box the
-/// edges land on is still the one it rests at.
+/// The block draws its whole quotation whether it is selected or not: every
+/// field, every variant, every method row, every parameter. Selecting it inks
+/// the blast radius and lifts the plate; it opens nothing, because nothing was
+/// ever closed (user decision, 2026-08-20).
 ///
 /// The plate states no size of its own. It fills the node box the layout
-/// measured — `width: 100%`, `height: 100%` in the stylesheet — and opening it
-/// is one CSS rule releasing the height. Sizing it inline instead cannot work:
-/// dioxus's interpreter re-applies every inline property a new `style` string
-/// leaves out (so that separately-set `style:` properties survive a whole-
-/// attribute write), so dropping `height` from the string does not drop it from
-/// the element. The block then redrew its rows while keeping its resting
-/// height, and stood on its own text.
+/// measured — `width: 100%`, `height: 100%` in the stylesheet. Sizing it inline
+/// instead cannot work: dioxus's interpreter re-applies every inline property a
+/// new `style` string leaves out (so that separately-set `style:` properties
+/// survive a whole-attribute write), so dropping `height` from the string does
+/// not drop it from the element.
 #[component]
 fn MarkPlate(view: MarkView, selected: bool) -> Element {
     let nav = use_navigator();
@@ -696,33 +851,13 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
     };
     let title = if selected {
         format!(
-            "{} {} — selected, quoted whole · click again to deselect",
+            "{} {} — selected · click again to deselect",
             view.decl, view.name
         )
     } else {
         format!("{} {} — {} · select it", view.decl, view.name, view.locator)
     };
-    // Open, the block draws every row it has; at rest, the rows that fit.
-    let fields = if selected {
-        view.fields.len()
-    } else {
-        view.shown_fields
-    };
-    let variants = if selected {
-        view.variants.len()
-    } else {
-        view.shown_variants
-    };
-    let methods = if selected {
-        view.methods.len()
-    } else {
-        view.shown_methods
-    };
-    let folds = if selected {
-        &view.open_folds
-    } else {
-        &view.folds
-    };
+    let folds = &view.folds;
     let push = to.clone();
     rsx! {
         a {
@@ -772,7 +907,7 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
                     }
                 }
             }
-            for (i , row) in view.fields.iter().take(fields).enumerate() {
+            for (i , row) in view.fields.iter().enumerate() {
                 p { key: "{i}", class: "dm-row",
                     class: if !row.state.class().is_empty() { "{row.state.class()}" },
                     if let Some(mk) = row.state.marker() {
@@ -801,7 +936,7 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
                     }
                 }
             }
-            for (i , row) in view.variants.iter().take(variants).enumerate() {
+            for (i , row) in view.variants.iter().enumerate() {
                 p { key: "v{i}", class: "dm-var",
                     class: if !row.state.class().is_empty() { "{row.state.class()}" },
                     if let Some(mk) = row.state.marker() {
@@ -821,7 +956,7 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
             // says the shape above it has ended.
             if !view.methods.is_empty() {
                 div { class: "dm-band",
-                    for (i , row) in view.methods.iter().take(methods).enumerate() {
+                    for (i , row) in view.methods.iter().enumerate() {
                         p { key: "m{i}", class: "dm-sig",
                             class: if !row.state.class().is_empty() { "{row.state.class()}" },
                             if let Some(mk) = row.state.marker() {
@@ -854,12 +989,33 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
 /// Node view for the surface chart.
 #[component]
 fn SurfaceNode(ctx: NodeViewCtx<SurfaceNodeData>, selected: bool) -> Element {
+    // Read before the match: a node's kind can change under one component, and
+    // a hook behind a branch would change with it.
+    let mut folds = use_code().folds;
     match ctx.node.data.clone() {
         SurfaceNodeData::Mark(view) => rsx! {
             MarkPlate { view: *view, selected }
         },
-        SurfaceNodeData::Fold(row) => rsx! {
-            p { class: "data-foldrow", title: row.title, "{row.words}" }
+        SurfaceNodeData::Fold(row) => match row.unfolds.clone() {
+            // The row a folded module left behind is the way back into it:
+            // the border's mark says the same thing, and this is the target
+            // a reader's eye is already on.
+            Some(key) => {
+                rsx! {
+                    button {
+                        class: "data-foldrow is-mod",
+                        title: "{row.title}",
+                        onclick: move |e: Event<MouseData>| {
+                            e.stop_propagation();
+                            folds.with_mut(|set| set.remove(&key));
+                        },
+                        "{row.words}"
+                    }
+                }
+            }
+            None => rsx! {
+                p { class: "data-foldrow", title: "{row.title}", "{row.words}" }
+            },
         },
     }
 }
@@ -867,23 +1023,92 @@ fn SurfaceNode(ctx: NodeViewCtx<SurfaceNodeData>, selected: bool) -> Element {
 /// The ground: crate and module frames, each with its label chipped onto its
 /// own border. A frame is a container, so it states no counts — its types are
 /// on the paper to be counted, and what it does not draw has a row of its own.
+///
+/// The border is the module's own control, and it answers two gestures. The
+/// line itself — and the label chipped onto it — **selects** the module: the
+/// same reading a mark gets, one altitude out. Everything inside the boundary
+/// keeps full ink, whatever crosses it reads a step behind, and the other
+/// modules recede. The mark at the border's other end **folds** it: the whole
+/// module leaves the paper and one counted row stands where it was. A fold is
+/// a re-layout, not a reading — the chart is drawn again around what is left —
+/// which is exactly why the two gestures are two marks and never one.
 #[component]
-fn FrameLayer(frames: Vec<FrameView>) -> Element {
-    rsx! {
-        svg {
-            width: "2",
-            height: "2",
-            style: "position: absolute; left: 0; top: 0; overflow: visible;",
-            for f in frames.iter() {
-                g { key: "{f.id}",
+fn FrameLayer(frames: Vec<FrameView>, kin: Option<KinView>) -> Element {
+    let nav = use_navigator();
+    let mut folds = use_code().folds;
+    // A boundary's whole reading, drawn: its tint, the band of paper the
+    // selection is caught on, its label, and its fold mark.
+    let boundary = |f: &FrameView| -> Element {
+        let class = kin.as_ref().map_or("", |k| k.frame_class(f.id));
+        let chosen = class == "is-sel";
+        // Selecting the chosen module again lets it go, the way clicking a
+        // selected block does.
+        let to = match chosen {
+            true => Route::SurfaceOverview {},
+            false => mod_route(f.key.clone()),
+        };
+        // Each gesture owns what it needs: an event handler outlives the
+        // frame it was drawn from.
+        let (clicked, pressed) = (to.clone(), to);
+        let (shut, shut_key) = (f.key.clone(), f.key.clone());
+        let words = f.words.clone();
+        // A crate frame is a boundary too, and it is not a module: the words
+        // the border says have to know which one the reader is standing on.
+        let kind = match f.key.len() {
+            1 => "crate",
+            _ => "module",
+        };
+        let mark = if f.folded { "+" } else { "−" };
+        let (bx, by) = (f.at.x + f.at.w - 15.0, f.at.y);
+        rsx! {
+            g {
+                key: "{f.id}",
+                class: "data-frame-group",
+                class: if !class.is_empty() { "{class}" },
+                rect {
+                    class: "data-frame",
+                    x: "{f.at.x}",
+                    y: "{f.at.y}",
+                    width: "{f.at.w}",
+                    height: "{f.at.h}",
+                }
+                g {
+                    class: "data-frame-pick",
+                    tabindex: "0",
+                    role: "link",
+                    "aria-label": if chosen { "deselect {words}" } else { "select the {kind} {words}" },
+                    onclick: move |e: Event<MouseData>| {
+                        e.stop_propagation();
+                        nav.push(clicked.clone());
+                    },
+                    onkeydown: move |e: Event<KeyboardData>| {
+                        if e.key() == Key::Enter {
+                            e.stop_propagation();
+                            nav.push(pressed.clone());
+                        }
+                    },
+                    title {
+                        if chosen {
+                            "{words} — selected · click the border again to let it go"
+                        } else {
+                            "{words} — select this {kind} · everything else recedes"
+                        }
+                    }
                     rect {
-                        class: "data-frame",
+                        class: "data-frame-hit",
                         x: "{f.at.x}",
                         y: "{f.at.y}",
                         width: "{f.at.w}",
                         height: "{f.at.h}",
                     }
                     if let Some(label) = f.label.clone() {
+                        rect {
+                            class: "data-frame-tab",
+                            x: "{f.at.x + 8.0}",
+                            y: "{f.at.y - 9.0}",
+                            width: "{f.label_w + 12.0}",
+                            height: "18",
+                        }
                         text {
                             class: "data-frame-label",
                             x: "{f.at.x + 14.0}",
@@ -892,6 +1117,68 @@ fn FrameLayer(frames: Vec<FrameView>) -> Element {
                         }
                     }
                 }
+                // Only a frame the paper names can be folded: a fold says
+                // which module went away, and a nameless crate frame in a
+                // one-crate workspace is the whole chart.
+                if f.label.is_some() {
+                    g {
+                        class: "data-frame-shut",
+                        tabindex: "0",
+                        role: "button",
+                        "aria-label": if f.folded { "unfold {words}" } else { "fold the {kind} {words} to one row" },
+                        onclick: move |e: Event<MouseData>| {
+                            e.stop_propagation();
+                            folds
+                                .with_mut(|set| {
+                                    if !set.remove(&shut) {
+                                        set.insert(shut.clone());
+                                    }
+                                });
+                        },
+                        onkeydown: move |e: Event<KeyboardData>| {
+                            if e.key() == Key::Enter {
+                                e.stop_propagation();
+                                folds
+                                    .with_mut(|set| {
+                                        if !set.remove(&shut_key) {
+                                            set.insert(shut_key.clone());
+                                        }
+                                    });
+                            }
+                        },
+                        title {
+                            if f.folded {
+                                "{words} is folded · unfold it"
+                            } else {
+                                "fold {words} to one counted row"
+                            }
+                        }
+                        rect {
+                            class: "data-frame-hit-mark",
+                            x: "{bx - 10.0}",
+                            y: "{by - 9.0}",
+                            width: "20",
+                            height: "18",
+                        }
+                        text {
+                            class: "data-frame-mark",
+                            x: "{bx}",
+                            y: "{by}",
+                            text_anchor: "middle",
+                            "{mark}"
+                        }
+                    }
+                }
+            }
+        }
+    };
+    rsx! {
+        svg {
+            width: "2",
+            height: "2",
+            style: "position: absolute; left: 0; top: 0; overflow: visible;",
+            for f in frames.iter() {
+                {boundary(f)}
             }
         }
     }
@@ -934,10 +1221,38 @@ fn arrowhead(b: Point, ctrl: Point, size: f64) -> String {
     )
 }
 
+/// What one wire is saying past its family: the diff's own ink, the fold, the
+/// hover, and the selection's reading. A hold inside the blast radius keeps
+/// full pressure; a uses edge touching the selection keeps its own beside it;
+/// either family inks its folded wires back in for as long as the reason
+/// stands, a moment for a hover and indefinitely for a selection. Everything
+/// else recedes with the unrelated marks.
+fn wire_classes(
+    w: &WireView,
+    is_ref: bool,
+    hot: Option<Anchor>,
+    kin: Option<&KinView>,
+) -> Vec<&'static str> {
+    let is_kin = kin.is_some_and(|k| !is_ref && k.wire_kin(w.a, w.b));
+    let is_near = kin.is_some_and(|k| is_ref && k.tie_near(w.a, w.b));
+    let worn = [
+        (!w.event.is_empty(), w.event),
+        (!w.rest, "is-folded"),
+        (hot.is_some_and(|h| h == w.a || h == w.b), "is-hot"),
+        (is_kin, "is-kin"),
+        (is_near, "is-near"),
+        (kin.is_some() && !is_kin && !is_near, "is-dim"),
+    ];
+    worn.into_iter()
+        .filter_map(|(on, class)| on.then_some(class))
+        .collect()
+}
+
 /// Both edge families as one engraved layer, over the frame tints and under the
 /// blocks: the uses family first and lighter, the published surface over
-/// it. Hovering either end of a wire brings it up to full ink, which is how a
-/// folded wire is given back.
+/// it. Hovering either end of a wire brings it up to full ink, and so does
+/// selecting either end — which is how a folded wire is given back, once in
+/// passing and once for as long as the reader wants it.
 #[component]
 fn WireLayer(
     holds: Vec<WireView>,
@@ -953,26 +1268,12 @@ fn WireLayer(
             0.25 * w.from.x + 0.5 * ctrl.x + 0.25 * w.to.x,
             0.25 * w.from.y + 0.5 * ctrl.y + 0.25 * w.to.y,
         );
-        let is_hot = hot.is_some_and(|h| h == w.a || h == w.b);
-        // The selection's ink: a hold inside the blast radius keeps full
-        // pressure (folded ones ink back in); a tie touching the selection
-        // keeps its own; everything else recedes with the unrelated marks.
-        let is_ref = family.ends_with("data-ref");
-        let is_kin = kin
-            .as_ref()
-            .is_some_and(|k| !is_ref && k.wire_kin(w.a, w.b));
-        let is_dim = kin
-            .as_ref()
-            .is_some_and(|k| !is_kin && if is_ref { !k.tie_kept(w.a, w.b) } else { true });
+        let classes = wire_classes(w, family.ends_with("data-ref"), hot, kin.as_ref()).join(" ");
         rsx! {
             g {
                 key: "{w.key}",
                 class: "{family} {w.class}",
-                class: if !w.event.is_empty() { "{w.event}" },
-                class: if !w.rest { "is-folded" },
-                class: if is_hot { "is-hot" },
-                class: if is_kin { "is-kin" },
-                class: if is_dim { "is-dim" },
+                class: "{classes}",
                 path {
                     class: "wire-path",
                     d,
@@ -1081,7 +1382,7 @@ document.addEventListener('keydown', window.__slopeKeys);
 
 /// The surface chart, mounted for `/surface`.
 #[component]
-pub fn SurfaceChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
+pub fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element {
     let code = use_code();
     let camera = use_context::<SurfaceCamera>();
     let flow = dioxus_flow::use_flow_handle::<SurfaceNodeData>();
@@ -1092,30 +1393,49 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element 
     // types are drawn at all, so this re-seats on either.
     let built = use_memo(use_reactive((&graph,), {
         move |(graph,)| {
-            let model = SurfaceModel::build(&graph, *code.ref_dir.read(), *code.doors.read());
+            let model = SurfaceModel::build(
+                &graph,
+                *code.ref_dir.read(),
+                *code.doors.read(),
+                &code.folds.read(),
+            );
             build_chart(&model)
         }
     }));
 
-    // The route's selection, resolved to the chart's anchors: the mark, its
-    // transitive holders, and what it directly holds. `None` while nothing is
-    // selected, or when the route names a type this survey does not draw.
+    // The route's selection, resolved to the chart's own anchors. A mark's
+    // reading is the mark, its transitive holders, what it directly holds, and
+    // the far ends of its uses edges; a module's is its boundary and one hop
+    // across it. `None` while nothing is selected, or when the route names a
+    // type or a module this survey does not draw.
     let kin: Memo<Option<KinView>> = use_memo(use_reactive((&sel,), move |(sel,)| {
-        let (path, label) = sel?;
         let b = built.read();
-        let id = b.nodes.iter().find_map(|n| match &n.data {
-            SurfaceNodeData::Mark(m) if m.path == path && m.label == label => Some(m.id),
-            _ => None,
-        })?;
-        let at = Anchor::Mark(id);
-        let pairs: Vec<(Anchor, Anchor)> = b.holds.iter().map(|w| (w.a, w.b)).collect();
-        let up = upstream(&pairs, at);
-        let down = pairs
-            .iter()
-            .filter(|(_, holder)| *holder == at)
-            .map(|(held, _)| *held)
-            .collect();
-        Some(KinView { sel: at, up, down })
+        let pairs = |wires: &[WireView]| -> Vec<(Anchor, Anchor)> {
+            wires.iter().map(|w| (w.a, w.b)).collect()
+        };
+        match sel? {
+            SurfaceSel::Mark(path, label) => {
+                let id = b.nodes.iter().find_map(|n| match &n.data {
+                    SurfaceNodeData::Mark(m) if m.path == path && m.label == label => Some(m.id),
+                    _ => None,
+                })?;
+                Some(KinView::read(
+                    Anchor::Mark(id),
+                    &pairs(&b.holds),
+                    &pairs(&b.ties),
+                ))
+            }
+            SurfaceSel::Mod(key) => {
+                let frame = b.frames.iter().find(|f| f.key == key)?.id;
+                Some(KinView::read_mod(
+                    frame,
+                    &b.frames,
+                    &b.homes,
+                    &pairs(&b.holds),
+                    &pairs(&b.ties),
+                ))
+            }
+        }
     }));
 
     // Whether a selection stands, for the keyboard hook and the pane click —
@@ -1214,7 +1534,9 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element 
     });
 
     let edges: Signal<Vec<dioxus_flow::prelude::Edge>> = use_signal(Vec::new);
-    let panel = sel.is_some();
+    // Only a mark's reading opens a sheet, so only a mark's reading owes the
+    // fit an inset on the right.
+    let panel = matches!(sel, Some(SurfaceSel::Mark(..)));
 
     rsx! {
         div { class: "absolute inset-0",
@@ -1225,6 +1547,9 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element 
                 handle: flow,
                 nodes_draggable: false,
                 delete_key: false,
+                // A trackpad's two-finger travel is a pan, as every canvas
+                // tool reads it; pinch (ctrl/meta wheel) zooms at the pointer.
+                pan_on_scroll: true,
                 // Bare paper deselects, the way Escape does.
                 on_pane_click: move |_| {
                     if *sel_on.peek() {
@@ -1262,7 +1587,7 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element 
                     }
                 }
                 WorldLayer { class: "data-ground",
-                    FrameLayer { frames: built.read().frames.clone() }
+                    FrameLayer { frames: built.read().frames.clone(), kin: kin() }
                 }
                 WorldLayer { class: "data-wires",
                     WireLayer {
@@ -1336,8 +1661,11 @@ mod tests {
         assert!(bare.size.0 >= MARK_MIN_W && bare.size.0 <= MARK_MAX_W);
     }
 
+    /// A sum type is its variant list, so the block quotes every variant and
+    /// grows to hold them. Nothing is counted at the foot: there is no hidden
+    /// row left to count.
     #[test]
-    fn a_variant_row_raises_the_block_and_the_fold_counts_the_rest() {
+    fn a_long_variant_list_is_drawn_whole_and_never_counted() {
         let row = FieldRow {
             name: String::new(),
             decl: "File(String, String)".to_string(),
@@ -1345,31 +1673,35 @@ mod tests {
             state: RowState::Same,
         };
         let mut long = mark("Tok", ItemKind::Enum, vec![]);
-        long.variants = vec![row.clone(); FIELD_CAP + 12];
+        long.variants = vec![row.clone(); 20];
         let bare = measure(&mark("Tok", ItemKind::Enum, vec![]));
+        let short = {
+            let mut m = mark("Tok", ItemKind::Enum, vec![]);
+            m.variants = vec![row.clone(); 8];
+            measure(&m)
+        };
         let view = measure(&long);
-        assert!(view.size.1 > bare.size.1);
-        assert!(view.folds.iter().any(|f| f.contains("12 more variants")));
-        // The block rests at eight rows and keeps the other twelve for the
-        // reader who selects it; only the fan-in count survives opening.
-        assert_eq!(view.shown_variants, FIELD_CAP);
-        assert_eq!(view.variants.len(), FIELD_CAP + 12);
-        assert!(view.open_folds.is_empty());
+        // Every row past the old cap of eight is still one row of height.
+        assert!(view.size.1 > short.size.1);
+        assert!(short.size.1 > bare.size.1);
+        assert_eq!(view.variants.len(), 20);
+        assert!(view.folds.is_empty());
         // An enum's name takes the sum-type color; a struct's does not.
         assert!(view.is_enum);
         assert!(!measure(&mark("Wire", ItemKind::Struct, vec![])).is_enum);
     }
 
-    /// Opening a block may only grow it downward: the width already fits every
-    /// row it holds back, so no line reflows when the reader selects it.
+    /// The block is as wide as its widest row, whichever row that is and
+    /// however far down the list it stands — every one of them is drawn, so
+    /// every one of them is measured.
     #[test]
-    fn a_folded_rows_width_is_already_in_the_resting_block() {
+    fn the_widest_row_sets_the_block_width_wherever_it_stands() {
         let mut wide = mark("Wire", ItemKind::Struct, vec![]);
-        wide.fields = (0..FIELD_CAP + 1)
+        wide.fields = (0..12)
             .map(|i| FieldRow {
                 name: format!("f{i}"),
-                // The folded row is the longest one in the block.
-                decl: if i == FIELD_CAP {
+                // The longest row is the last one in the block.
+                decl: if i == 11 {
                     "HashMap<String, Vec<ItemMark>>".to_string()
                 } else {
                     "u32".to_string()
@@ -1379,8 +1711,26 @@ mod tests {
             })
             .collect();
         let view = measure(&wide);
-        assert_eq!(view.shown_fields, FIELD_CAP);
-        assert!(view.size.0 >= text_w("f8: HashMap<String, Vec<ItemMark>>", 10.0));
+        assert_eq!(view.fields.len(), 12);
+        assert!(view.folds.is_empty());
+        assert!(view.size.0 >= text_w("f11: HashMap<String, Vec<ItemMark>>", 10.0));
+    }
+
+    /// The only counted lines left are the chart's own: a fan-in it will not
+    /// draw as ink, said in words instead.
+    #[test]
+    fn the_foot_counts_the_fan_in_and_nothing_the_block_quotes() {
+        let mut hub = mark("Id", ItemKind::Struct, vec![("raw", "u32", "")]);
+        hub.held_by = 6;
+        hub.named_by = 2;
+        let view = measure(&hub);
+        assert_eq!(
+            view.folds,
+            vec![
+                "held by 6 types".to_string(),
+                "named by 2 signatures".to_string()
+            ]
+        );
     }
 
     /// A static's declared type bolds the workspace type it holds, and only
@@ -1430,9 +1780,9 @@ mod tests {
             .collect();
         assert_eq!(bold, vec!["Nut".to_string()]);
 
-        // Past the cap the fold counts parameters, in the word for them.
+        // A long parameter list is quoted whole, like every other row family.
         let mut wide = mark("survey", ItemKind::Fn, vec![]);
-        wide.fields = (0..FIELD_CAP + 3)
+        wide.fields = (0..11)
             .map(|i| FieldRow {
                 name: format!("p{i}"),
                 decl: "u32".to_string(),
@@ -1440,11 +1790,176 @@ mod tests {
                 state: RowState::Same,
             })
             .collect();
-        assert!(
-            measure(&wide)
-                .folds
-                .iter()
-                .any(|fold| fold == "+ 3 more params")
+        let wide = measure(&wide);
+        assert_eq!(wide.fields.len(), 11);
+        assert!(wide.folds.is_empty());
+        assert!(wide.size.1 > view.size.1);
+    }
+
+    /// Selecting a mark is how a reader reads its neighbourhood, so the whole
+    /// uses neighbourhood has to be on the paper while the selection stands:
+    /// every dashed edge touching it, and the block at the other end of each.
+    /// The two families stay apart — a uses neighbour is never kin — but a
+    /// neighbour is never dimmed either, or the edge would point at nothing
+    /// the reader can read.
+    #[test]
+    fn a_selection_pins_its_whole_uses_neighbourhood() {
+        let (sel, holder, caller, callee, stranger) = (
+            Anchor::Mark(0),
+            Anchor::Mark(1),
+            Anchor::Mark(2),
+            Anchor::Mark(3),
+            Anchor::Mark(4),
+        );
+        let kin = KinView::read(
+            sel,
+            &[(sel, holder)],
+            &[(sel, caller), (callee, sel), (callee, stranger)],
+        );
+
+        assert_eq!(kin.node_class(sel), "is-sel");
+        assert_eq!(kin.node_class(holder), "is-kin");
+        // Both ways round: the mark's own users and what it uses are equally
+        // its neighbours, and the arrowhead decides neither.
+        assert_eq!(kin.node_class(caller), "is-near");
+        assert_eq!(kin.node_class(callee), "is-near");
+        assert_eq!(kin.node_class(stranger), "is-dim");
+        // Implementation coupling stops at one hop: a neighbour's own
+        // neighbour is nothing to this selection.
+        assert!(!kin.near.contains(&stranger));
+        // And it never joins the blast radius, which is the holds walk alone.
+        assert!(kin.up.iter().chain(kin.down.iter()).all(|a| *a == holder));
+
+        assert!(kin.tie_near(sel, caller));
+        assert!(kin.tie_near(callee, sel));
+        assert!(!kin.tie_near(callee, stranger));
+        // A holds edge is read by the other rule; the two never cross.
+        assert!(kin.wire_kin(sel, holder));
+        assert!(!kin.wire_kin(callee, stranger));
+    }
+
+    /// Selecting a module boundary reads the boundary: everything inside it
+    /// keeps full ink whatever module it was written in, one hop across the
+    /// line reads a step behind, and every other module recedes — its frame
+    /// with it. The frames the boundary is drawn inside never recede: they are
+    /// the paper it stands on, and dimming them would say the opposite of what
+    /// the chosen line says.
+    #[test]
+    fn a_module_reading_keeps_its_boundary_and_recedes_the_others() {
+        // `slope` holds `views`, which holds `views::surface`; `api` stands
+        // beside `views` in the crate.
+        let frame = |id: u32, parent: Option<u32>, key: &[&str]| FrameView {
+            id,
+            parent,
+            at: Placed {
+                x: 0.0,
+                y: 0.0,
+                w: 10.0,
+                h: 10.0,
+            },
+            label: None,
+            label_w: 0.0,
+            key: key.iter().map(|s| s.to_string()).collect(),
+            words: key.join("::"),
+            folded: false,
+        };
+        let frames = vec![
+            frame(0, None, &["slope"]),
+            frame(1, Some(0), &["slope", "views"]),
+            frame(2, Some(1), &["slope", "views", "surface"]),
+            frame(3, Some(0), &["slope", "api"]),
+        ];
+        // One mark per frame, and the deep frame's counted row.
+        let (root, own, deep, stranger) = (
+            Anchor::Mark(0),
+            Anchor::Mark(1),
+            Anchor::Mark(2),
+            Anchor::Mark(3),
+        );
+        let row = Anchor::Private(2);
+        let homes: HashMap<Anchor, u32> = [(root, 0), (own, 1), (deep, 2), (stranger, 3), (row, 2)]
+            .into_iter()
+            .collect();
+        let kin = KinView::read_mod(
+            1,
+            &frames,
+            &homes,
+            &[(deep, stranger), (own, deep)],
+            &[(root, deep)],
+        );
+
+        // Inside the line, however deep — the nested module's row included.
+        assert_eq!(kin.node_class(own), "is-kin");
+        assert_eq!(kin.node_class(deep), "is-kin");
+        assert_eq!(kin.node_class(row), "is-kin");
+        // One hop over it, either family.
+        assert_eq!(kin.node_class(stranger), "is-near");
+        assert_eq!(kin.node_class(root), "is-near");
+
+        // The boundary itself, the module inside it, and the crate frame
+        // holding it: none of them recede. The module beside it does.
+        assert_eq!(kin.frame_class(1), "is-sel");
+        assert_eq!(kin.frame_class(2), "");
+        assert_eq!(kin.frame_class(0), "");
+        assert_eq!(kin.frame_class(3), "is-dim");
+
+        // The wires: a solid line the boundary touches is the module's own
+        // published surface, and a dashed one is what leans on it. A line
+        // between two strangers is neither.
+        assert!(kin.wire_kin(own, deep));
+        assert!(kin.wire_kin(deep, stranger));
+        assert!(!kin.wire_kin(root, stranger));
+        assert!(kin.tie_near(root, deep));
+        assert!(!kin.tie_near(root, stranger));
+
+        // A mark's reading leaves the ground alone: the blast radius is a walk
+        // between blocks, not a place on the paper.
+        let marks = KinView::read(own, &[(own, root)], &[]);
+        assert_eq!(marks.frame_class(3), "");
+        assert_eq!(marks.node_class(own), "is-sel");
+    }
+
+    /// A folded uses edge is drawn `display: none` until something inks it
+    /// back in. Hover does it in passing; a selection has to do it durably, or
+    /// following the edge to its far end takes the edge away.
+    #[test]
+    fn a_folded_tie_touching_the_selection_is_inked_in() {
+        let (sel, far) = (Anchor::Mark(0), Anchor::Mark(1));
+        let kin = KinView::read(sel, &[], &[(sel, far)]);
+        let folded = WireView {
+            key: "folded".to_string(),
+            from: Point::new(0.0, 0.0),
+            to: Point::new(10.0, 10.0),
+            a: sel,
+            b: far,
+            label: None,
+            width: 1.0,
+            // The resting cap left this one off the paper.
+            rest: false,
+            class: "is-ref",
+            event: "",
+        };
+        let classes = wire_classes(&folded, true, None, Some(&kin));
+        assert!(classes.contains(&"is-folded"));
+        assert!(classes.contains(&"is-near"));
+        assert!(!classes.contains(&"is-dim"));
+        // The same wire away from the selection keeps receding, and stays
+        // folded away with it.
+        let elsewhere = WireView {
+            a: Anchor::Mark(7),
+            b: Anchor::Mark(8),
+            ..folded.clone()
+        };
+        let classes = wire_classes(&elsewhere, true, None, Some(&kin));
+        assert!(classes.contains(&"is-dim"));
+        assert!(!classes.contains(&"is-near"));
+        // With nothing selected the chart is the resting chart: the fold
+        // stands, and hover is still the one way back — unchanged, and still
+        // the only reading that costs the reader a held cursor.
+        assert_eq!(wire_classes(&folded, true, None, None), vec!["is-folded"]);
+        assert_eq!(
+            wire_classes(&folded, true, Some(far), None),
+            vec!["is-folded", "is-hot"]
         );
     }
 

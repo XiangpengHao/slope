@@ -54,10 +54,21 @@ the chosen door, rows included. Default `pub(crate)`.
 ## Decisions (user-confirmed)
 
 - **Ground = modules, not directories.** One frame per workspace crate;
-  inside it, one frame per top-level module (`mod analyze`, `mod api`,
-  `mod views`), labeled in rust's own words. Crate-root items sit in the
-  crate's own frame. One level of module frames only — a deeper module path
-  stays in the mark's locator (`codemap/model.rs:278`).
+  inside it, one frame per module, nested exactly as rust's modules nest —
+  `mod views` holds `mod codemap` and `mod surface`, each labeled in rust's own
+  words, the last segment alone on the border because the paper's own nesting
+  says the rest (revised 2026-08-20, user decision: one flat level read as a
+  lie about the code — `views::surface` and `views::codemap` are not one
+  module). A frame's path is the directory chain under the crate's source root:
+  `src/views/surface/map.rs` and `src/views/surface/mod.rs` both frame in
+  `views::surface`, `src/views/atlas.rs` frames in `views` beside them, a file
+  directly under the root is the module it declares (`src/api.rs` → `mod api`),
+  and crate-root items (`main.rs`, `lib.rs`) sit in the crate's own frame. A
+  module between two others is drawn even when its own files declare nothing —
+  the module below it has to sit somewhere. Prose that names a frame away from
+  the paper — the cartouche's insight line, a sheet's fold row — spells the
+  whole path (`views::surface`), because three modules answer to
+  `mod surface`.
 - **Within a frame, the ownership forest.** Types seat under their one
   heaviest same-frame `Owns` holder, ownership depth as layers, so an owns
   edge is usually a short line between neighbours. A type never seats outside
@@ -81,9 +92,41 @@ the chosen door, rows included. Default `pub(crate)`.
   the vocabulary: dashed is a ghost, flare is diff ink, a left edge is a
   static, line weight is the wires'.
 - **Clicking a mark selects it.** Selection is a URL
-  (`/surface/mark/:..path?item=`) and a reading: the block opens to every row
-  it quoted a count for, everything a change to it could reach keeps full ink
-  with its wires, and the rest recedes. Nothing moves; the camera holds still.
+  (`/surface/mark/:..path?item=`) and a reading: everything a change to it
+  could reach keeps full ink with its wires, and the rest recedes. The block
+  itself was already quoted whole — selection is the reading, never the
+  quotation. Nothing moves; the camera holds still.
+- **Selection is also how a neighbourhood is read.** Every uses edge touching
+  the selected mark inks in and stays inked — folded ones included — and the
+  block at the far end of each reads a step behind the blast radius rather
+  than receding with the strangers. The two families still never merge: a
+  body is not a shape change, so a uses neighbour is drawn beside the radius
+  and never counted in it. Hover is the passing reading; selection is the one
+  that survives the cursor leaving, which is what following an edge to the
+  other end requires.
+- **A module boundary is selectable too.** Clicking a frame's border — or the
+  label chipped onto it — selects the module (`/surface/mod/:..module`, the
+  crate then the module path). Every contract inside the boundary keeps full
+  ink, whatever module inside it was written in; everything one hop across the
+  line reads a step behind, both families at once, because what crosses a
+  module boundary is what a reader came to the boundary to read; every other
+  module recedes, its frame with it. The frames the chosen one sits inside
+  never recede — they are the paper it stands on. Two hops would be the whole
+  chart again. There is no sheet: a module is a place on the paper, and the
+  paper is already saying it.
+- **A module can be folded to one row.** The mark at the border's other end —
+  `−` while the module is drawn, `+` once it is folded — takes the whole
+  module off the paper and leaves one counted row (`+ 21 items`) inside
+  the boundary that stood there. Everything inside folds with it, however deep
+  the nesting: the modules nested in it earn no frame of their own, their
+  private items and their budget-folded ones join the same count, and every
+  holds edge that touched a contract inside lands on the row, exactly as the
+  visibility and budget folds already land. Folding the module above a folded
+  one swallows it; unfolding the outer one hands the inner fold back. A fold is
+  a **re-layout**, not a reading — the chart is drawn again around what is left
+  — which is why selecting and folding are two marks on the border and never
+  one gesture. The fold is view state, kept per session; the selection is the
+  URL.
 
 ## What the survey walks
 
@@ -173,7 +216,9 @@ contract reads as quiet rather than dead.
 - **Ghosts.** A removed contract is drawn from the base edition — dashed
   frame, rows quoted as the base wrote them, locator `…:113 (base)` — and
   seats in the frame its path names. Ghosts are drawn at every door: a
-  removed thing has no visibility left to fold on.
+  removed thing has no visibility left to fold on. The one fold that does take
+  a ghost is a module the reviewer folded by hand — that fold is a boundary,
+  and it holds for everything inside it.
 - **Rows.** An added row wears the diff's `+` in flare; a dropped one is
   quoted from the base, struck, and seated where it stood — fields,
   variants, and method bands alike, the band weaving through the door's own
@@ -217,20 +262,28 @@ Extends `CodeGraph` (src/api.rs):
 - **Rows**: quoted as written, colored by token class the way a definition
   plate colors its source, with the one run naming the mark the row reaches
   in bold. A plain type name is from outside the workspace: no mark, no line.
-- **Caps**: eight fields and eight variants at rest (`FIELD_CAP`), five
-  method rows (`METHOD_CAP` — a signature is a wide row and the shape is what
-  the block is for), the rest counted on the foot (`+ 4 more fields`,
-  `+ 2 more methods`); selecting the block draws them all. The resting width
-  already fits the widest folded row, so nothing reflows on opening.
-  `held by n types` · `named by n signatures` is the chart's own fold and
-  survives opening.
+- **No row caps** (revised 2026-08-20, user decision). A block draws its whole
+  declaration: every field, every variant, every method row of the band, every
+  parameter of a signature. A declaration read eight rows deep is a declaration
+  half read, and a reader who has to select a block to finish its shape is
+  reading the chart twice — so `+ 4 more fields`, `+ 2 more methods` and
+  `+ 3 more params` are gone, with the windowing that produced them. A block is
+  as tall as what it promises, and the layout is handed that height. Selecting
+  a block opens nothing, because nothing was closed.
+  `held by n types` · `named by n signatures` is the one counted line left at
+  the foot, and it is the chart's own fold — ink it will not draw — not a row
+  the block is holding back.
 - **Wires**: quadratic hairlines bowed toward open paper, the two families to
   opposite sides. Solid at one pressure with the wrapper's word; dashed and
   lighter with the count, thinned by the references toggle (two per mark at
-  rest, folded ones ink in on hover, heaviest dozen labeled).
+  rest, folded ones ink in on hover and for as long as either end is
+  selected, heaviest dozen labeled).
 - **Budget**: the first paint aims to stay under `MARK_BUDGET` (200) drawn
   contracts. Past it, each frame folds its quietest into `+ n more`; statics
-  and diff-touched marks never fold. Ghosts are drawn on top of the budget.
+  and diff-touched marks never fold. Ghosts are drawn on top of the budget — a
+  removed type is diff ink. A module the reviewer folded by hand is read
+  first, so what it holds never stands in the budget's way, and folding one
+  can hand `+ n more` contracts back to the frames still on the paper.
 - Layout is a pure function of (marks, edges, measured sizes): blocks are
   measured before placement, trees are tidied one layer per ownership depth,
   trees shelve toward a landscape frame, frames pack toward a landscape sheet.
@@ -258,11 +311,14 @@ Extends `CodeGraph` (src/api.rs):
   bodies reach says so; and a mark nothing reaches at all says exactly that —
   the verdict a reviewer deletes code on.
 - Legend: the two inks with drawn samples, the contract plate and the trait
-  block, the static's edge and the one-liners, the two name colors, the row
-  and fan-in folds, the diff's key, then the honesty notes (the wrapper
-  table, holes, what stays off the chart, macros, unresolved names).
-- Routes: `/surface` and `/surface/mark/:..path?item=`. Escape deselects; `f`
-  refits; `←`/`→` retrace history. The camera survives the round trip.
+  block, the static's edge and the one-liners, the two name colors, the whole
+  quotation rule and the fan-in fold, the diff's key, then the honesty notes
+  (the wrapper table, holes, what stays off the chart, macros, unresolved
+  names).
+- Routes: `/surface`, `/surface/mark/:..path?item=`, and
+  `/surface/mod/:..module`. Escape deselects; `f` refits; `←`/`→` retrace
+  history. The camera survives the round trip — a selection never moves it, and
+  neither does a fold.
 
 ## Honesty notes the chart states out loud
 
@@ -274,6 +330,12 @@ Extends `CodeGraph` (src/api.rs):
   definition plate, one altitude up.
 - Type parameters, trait bounds and `impl Trait` are holes.
 - Names the survey could not resolve are counted and named as unresolved.
+- A folded module's contracts are off the chart, and the cartouche's counts are
+  what the chart draws: they fall with the fold, and the folded boundary's own
+  row is where the missing contracts are counted. Its uses edges are not drawn
+  — the dashed family runs between drawn marks, so a body leaning on a folded
+  module is counted on the mark at the other end, the way any unlanded
+  reference is. Its holds edges are drawn, and land on the row.
 
 ## Open decisions
 

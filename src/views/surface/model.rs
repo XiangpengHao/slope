@@ -56,15 +56,12 @@ pub const MARK_BUDGET: usize = 200;
 /// mark. A type four other types reach is a hub, and its fan-in drawn in full
 /// is a star burst nobody can read.
 const HELD_CAP: usize = 3;
-/// Holding fields a resting mark quotes before it defers to a counted line.
-/// The mark carries every field either way: selecting it draws them all, which
-/// is the only way to read a wide type without leaving the chart.
-pub const FIELD_CAP: usize = 8;
-/// Method rows a resting type quotes. Lower than the field cap on purpose: a
-/// signature is a wide row, and a type's shape is what the block is for — its
-/// API is the second thing a reader wants, not the thing that buries the
-/// first. Selecting the block draws the whole band.
-pub const METHOD_CAP: usize = 5;
+// No row cap of any kind lives here any more (user decision, 2026-08-20): a
+// block quotes every field, every variant, every method row and every
+// parameter it has, always. A declaration read eight rows deep is a
+// declaration half read, and a reader who has to select a block to see the
+// rest of its shape is reading the chart twice. What a block still counts at
+// its foot is the chart's own ink — a folded fan-in — never its own words.
 /// Resting uses edges whose counts are engraved. Past this the labels are
 /// the chart's texture instead of its data.
 pub const TIE_LABELS: usize = 12;
@@ -82,6 +79,33 @@ pub enum Anchor {
     Private(u32),
     /// A frame's `+ n more items` row, where the budget folded the quietest.
     More(u32),
+    /// A whole module, folded by hand: the frame's own row, standing for every
+    /// contract inside it and inside the modules nested in it.
+    Mod(u32),
+}
+
+/// The modules the reviewer folded by hand, each named the way a fold has to
+/// survive the next build: the crate, then the module path as rust nests it.
+/// A frame id is an index into one build and says nothing across two.
+pub type Folds = HashSet<Vec<String>>;
+
+/// A module frame's name in a [`Folds`] set: the crate first, then the module
+/// path. The crate's own frame is the crate name alone.
+pub fn mod_key(krate: &str, module: &[String]) -> Vec<String> {
+    let mut key = vec![krate.to_string()];
+    key.extend(module.iter().cloned());
+    key
+}
+
+impl Anchor {
+    /// The frame a counted row stands in. `None` on a mark, which stands for
+    /// itself wherever it was seated.
+    pub fn frame(self) -> Option<u32> {
+        match self {
+            Anchor::Mark(_) => None,
+            Anchor::Private(frame) | Anchor::More(frame) | Anchor::Mod(frame) => Some(frame),
+        }
+    }
 }
 
 /// One seat in a frame's ownership forest: a block, and the blocks that sit
@@ -105,17 +129,21 @@ impl Seat {
     }
 }
 
-/// One frame on the paper: a workspace crate, or one top-level module inside a
-/// crate. One level of module frames only — a deeper module path stays in the
-/// mark's locator, where rust already writes it.
+/// One frame on the paper: a workspace crate, or one module inside a crate.
+/// Module frames nest the way rust's modules do — `mod views` holds `mod
+/// surface` holds the contracts `views::surface` declares — so the ground reads
+/// as the tree the code is written in rather than as one flat row of the
+/// crate's first segments.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Frame {
     pub id: u32,
     pub krate: String,
-    /// The top-level module, as rust names it. `None` is the crate's own frame,
+    /// The module path, segment by segment, as rust names it: `["views",
+    /// "surface"]` is `mod views::surface`. Empty is the crate's own frame,
     /// which holds the types its crate root declares.
-    pub module: Option<String>,
-    /// The crate frame a module frame sits in.
+    pub module: Vec<String>,
+    /// The frame this one sits inside: the module one segment up, or the crate
+    /// frame for a top-level module. `None` only on a crate frame.
     pub parent: Option<u32>,
     /// Drawn marks seated here, in the survey's (file, source) order. The
     /// roster of what the frame draws; `forest` says where each one sits.
@@ -124,6 +152,14 @@ pub struct Frame {
     pub private: u32,
     /// Types the budget folded away, counted here.
     pub more: u32,
+    /// The reviewer folded this module by hand: it draws its border, its label
+    /// and one row, and nothing inside it is on the paper. The modules nested
+    /// in it earn no frame of their own — a fold is one boundary, not a stack
+    /// of empty ones.
+    pub folded: bool,
+    /// What that row counts: every contract inside this module and inside the
+    /// modules nested in it, whatever door it stood at. Zero on an open frame.
+    pub packed: u32,
     /// How they seat: the frame's ownership forest, in reading order —
     /// statics, then trees biggest first, then the free functions, then the
     /// vocabulary leaves, then the counted fold rows. Every mark in `marks`
@@ -133,13 +169,33 @@ pub struct Frame {
 }
 
 impl Frame {
-    /// The label engraved on the frame's border, in rust's own words. A crate
-    /// frame names its crate only where the survey has more than one to tell
-    /// apart; in a single-crate workspace that name is already the cartouche's.
+    /// The label engraved on the frame's border, in rust's own words. A module
+    /// frame wears its last segment alone — `mod surface`, drawn inside `mod
+    /// views` — because that is how rust writes it in the file, and the paper's
+    /// own nesting says the rest of the path. A crate frame names its crate
+    /// only where the survey has more than one to tell apart; in a single-crate
+    /// workspace that name is already the cartouche's.
     pub fn label(&self, multi_crate: bool) -> Option<String> {
-        match &self.module {
-            Some(module) => Some(format!("mod {module}")),
+        match self.module.last() {
+            Some(segment) => Some(format!("mod {segment}")),
             None => multi_crate.then(|| self.krate.clone()),
+        }
+    }
+
+    /// This frame's name in a [`Folds`] set, and in the URL that selects it.
+    pub fn key(&self) -> Vec<String> {
+        mod_key(&self.krate, &self.module)
+    }
+
+    /// The frame in prose, where no paper around it says which one it is: the
+    /// whole path as rust would write it in a `use` line (`views::surface`), or
+    /// the crate's own name where the frame is the crate's. The border's chip
+    /// says `mod surface` and three modules in this workspace answer to that,
+    /// so a line the reader meets away from the chart spells the path out.
+    pub fn words(&self) -> String {
+        match self.module.is_empty() {
+            true => self.krate.clone(),
+            false => self.module.join("::"),
         }
     }
 }
@@ -207,16 +263,17 @@ pub struct SurfaceMark {
     /// the base edition.
     pub ghost: bool,
     /// Fields — a function's parameters — quoted as written in declaration
-    /// order, every one of them. A resting block draws [`FIELD_CAP`] and
-    /// counts the rest on its foot.
+    /// order, every one of them, and every one of them drawn.
     pub fields: Vec<FieldRow>,
     /// An enum's variants as written — payloads and discriminants included —
-    /// quoted as rows (the row text in `decl`, `name` empty), all of them.
+    /// quoted as rows (the row text in `decl`, `name` empty), all of them, and
+    /// all of them drawn: a sum type is its variant list.
     pub variants: Vec<FieldRow>,
     /// The second band: the methods that clear the door, quoted as written
     /// signatures in the survey's order. The row text is in `decl` and the
     /// method's own name in `name`, which is what its edges and its callers
-    /// are filed under. A resting block draws [`METHOD_CAP`] of them.
+    /// are filed under. The band draws the whole list; only the door decides
+    /// which rows are in it.
     pub methods: Vec<FieldRow>,
     /// A static's declared type or a function's return type, as written.
     pub ty: String,
@@ -407,7 +464,8 @@ pub struct SurfaceModel {
     pub added: usize,
     pub removed: usize,
     pub changed: usize,
-    /// Top-level modules holding a diff-touched type, in name order.
+    /// The modules holding a diff-touched contract, each named by its whole
+    /// path (`views::surface`), in name order.
     pub changed_modules: Vec<String>,
 }
 
@@ -520,20 +578,40 @@ fn source_rest(path: &str) -> &str {
     }
 }
 
-/// The top-level module a file's types are framed in — the first path segment
-/// under the crate's source root, which is exactly how rust names the module.
-/// `src/views/codemap/map.rs` is `mod views`; `src/api.rs` is `mod api`; the
-/// crate root itself (`main.rs`, `lib.rs`) has no module and frames in the
+/// The module path a file's contracts are framed in, segment by segment: the
+/// directories under the crate's source root, which is exactly the path rust
+/// reads them as. `src/views/surface/map.rs` frames in `views::surface`, and so
+/// does `src/views/surface/mod.rs`; `src/views/atlas.rs` frames in `views`
+/// beside them. A file directly under the root has no directory to name it, so
+/// it frames as the module it is — `src/api.rs` is `mod api` — and the crate
+/// root itself (`main.rs`, `lib.rs`) names no module at all and frames in the
 /// crate.
-fn module_of(path: &str) -> Option<&str> {
+///
+/// A leaf file's own module is not a frame: the file altitude is the rung above,
+/// and a frame per file would draw the directory tree twice.
+pub(crate) fn module_path(path: &str) -> Vec<&str> {
     let rest = source_rest(path);
-    match rest.split_once('/') {
-        Some((first, _)) => Some(first),
-        None => {
-            let stem = rest.strip_suffix(".rs").unwrap_or(rest);
-            (!matches!(stem, "main" | "lib" | "mod" | "build")).then_some(stem)
+    let mut dirs: Vec<&str> = rest.split('/').collect();
+    let file = dirs.pop().unwrap_or_default();
+    if dirs.is_empty() {
+        let stem = file.strip_suffix(".rs").unwrap_or(file);
+        if !matches!(stem, "main" | "lib" | "mod" | "build") {
+            dirs.push(stem);
         }
     }
+    dirs
+}
+
+/// Which frame a file's contracts belong to: its crate, and the module path
+/// inside it.
+type FrameKey = (String, Vec<String>);
+
+/// A file's frame key, owned.
+fn frame_key(krate: &str, path: &str) -> FrameKey {
+    (
+        krate.to_string(),
+        module_path(path).into_iter().map(str::to_string).collect(),
+    )
 }
 
 /// How loudly a type asks for a block of its own: how many holding edges touch
@@ -583,7 +661,7 @@ fn would_cycle(child: u32, candidate: Anchor, parents: &HashMap<u32, Anchor>) ->
 }
 
 impl SurfaceModel {
-    pub fn build(graph: &CodeGraph, ref_dir: RefDir, doors: Doors) -> Self {
+    pub fn build(graph: &CodeGraph, ref_dir: RefDir, doors: Doors, folds: &Folds) -> Self {
         let changed_file: Vec<bool> = graph.files.iter().map(|f| f.changed).collect();
         let file_changed = |file: u32| changed_file.get(file as usize).copied().unwrap_or(false);
 
@@ -608,7 +686,7 @@ impl SurfaceModel {
                 .or_else(|| ghost_of(id).map(|g| g.name.clone()))
                 .unwrap_or_default()
         };
-        let ghost_key = |g: &GhostMark| (g.krate.clone(), module_of(&g.path).map(str::to_string));
+        let ghost_key = |g: &GhostMark| frame_key(&g.krate, &g.path);
         let is_fn = |id: u32| kind_of(id) == Some(ItemKind::Fn);
         // Everything that is a contract rather than a shape: never seated
         // under anything, never a seat, and placed beside what it names.
@@ -639,16 +717,45 @@ impl SurfaceModel {
             doors.admits(if row.via_trait { Vis::Pub } else { row.vis })
         };
 
+        // Which frame every file's contracts belong to, and which of those
+        // frames the reviewer folded. Read before anything is drawn: a folded
+        // module's contracts are off the paper, so they never stand in the
+        // budget's way either.
+        let file_key: Vec<FrameKey> = graph
+            .files
+            .iter()
+            .map(|f| frame_key(&f.krate, &f.path))
+            .collect();
+        let key_of = |mark: u32| -> Option<&FrameKey> {
+            file_key.get(graph.items[mark as usize].file as usize)
+        };
+        // The fold a key sits in, if any: the key itself where the reviewer
+        // folded this very module, or the outermost folded module above it.
+        // Read from the crate down, so folding the module above a folded one
+        // swallows it — a fold is one boundary, never a stack of them.
+        let fold_key = |key: &FrameKey| -> Option<FrameKey> {
+            (0..=key.1.len())
+                .map(|cut| (key.0.clone(), key.1[..cut].to_vec()))
+                .find(|(krate, path)| folds.contains(&mod_key(krate, path)))
+        };
+        let folds_away = |mark: u32| -> bool { key_of(mark).and_then(fold_key).is_some() };
+
         let mut drawn: Vec<u32> = Vec::new();
         let mut private: Vec<u32> = Vec::new();
+        // Contracts inside a folded module: not drawn, and not counted at
+        // their own frame's door either — the fold's one row counts them all.
+        let mut packed: Vec<u32> = Vec::new();
         for (i, mark) in graph.items.iter().enumerate() {
             if !charted(mark) {
                 continue;
             }
-            if drawable(mark, doors) {
-                drawn.push(i as u32);
+            let i = i as u32;
+            if folds_away(i) {
+                packed.push(i);
+            } else if drawable(mark, doors) {
+                drawn.push(i);
             } else {
-                private.push(i as u32);
+                private.push(i);
             }
         }
 
@@ -682,50 +789,62 @@ impl SurfaceModel {
             drawn.retain(|m| !folded.contains(m));
         }
 
-        // ---- Frames: one per crate, one per top-level module inside it. ----
-        let file_key: Vec<(String, Option<String>)> = graph
-            .files
-            .iter()
-            .map(|f| (f.krate.clone(), module_of(&f.path).map(str::to_string)))
-            .collect();
-        let key_of = |mark: u32| -> Option<&(String, Option<String>)> {
-            file_key.get(graph.items[mark as usize].file as usize)
-        };
-
-        let mut keys: Vec<(String, Option<String>)> = drawn
+        // ---- Frames: one per crate, then the module tree inside it. ---------
+        // A folded module earns its own frame and its nested modules earn
+        // none: everything inside the boundary the reviewer drew reports to
+        // that boundary.
+        let framed_key = |key: FrameKey| -> FrameKey { fold_key(&key).unwrap_or(key) };
+        let mut keys: Vec<FrameKey> = drawn
             .iter()
             .chain(folded.iter())
             .chain(private.iter())
             .filter_map(|&m| key_of(m).cloned())
-            .chain(graph.ghosts.iter().map(&ghost_key))
+            .chain(packed.iter().filter_map(|&m| key_of(m).and_then(fold_key)))
+            .chain(graph.ghosts.iter().map(|g| framed_key(ghost_key(g))))
             .collect();
+        // Every module on the way down earns a frame, whether or not it
+        // declares a contract of its own: `mod views::surface` has to be drawn
+        // inside `mod views`, so the module between them is on the paper even
+        // when every file it holds is a `mod` line.
+        let ancestors: Vec<FrameKey> = keys
+            .iter()
+            .flat_map(|(krate, path)| {
+                (1..path.len()).map(|cut| (krate.clone(), path[..cut].to_vec()))
+            })
+            .collect();
+        keys.extend(ancestors);
         keys.sort();
         keys.dedup();
         let mut crates: Vec<String> = keys.iter().map(|(krate, _)| krate.clone()).collect();
         crates.dedup();
 
         let mut frames: Vec<Frame> = Vec::new();
-        let mut frame_index: HashMap<(String, Option<String>), u32> = HashMap::new();
-        // Crate frames first, so a module frame always has a parent to sit in.
+        let mut frame_index: HashMap<FrameKey, u32> = HashMap::new();
+        // Crate frames first, so a top-level module always has one to sit in.
         for krate in &crates {
             let id = frames.len() as u32;
             frames.push(Frame {
                 id,
                 krate: krate.clone(),
-                module: None,
+                module: Vec::new(),
                 parent: None,
                 marks: Vec::new(),
                 private: 0,
                 more: 0,
+                folded: folds.contains(&mod_key(krate, &[])),
+                packed: 0,
                 forest: Vec::new(),
             });
-            frame_index.insert((krate.clone(), None), id);
+            frame_index.insert((krate.clone(), Vec::new()), id);
         }
+        // Sorted, a path always follows the path it extends, so the frame a
+        // module nests in is built before the module itself.
         for key in &keys {
-            if key.1.is_none() {
+            if key.1.is_empty() {
                 continue;
             }
-            let parent = frame_index.get(&(key.0.clone(), None)).copied();
+            let up = (key.0.clone(), key.1[..key.1.len() - 1].to_vec());
+            let parent = frame_index.get(&up).copied();
             let id = frames.len() as u32;
             frames.push(Frame {
                 id,
@@ -735,12 +854,20 @@ impl SurfaceModel {
                 marks: Vec::new(),
                 private: 0,
                 more: 0,
+                folded: folds.contains(&mod_key(&key.0, &key.1)),
+                packed: 0,
                 forest: Vec::new(),
             });
             frame_index.insert(key.clone(), id);
         }
         let frame_of = |mark: u32| -> Option<u32> {
             key_of(mark).and_then(|key| frame_index.get(key).copied())
+        };
+
+        // The frame a folded module's contracts report to: the boundary the
+        // reviewer folded, wherever inside it they were written.
+        let fold_frame = |key: &FrameKey| -> Option<u32> {
+            fold_key(key).and_then(|fold| frame_index.get(&fold).copied())
         };
 
         let mut anchor_of: Vec<Option<Anchor>> = vec![None; graph.items.len() + graph.ghosts.len()];
@@ -750,9 +877,24 @@ impl SurfaceModel {
                 anchor_of[m as usize] = Some(Anchor::Mark(m));
             }
         }
-        // Ghosts are always drawn: a removed type is diff ink, never folded.
+        // A folded module's whole roster, drawn types and private ones alike,
+        // lands on the one row its frame draws.
+        for &m in &packed {
+            if let Some(frame) = key_of(m).and_then(fold_frame) {
+                frames[frame as usize].packed += 1;
+                anchor_of[m as usize] = Some(Anchor::Mod(frame));
+            }
+        }
+        // Ghosts are drawn wherever the paper has room for them: a removed
+        // type is diff ink, and the budget never folds one. A module the
+        // reviewer folded by hand does — the fold is a reading, and it holds
+        // for everything inside the boundary.
         for ghost in &graph.ghosts {
-            if let Some(&frame) = frame_index.get(&ghost_key(ghost)) {
+            let key = ghost_key(ghost);
+            if let Some(frame) = fold_frame(&key) {
+                frames[frame as usize].packed += 1;
+                anchor_of[ghost.id as usize] = Some(Anchor::Mod(frame));
+            } else if let Some(&frame) = frame_index.get(&key) {
                 frames[frame as usize].marks.push(ghost.id);
                 anchor_of[ghost.id as usize] = Some(Anchor::Mark(ghost.id));
             }
@@ -977,9 +1119,10 @@ impl SurfaceModel {
                     // private code, so it can seat what only private code
                     // owns. The `+ n more items` row cannot: it stands for
                     // types the budget took away, not for a place in the
-                    // module's shape.
+                    // module's shape. Neither can a folded module's row, which
+                    // stands in another frame entirely.
                     Anchor::Private(frame) => frame == home,
-                    Anchor::More(_) => false,
+                    Anchor::More(_) | Anchor::Mod(_) => false,
                 };
                 if !same_frame {
                     continue;
@@ -1080,6 +1223,13 @@ impl SurfaceModel {
                 .and_then(tree_of)
         };
         for frame in &mut frames {
+            // A folded module draws its boundary, its label, and one row that
+            // counts what is inside it. Nothing else about its shape is on the
+            // paper, so there is no forest to grow.
+            if frame.folded {
+                frame.forest = vec![Seat::leaf(Anchor::Mod(frame.id))];
+                continue;
+            }
             // Nothing holds a function, so a function is never vocabulary; the
             // bands stay disjoint and every mark seats exactly once.
             let vocabulary = |m: u32| folded_fan.contains_key(&Anchor::Mark(m)) && !is_contract(m);
@@ -1142,7 +1292,13 @@ impl SurfaceModel {
         let drawn_set: HashSet<u32> = drawn
             .iter()
             .copied()
-            .chain(graph.ghosts.iter().map(|g| g.id))
+            .chain(
+                graph
+                    .ghosts
+                    .iter()
+                    .filter(|g| fold_key(&ghost_key(g)).is_none())
+                    .map(|g| g.id),
+            )
             .collect();
         let mut target_of: HashMap<(u32, String), String> = HashMap::new();
         for edge in &graph.holds {
@@ -1330,7 +1486,8 @@ impl SurfaceModel {
         // Ghosts: whole blocks quoted from the base edition. Their rows are
         // the base's own — the block's dashed frame and `D` say the rest.
         for ghost in &graph.ghosts {
-            let Some(&frame) = frame_index.get(&ghost_key(ghost)) else {
+            let key = ghost_key(ghost);
+            let (Some(&frame), None) = (frame_index.get(&key), fold_key(&key)) else {
                 continue;
             };
             marks.push(SurfaceMark {
@@ -1566,13 +1723,13 @@ impl SurfaceModel {
         let added = marks.iter().filter(|m| m.delta == Delta::Added).count();
         let removed = marks.iter().filter(|m| m.ghost).count();
         let changed = marks.iter().filter(|m| m.delta == Delta::Changed).count();
+        // The insight line reads away from the paper, so each module is named
+        // by its whole path — `views::surface`, not the `mod surface` its
+        // border wears.
         let mut changed_modules: Vec<String> = marks
             .iter()
             .filter(|m| m.letter().is_some())
-            .map(|m| {
-                let frame = &frames[m.frame as usize];
-                frame.module.clone().unwrap_or_else(|| frame.krate.clone())
-            })
+            .map(|m| frames[m.frame as usize].words())
             .collect();
         changed_modules.sort();
         changed_modules.dedup();
@@ -1647,12 +1804,193 @@ mod tests {
     }
 
     #[test]
-    fn a_module_frame_is_the_first_segment_under_src() {
-        assert_eq!(module_of("src/views/codemap/map.rs"), Some("views"));
-        assert_eq!(module_of("src/api.rs"), Some("api"));
-        assert_eq!(module_of("src/main.rs"), None);
-        assert_eq!(module_of("crates/engine/src/lib.rs"), None);
-        assert_eq!(module_of("crates/engine/src/parse/lex.rs"), Some("parse"));
+    fn a_module_path_is_the_directory_chain_under_src() {
+        // The whole chain, as deep as the code is written: two modules here,
+        // not one flat `views`.
+        assert_eq!(
+            module_path("src/views/surface/map.rs"),
+            ["views", "surface"]
+        );
+        assert_eq!(
+            module_path("src/views/codemap/map.rs"),
+            ["views", "codemap"]
+        );
+        // A module's own file and a file beside it frame in that module itself.
+        assert_eq!(module_path("src/views/mod.rs"), ["views"]);
+        assert_eq!(module_path("src/views/atlas.rs"), ["views"]);
+        // A file under the source root is the module it declares.
+        assert_eq!(module_path("src/api.rs"), ["api"]);
+        assert!(module_path("src/main.rs").is_empty());
+        assert!(module_path("crates/engine/src/lib.rs").is_empty());
+        assert_eq!(module_path("crates/engine/src/parse/lex.rs"), ["parse"]);
+    }
+
+    /// One pub struct per file, named after the file it is declared in: enough
+    /// to ask which frame a path lands in and nothing else.
+    fn framing_graph(paths: &[&str]) -> CodeGraph {
+        CodeGraph {
+            files: paths
+                .iter()
+                .enumerate()
+                .map(|(i, path)| file(i as u32, path, false))
+                .collect(),
+            refs: Vec::new(),
+            items: paths
+                .iter()
+                .enumerate()
+                .map(|(i, path)| {
+                    let stem = path.rsplit('/').next().unwrap_or(path);
+                    let name = stem.strip_suffix(".rs").unwrap_or(stem).to_uppercase();
+                    mark(i as u32, i as u32, &name, ItemKind::Struct, Vis::Pub)
+                })
+                .collect(),
+            implements: Vec::new(),
+            item_edges: Vec::new(),
+            local_refs: Vec::new(),
+            holds: Vec::new(),
+            ghosts: Vec::new(),
+            unresolved: 0,
+            notes: Vec::new(),
+        }
+    }
+
+    /// The ground is the module tree, as deep as rust writes it: `mod surface`
+    /// is drawn inside `mod views`, and a contract sits in the module that
+    /// declares it rather than in that module's first segment.
+    #[test]
+    fn module_frames_nest_the_way_the_modules_do() {
+        let model = SurfaceModel::build(
+            &framing_graph(&[
+                "src/main.rs",
+                "src/views/mod.rs",
+                "src/views/atlas.rs",
+                "src/views/surface/map.rs",
+                "src/views/codemap/map.rs",
+            ]),
+            RefDir::Uses,
+            Doors::Crate,
+            &Folds::new(),
+        );
+        // The crate, `views`, and the two modules inside it.
+        assert_eq!(model.frames.len(), 4);
+        let views = frame_named(&model, "views");
+        let surface = frame_named(&model, "views::surface");
+        let codemap = frame_named(&model, "views::codemap");
+        assert_eq!(surface.parent, Some(views.id));
+        assert_eq!(codemap.parent, Some(views.id));
+        assert_eq!(views.parent, Some(model.frames[0].id));
+        assert!(model.frames[0].module.is_empty());
+
+        // The border wears rust's own word for the module, and the nesting
+        // says the rest of the path; prose spells the path out.
+        assert_eq!(surface.label(false).as_deref(), Some("mod surface"));
+        assert_eq!(views.label(false).as_deref(), Some("mod views"));
+        assert_eq!(surface.words(), "views::surface");
+        assert_eq!(model.frames[0].label(false), None);
+
+        // `views/mod.rs` and `views/atlas.rs` frame in `views` itself; the file
+        // a module away frames a module away.
+        let named = |frame: &Frame| -> Vec<String> {
+            frame
+                .marks
+                .iter()
+                .map(|&m| model.marks.iter().find(|k| k.id == m).unwrap().name.clone())
+                .collect()
+        };
+        assert_eq!(named(views), vec!["MOD", "ATLAS"]);
+        assert_eq!(named(surface), vec!["MAP"]);
+        assert_eq!(named(codemap), vec!["MAP"]);
+        assert_eq!(named(&model.frames[0]), vec!["MAIN"]);
+    }
+
+    /// Folding a module by hand takes the whole boundary off the paper and
+    /// leaves one counted row: every contract inside it, the nested modules'
+    /// contracts included, and every edge that touched one lands on the row.
+    /// The nested modules earn no frame — a fold is one boundary, not a stack
+    /// of empty ones.
+    #[test]
+    fn folding_a_module_counts_everything_inside_it_on_one_row() {
+        let mut g = framing_graph(&[
+            "src/main.rs",
+            "src/views/mod.rs",
+            "src/views/surface/map.rs",
+            "src/views/codemap/map.rs",
+        ]);
+        // `MAIN`, in the crate frame, holds the type `views::surface` declares.
+        g.holds.push(HoldEdge {
+            from: 0,
+            to: 2,
+            kind: HoldKind::Owns,
+            via: String::new(),
+            fields: vec![("map".into(), "MAP".into())],
+            from_method: false,
+            event: None,
+        });
+        // A private type inside the fold is counted there too, not at its own
+        // module's door: the fold is the only boundary left to count at.
+        g.items
+            .push(mark(4, 3, "HIDDEN", ItemKind::Struct, Vis::Private));
+
+        let open = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate, &Folds::new());
+        assert_eq!(open.frames.len(), 4);
+        assert_eq!(open.marks.len(), 4);
+
+        let folds: Folds = [mod_key("slope", &["views".to_string()])]
+            .into_iter()
+            .collect();
+        let shut = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate, &folds);
+
+        // The crate frame and `views`. The two modules inside it are gone.
+        assert_eq!(shut.frames.len(), 2);
+        let views = frame_named(&shut, "views");
+        assert!(views.folded);
+        assert!(views.marks.is_empty());
+        // `MOD`, both `MAP`s, and the private one.
+        assert_eq!(views.packed, 4);
+        assert_eq!(views.private, 0);
+        assert_eq!(views.forest, vec![Seat::leaf(Anchor::Mod(views.id))]);
+        // Only what is left outside the boundary is drawn.
+        let drawn: Vec<&str> = shut.marks.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(drawn, vec!["MAIN"]);
+        // The edge is not cut, it lands: the row stands for what it counts.
+        let edge = shut.holds.iter().find(|h| h.holder == Anchor::Mark(0));
+        assert_eq!(edge.map(|h| h.held), Some(Anchor::Mod(views.id)));
+    }
+
+    /// Folding the module above a folded one swallows it: the outermost fold is
+    /// the boundary the reader drew, and a fold inside it has nothing left to
+    /// say. Unfolding the outer one hands the inner fold back untouched.
+    #[test]
+    fn the_outermost_fold_is_the_one_the_chart_draws() {
+        let g = framing_graph(&["src/main.rs", "src/views/surface/map.rs"]);
+        let folds: Folds = [
+            mod_key("slope", &["views".to_string()]),
+            mod_key("slope", &["views".to_string(), "surface".to_string()]),
+        ]
+        .into_iter()
+        .collect();
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate, &folds);
+        assert_eq!(model.frames.len(), 2);
+        let views = frame_named(&model, "views");
+        assert!(views.folded);
+        assert_eq!(views.packed, 1);
+    }
+
+    /// A module whose own files declare nothing still holds the modules under
+    /// it: without its frame, `mod surface` would have nowhere to sit.
+    #[test]
+    fn a_module_between_two_frames_is_drawn_with_nothing_of_its_own() {
+        let model = SurfaceModel::build(
+            &framing_graph(&["src/views/surface/map.rs"]),
+            RefDir::Uses,
+            Doors::Crate,
+            &Folds::new(),
+        );
+        assert_eq!(model.frames.len(), 3);
+        let views = frame_named(&model, "views");
+        assert!(views.marks.is_empty());
+        assert_eq!(views.private, 0);
+        assert_eq!(frame_named(&model, "views::surface").parent, Some(views.id));
     }
 
     /// `Wire` (pub, in `mod api`) is held by `Index` (pub, in `mod analyze`)
@@ -1720,22 +2058,14 @@ mod tests {
 
     #[test]
     fn privacy_folds_a_type_and_keeps_its_edge() {
-        let model = SurfaceModel::build(&graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         // Two module frames under one crate frame; the crate frame is empty
         // but holds them.
         assert_eq!(model.frames.len(), 3);
         assert!(!model.multi_crate);
-        let api = model
-            .frames
-            .iter()
-            .find(|f| f.module.as_deref() == Some("api"))
-            .unwrap();
+        let api = frame_named(&model, "api");
         assert_eq!(api.marks.len(), 1);
-        let analyze = model
-            .frames
-            .iter()
-            .find(|f| f.module.as_deref() == Some("analyze"))
-            .unwrap();
+        let analyze = frame_named(&model, "analyze");
         // The static is drawn although it is private; the struct is not.
         assert_eq!(analyze.marks.len(), 2);
         assert_eq!(analyze.private, 1);
@@ -1763,12 +2093,8 @@ mod tests {
 
         // At `pub` it folds in with the private type: one drawn static left,
         // and the frame counts two behind its row.
-        let shut = SurfaceModel::build(&g, RefDir::Uses, Doors::Pub);
-        let analyze = shut
-            .frames
-            .iter()
-            .find(|f| f.module.as_deref() == Some("analyze"))
-            .unwrap();
+        let shut = SurfaceModel::build(&g, RefDir::Uses, Doors::Pub, &Folds::new());
+        let analyze = frame_named(&shut, "analyze");
         assert_eq!(analyze.marks.len(), 1);
         assert_eq!(analyze.private, 2);
         assert!(!shut.marks.iter().any(|m| m.name == "Index"));
@@ -1781,19 +2107,15 @@ mod tests {
         assert_eq!(shut.doors.fold_word(), "internal item");
 
         // At `pub(crate)` it is drawn again, and only the private type folds.
-        let open = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
-        let analyze = open
-            .frames
-            .iter()
-            .find(|f| f.module.as_deref() == Some("analyze"))
-            .unwrap();
+        let open = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate, &Folds::new());
+        let analyze = frame_named(&open, "analyze");
         assert_eq!(analyze.marks.len(), 2);
         assert_eq!(analyze.private, 1);
         assert_eq!(open.doors.fold_word(), "private item");
 
         // At `private` nothing folds for visibility: every charted type is a
         // mark, and no frame carries a counted row.
-        let all = SurfaceModel::build(&g, RefDir::Uses, Doors::All);
+        let all = SurfaceModel::build(&g, RefDir::Uses, Doors::All, &Folds::new());
         assert_eq!(all.marks.len(), 4);
         assert!(all.frames.iter().all(|f| f.private == 0));
         assert!(
@@ -1813,7 +2135,7 @@ mod tests {
 
     #[test]
     fn a_static_quotes_its_type_instead_of_a_field_row() {
-        let model = SurfaceModel::build(&graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let cache = model.marks.iter().find(|m| m.name == "CACHE").unwrap();
         assert!(cache.is_static());
         assert!(cache.fields.is_empty());
@@ -1860,7 +2182,7 @@ mod tests {
             from_method: false,
             event: Some(HoldEvent::Removed),
         });
-        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate, &Folds::new());
         let ghost = model.marks.iter().find(|m| m.name == "FileRef").unwrap();
         assert!(ghost.ghost);
         assert_eq!(ghost.letter(), Some("D"));
@@ -1889,7 +2211,7 @@ mod tests {
     /// one drawn pair is `Index` reaching `Wire`.
     #[test]
     fn a_uses_edge_needs_a_drawn_mark_at_both_ends() {
-        let model = SurfaceModel::build(&graph(), RefDir::Both, Doors::Crate);
+        let model = SurfaceModel::build(&graph(), RefDir::Both, Doors::Crate, &Folds::new());
         assert_eq!(model.ties.len(), 1);
         assert_eq!(model.ties[0].def, Anchor::Mark(0));
         assert_eq!(model.ties[0].user, Anchor::Mark(1));
@@ -1961,11 +2283,12 @@ mod tests {
         }
     }
 
+    /// The frame one module path names, `views::surface` and all.
     fn frame_named<'a>(model: &'a SurfaceModel, module: &str) -> &'a Frame {
         model
             .frames
             .iter()
-            .find(|f| f.module.as_deref() == Some(module))
+            .find(|f| !f.module.is_empty() && f.words() == module)
             .unwrap()
     }
 
@@ -1983,7 +2306,8 @@ mod tests {
 
     #[test]
     fn a_type_seats_under_the_same_frame_owner_that_holds_it_hardest() {
-        let model = SurfaceModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
+        let model =
+            SurfaceModel::build(&seating_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let api = frame_named(&model, "api");
         let wire = api
             .forest
@@ -2005,7 +2329,8 @@ mod tests {
 
     #[test]
     fn a_type_owned_from_another_module_is_a_root_and_keeps_its_edge() {
-        let model = SurfaceModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
+        let model =
+            SurfaceModel::build(&seating_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         // `Index` owns `Wire`, but it is a module away: `Wire` stays a root of
         // its own frame rather than moving into `mod analyze`.
         assert!(roots(frame_named(&model, "api")).contains(&Anchor::Mark(0)));
@@ -2018,7 +2343,8 @@ mod tests {
 
     #[test]
     fn a_static_never_seats_under_a_type() {
-        let model = SurfaceModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
+        let model =
+            SurfaceModel::build(&seating_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let api = frame_named(&model, "api");
         let mut seats = Vec::new();
         walk(&api.forest, 0, &mut seats);
@@ -2028,7 +2354,8 @@ mod tests {
 
     #[test]
     fn a_frame_seats_statics_then_trees_then_vocabulary_then_its_fold_rows() {
-        let model = SurfaceModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
+        let model =
+            SurfaceModel::build(&seating_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let api = frame_named(&model, "api");
         assert_eq!(
             roots(api),
@@ -2063,8 +2390,18 @@ mod tests {
             api_graph(),
             trait_graph(),
         ] {
-            seats_once(&SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate));
-            seats_once(&SurfaceModel::build(&graph, RefDir::Uses, Doors::All));
+            seats_once(&SurfaceModel::build(
+                &graph,
+                RefDir::Uses,
+                Doors::Crate,
+                &Folds::new(),
+            ));
+            seats_once(&SurfaceModel::build(
+                &graph,
+                RefDir::Uses,
+                Doors::All,
+                &Folds::new(),
+            ));
         }
     }
 
@@ -2082,7 +2419,7 @@ mod tests {
             seated.sort_unstable();
             let mut roster = frame.marks.clone();
             roster.sort_unstable();
-            assert_eq!(seated, roster, "frame {:?}", frame.module);
+            assert_eq!(seated, roster, "frame {}", frame.words());
         }
     }
 
@@ -2103,7 +2440,7 @@ mod tests {
             unresolved: 0,
             notes: Vec::new(),
         };
-        let model = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate, &Folds::new());
         let api = frame_named(&model, "api");
         // One seat takes the other; the ring is not seated twice.
         let mut seats = Vec::new();
@@ -2117,8 +2454,8 @@ mod tests {
     #[test]
     fn the_same_survey_always_seats_the_same_forest() {
         let graph = seating_graph();
-        let a = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate);
-        let b = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate);
+        let a = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate, &Folds::new());
+        let b = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate, &Folds::new());
         assert_eq!(a, b);
     }
 
@@ -2224,7 +2561,8 @@ mod tests {
 
     #[test]
     fn a_free_function_is_a_mark_and_the_door_folds_it_like_a_type() {
-        let model = SurfaceModel::build(&contract_graph(), RefDir::Uses, Doors::Crate);
+        let model =
+            SurfaceModel::build(&contract_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let api = frame_named(&model, "api");
         // `Wire`, `Nut`, `survey`, `CACHE` — and the private function counted
         // behind the same row a private type would be.
@@ -2241,14 +2579,15 @@ mod tests {
         assert_eq!((model.structs, model.fns, model.roots), (2, 2, 1));
 
         // At `private` the door opens on the quiet function too.
-        let all = SurfaceModel::build(&contract_graph(), RefDir::Uses, Doors::All);
+        let all = SurfaceModel::build(&contract_graph(), RefDir::Uses, Doors::All, &Folds::new());
         assert!(all.marks.iter().any(|m| m.name == "sweep"));
         assert_eq!(all.fns, 3);
     }
 
     #[test]
     fn a_signature_quotes_its_parameters_and_carries_its_wrapper() {
-        let model = SurfaceModel::build(&contract_graph(), RefDir::Uses, Doors::Crate);
+        let model =
+            SurfaceModel::build(&contract_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let survey = model.marks.iter().find(|m| m.name == "survey").unwrap();
         assert_eq!(survey.fields.len(), 1);
         assert_eq!(survey.fields[0].name, "graph");
@@ -2272,7 +2611,8 @@ mod tests {
     /// climbs to the mark that draws it, so a method's call is its type's.
     #[test]
     fn a_body_reference_is_drawn_whichever_file_it_was_written_in() {
-        let model = SurfaceModel::build(&contract_graph(), RefDir::Both, Doors::Crate);
+        let model =
+            SurfaceModel::build(&contract_graph(), RefDir::Both, Doors::Crate, &Folds::new());
         let tie = |def: u32, user: u32| {
             model
                 .ties
@@ -2298,7 +2638,8 @@ mod tests {
     /// guess at it.
     #[test]
     fn the_uses_family_counts_what_it_cannot_draw() {
-        let model = SurfaceModel::build(&contract_graph(), RefDir::Both, Doors::Crate);
+        let model =
+            SurfaceModel::build(&contract_graph(), RefDir::Both, Doors::Crate, &Folds::new());
         let of = |name: &str| {
             model
                 .marks
@@ -2317,7 +2658,7 @@ mod tests {
 
         // Open the door and the same two references are drawn instead of
         // counted: the residue is a fold, not a fact about the code.
-        let all = SurfaceModel::build(&contract_graph(), RefDir::Both, Doors::All);
+        let all = SurfaceModel::build(&contract_graph(), RefDir::Both, Doors::All, &Folds::new());
         assert!(
             all.marks
                 .iter()
@@ -2328,7 +2669,8 @@ mod tests {
 
     #[test]
     fn a_function_seats_nothing_and_sits_under_nothing() {
-        let model = SurfaceModel::build(&contract_graph(), RefDir::Uses, Doors::Crate);
+        let model =
+            SurfaceModel::build(&contract_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let api = frame_named(&model, "api");
         let mut seats = Vec::new();
         walk(&api.forest, 0, &mut seats);
@@ -2353,7 +2695,7 @@ mod tests {
         g.holds.push(holds(1, 7, &["id"]));
         g.holds.push(sig(2, 7, HoldKind::Owns, "", &[("id", "Id")]));
         g.holds.push(holds(5, 7, &["CACHE"]));
-        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate, &Folds::new());
         let api = frame_named(&model, "api");
         assert_eq!(
             roots(api),
@@ -2395,7 +2737,7 @@ mod tests {
             unresolved: 0,
             notes: Vec::new(),
         };
-        let model = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate, &Folds::new());
         let api = frame_named(&model, "api");
         // The two quietest functions fold to the counted row; the static
         // stands, because it is the one mark with nowhere else to be counted.
@@ -2435,7 +2777,7 @@ mod tests {
             from_method: false,
             event: Some(HoldEvent::Removed),
         });
-        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate, &Folds::new());
 
         let ghost = model.marks.iter().find(|m| m.name == "sweep_all").unwrap();
         assert!(ghost.ghost && ghost.is_fn());
@@ -2563,13 +2905,13 @@ mod tests {
         // At `pub(crate)`: everything but the private helper. A trait impl's
         // method is published whatever it declares — it is callable wherever
         // the trait is — so it stands beside the `pub` ones.
-        let open = SurfaceModel::build(&api_graph(), RefDir::Uses, Doors::Crate);
+        let open = SurfaceModel::build(&api_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         assert_eq!(band(&open, "Wire"), vec!["build", "read", "inner"]);
         // At `pub`: only what leaves the crate, the trait's answer included.
-        let shut = SurfaceModel::build(&api_graph(), RefDir::Uses, Doors::Pub);
+        let shut = SurfaceModel::build(&api_graph(), RefDir::Uses, Doors::Pub, &Folds::new());
         assert_eq!(band(&shut, "Wire"), vec!["build", "read"]);
         // At `private`: the whole band, in the survey's order.
-        let all = SurfaceModel::build(&api_graph(), RefDir::Uses, Doors::All);
+        let all = SurfaceModel::build(&api_graph(), RefDir::Uses, Doors::All, &Folds::new());
         assert_eq!(band(&all, "Wire"), vec!["build", "hidden", "read", "inner"]);
         // A method is never a mark of its own, at any door.
         assert!(!all.marks.iter().any(|m| m.name == "build"));
@@ -2590,7 +2932,7 @@ mod tests {
     /// when all Wire does is hand one back.
     #[test]
     fn a_method_edge_is_the_types_api_and_not_a_field_of_it() {
-        let model = SurfaceModel::build(&api_graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&api_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let edge = model
             .holds
             .iter()
@@ -2612,7 +2954,7 @@ mod tests {
 
     #[test]
     fn a_call_to_a_method_lands_on_the_row_it_names() {
-        let model = SurfaceModel::build(&api_graph(), RefDir::Both, Doors::Crate);
+        let model = SurfaceModel::build(&api_graph(), RefDir::Both, Doors::Crate, &Folds::new());
         let tie = model
             .ties
             .iter()
@@ -2627,7 +2969,7 @@ mod tests {
         // filing it under a row nobody can see would point at nothing.
         let mut g = api_graph();
         g.local_refs[0].to = 4; // `hidden`
-        let folded = SurfaceModel::build(&g, RefDir::Both, Doors::Crate);
+        let folded = SurfaceModel::build(&g, RefDir::Both, Doors::Crate, &Folds::new());
         let tie = folded
             .ties
             .iter()
@@ -2645,7 +2987,7 @@ mod tests {
         g.items[0].delta = Delta::Changed;
         g.items[0].methods_added = vec![3];
         g.items[0].methods_removed = vec![(2, "drain".into(), "pub fn drain(self)".into())];
-        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate, &Folds::new());
         let wire = model.marks.iter().find(|m| m.name == "Wire").unwrap();
         assert_eq!(wire.letter(), Some("M"));
         // The door folded `hidden` out from under the recorded index, and the
@@ -2692,7 +3034,7 @@ mod tests {
             from_method: true,
             event: Some(HoldEvent::Removed),
         });
-        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate, &Folds::new());
         let ghost = model.marks.iter().find(|m| m.name == "Coil").unwrap();
         assert!(ghost.ghost);
         // A ghost's band is the base's whole band: no door can fold what is
@@ -2794,7 +3136,7 @@ mod tests {
 
     #[test]
     fn a_trait_is_a_mark_the_door_admits_and_a_band_of_clauses() {
-        let model = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         assert_eq!(model.facts(0).traits, 1);
         let reads = model.marks.iter().find(|m| m.name == "Reads").unwrap();
         // Nearly all band: a trait is its clauses, methods and associated
@@ -2815,13 +3157,13 @@ mod tests {
         let api = frame_named(&model, "api");
         assert_eq!(api.private, 1);
         // At `private` the quiet one is drawn beside it.
-        let all = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::All);
+        let all = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::All, &Folds::new());
         assert_eq!(all.facts(0).traits, 2);
     }
 
     #[test]
     fn a_trait_rows_edge_is_the_traits_and_files_under_the_row() {
-        let model = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let edge = model
             .holds
             .iter()
@@ -2835,7 +3177,7 @@ mod tests {
 
     #[test]
     fn implementing_runs_from_the_contract_to_the_type_that_promised_it() {
-        let model = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let edge = |trait_: Anchor, ty: Anchor| {
             model
                 .holds
@@ -2865,7 +3207,7 @@ mod tests {
 
     #[test]
     fn a_dyn_row_lands_on_the_trait_it_names() {
-        let model = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let dyn_edge = |held: Anchor| {
             model
                 .holds
@@ -2885,7 +3227,7 @@ mod tests {
             Some(Anchor::Mark(0))
         );
         // At `private` the same edge lands on the trait's own block.
-        let all = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::All);
+        let all = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::All, &Folds::new());
         assert!(
             all.holds
                 .iter()
@@ -2927,7 +3269,7 @@ mod tests {
             from_method: true,
             event: Some(HoldEvent::Removed),
         });
-        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate, &Folds::new());
         let ghost = model.marks.iter().find(|m| m.name == "Winds").unwrap();
         assert!(ghost.ghost && ghost.kind == ItemKind::Trait);
         assert_eq!(ghost.letter(), Some("D"));
@@ -2996,7 +3338,8 @@ mod tests {
 
     #[test]
     fn a_const_and_an_alias_are_contracts_one_line_long() {
-        let model = SurfaceModel::build(&one_line_graph(), RefDir::Uses, Doors::Crate);
+        let model =
+            SurfaceModel::build(&one_line_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let facts = model.facts(0);
         assert_eq!((facts.consts, facts.aliases), (1, 1));
         let cap = model.marks.iter().find(|m| m.name == "CAP").unwrap();
@@ -3014,13 +3357,14 @@ mod tests {
         // Neither is a root by declaration — only a static is.
         assert_eq!(model.roots, 0);
 
-        let all = SurfaceModel::build(&one_line_graph(), RefDir::Uses, Doors::All);
+        let all = SurfaceModel::build(&one_line_graph(), RefDir::Uses, Doors::All, &Folds::new());
         assert_eq!(all.facts(0).consts, 2);
     }
 
     #[test]
     fn an_alias_points_at_what_it_stands_in_front_of() {
-        let model = SurfaceModel::build(&one_line_graph(), RefDir::Uses, Doors::Crate);
+        let model =
+            SurfaceModel::build(&one_line_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let edge = model
             .holds
             .iter()
@@ -3034,7 +3378,7 @@ mod tests {
         // only thing the line has to say.
         let mut g = one_line_graph();
         g.holds[1].via = "Arc".to_string();
-        let shared = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
+        let shared = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate, &Folds::new());
         assert!(
             shared
                 .holds
@@ -3045,7 +3389,8 @@ mod tests {
 
     #[test]
     fn a_one_line_contract_seats_beside_what_it_names() {
-        let model = SurfaceModel::build(&one_line_graph(), RefDir::Uses, Doors::Crate);
+        let model =
+            SurfaceModel::build(&one_line_graph(), RefDir::Uses, Doors::Crate, &Folds::new());
         let api = frame_named(&model, "api");
         // `Wire` first, then the two contracts about it, then the fold row.
         assert_eq!(
