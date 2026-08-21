@@ -1161,6 +1161,52 @@ details.fold:not([open]) > summary::after {
 .atlas .data-node.is-near:hover {
   opacity: 1;
 }
+/* ---- The data altitude's nesting. ----------------------------------------
+   Secondary data is drawn inside the block of the type that owns it hardest:
+   a hairline rule closes the rows, and the owned blocks sit on the clear
+   paper under it. The offsets are computed with the block — the same numbers
+   the layout measured — so the box a wire lands on is the box on screen. */
+.atlas .dm-kids {
+  position: relative;
+  margin-top: 4px;
+  border-top: 1px solid var(--color-ink-line);
+}
+.atlas .dm-kid {
+  position: absolute;
+}
+/* A reading's pressure acts on a block's own paint — its frame and its two
+   text layers — never on its box, because a receded holder can have a lit
+   block nested inside it and opacity on the box would take the kid down with
+   it. Hover gives a block back its full ink, as everywhere. */
+.atlas .dm-own {
+  transition: opacity 400ms ease-out;
+}
+.atlas .data-mark.is-dim-own {
+  border-color: color-mix(in srgb, var(--color-ink-line) 45%, var(--color-paper));
+}
+.atlas .data-mark.is-dim-own > .dm-own {
+  opacity: 0.35;
+}
+.atlas .data-mark.is-near-own > .dm-own {
+  opacity: 0.62;
+}
+.atlas .data-mark.is-dim-own:hover > .dm-own,
+.atlas .data-mark.is-near-own:hover > .dm-own {
+  opacity: 1;
+}
+.atlas .data-mark.is-dim-own:hover {
+  border-color: var(--color-ink);
+}
+/* The chosen block wears the app's focus ring — the block itself, not the
+   node, because the selection can be a block nested three layers deep. */
+.atlas .data-mark.is-picked {
+  border-color: var(--color-ink);
+  outline: 1.5px solid var(--color-ink);
+  outline-offset: 2px;
+}
+.atlas .df-node:has(.data-mark.is-picked) {
+  z-index: 900 !important;
+}
 .atlas .data-wire.is-folded.is-near {
   display: inline;
 }

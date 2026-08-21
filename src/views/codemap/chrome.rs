@@ -62,6 +62,8 @@ pub enum Altitude {
     Code,
     /// `/surface` — the contracts the code publishes, and what leans on what.
     Surface,
+    /// `/data` — the workspace's state, tiered into roots and what they hold.
+    Data,
 }
 
 /// The altitude line: the ladder between the charts, and the only navigation
@@ -86,6 +88,7 @@ pub fn AltitudeSwitch(at: Altitude) -> Element {
             {rung("dependencies", Route::Overview {}, Altitude::Deps)}
             {rung("code", Route::CodeOverview {}, Altitude::Code)}
             {rung("surface", Route::SurfaceOverview {}, Altitude::Surface)}
+            {rung("data", Route::DataOverview {}, Altitude::Data)}
         }
     }
 }

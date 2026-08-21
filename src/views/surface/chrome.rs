@@ -87,7 +87,7 @@ pub fn SurfaceCartouche(facts: SurfaceFacts, workspace: String, diff_line: Strin
 /// cartouche because it acts on the whole plate, and it is the same reading the
 /// code map is set to — one reviewer, one question, at either altitude.
 #[component]
-fn RefToggle() -> Element {
+pub(crate) fn RefToggle() -> Element {
     let code = use_code();
     let current = *code.ref_dir.read();
     let seg = |label: &'static str, hint: &'static str, val: RefDir| {
@@ -183,14 +183,14 @@ fn hold_word(kind: HoldKind, via: &str) -> String {
 /// One row of the sheet's holds lists: a drawn type (a link that re-centers
 /// the selection on it), or a frame's counted fold row, which is words.
 #[derive(Clone, PartialEq)]
-struct HoldRow {
-    to: Option<Route>,
-    decl: String,
-    name: String,
-    letter: Option<&'static str>,
-    word: String,
+pub(crate) struct HoldRow {
+    pub(crate) to: Option<Route>,
+    pub(crate) decl: String,
+    pub(crate) name: String,
+    pub(crate) letter: Option<&'static str>,
+    pub(crate) word: String,
     /// The relation's own diff event, in its word.
-    event: Option<&'static str>,
+    pub(crate) event: Option<&'static str>,
 }
 
 /// The rows one side of the selection draws, from each hold's far end. A
@@ -304,7 +304,7 @@ fn uses_rows(model: &SurfaceModel, selected_is_fn: bool, rows: Vec<UsesRow<'_>>)
 /// One chunked list of hold rows: the first eight, then a typographic
 /// "show all n".
 #[component]
-fn HoldList(rows: Vec<HoldRow>) -> Element {
+pub(crate) fn HoldList(rows: Vec<HoldRow>) -> Element {
     let mut all = use_signal(|| false);
     let total = rows.len();
     let shown = if all() || total <= 8 { total } else { 8 };
@@ -323,7 +323,12 @@ fn HoldList(rows: Vec<HoldRow>) -> Element {
                             if let Some(letter) = row.letter {
                                 span { class: "shrink-0 font-bold text-flare", "{letter}" }
                             }
-                            span { class: "ml-auto shrink-0 text-[9px] text-ink-soft", "{row.word}" }
+                            // The name is the one thing the row exists to
+                            // state: the count-and-clause column truncates
+                            // long before the name gives up a pixel.
+                            span { class: "ml-auto min-w-0 shrink-[8] truncate text-[9px] text-ink-soft",
+                                "{row.word}"
+                            }
                             if let Some(event) = row.event {
                                 span { class: "shrink-0 text-[9px] text-flare", "{event}" }
                             }
@@ -331,7 +336,9 @@ fn HoldList(rows: Vec<HoldRow>) -> Element {
                     } else {
                         span { class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] text-ink-soft",
                             span { class: "truncate", "{row.name}" }
-                            span { class: "ml-auto shrink-0 text-[9px]", "{row.word}" }
+                            span { class: "ml-auto min-w-0 shrink-[8] truncate text-[9px]",
+                                "{row.word}"
+                            }
                             if let Some(event) = row.event {
                                 span { class: "shrink-0 text-[9px] text-flare", "{event}" }
                             }

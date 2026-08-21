@@ -12,6 +12,8 @@ use crate::views::atlas::{Chart, DrawnCap};
 use crate::views::chrome::{Legend, SearchBox, TitleBlock};
 use crate::views::codemap::CodeState;
 use crate::views::codemap::map::CodeCamera;
+use crate::views::data::DataState;
+use crate::views::data::map::DataCamera;
 use crate::views::surface::map::SurfaceCamera;
 use crate::views::survey::SurveyShell;
 
@@ -190,6 +192,8 @@ pub fn AtlasShell() -> Element {
     use_context_provider(CodeState::new);
     use_context_provider(CodeCamera::new);
     use_context_provider(SurfaceCamera::new);
+    use_context_provider(DataState::new);
+    use_context_provider(DataCamera::new);
 
     // The back/forward keys live on the shell, not the views: they must
     // survive every route change, and they never need a channel back.
@@ -212,6 +216,9 @@ pub fn AtlasShell() -> Element {
             | Route::SurfaceOverview {}
             | Route::SurfaceFocus { .. }
             | Route::SurfaceModFocus { .. }
+            | Route::DataOverview {}
+            | Route::DataFocus { .. }
+            | Route::DataModFocus { .. }
     );
     let step: Option<TrailStep> = match &route {
         Route::Overview {} => Some(None),
@@ -268,9 +275,14 @@ pub fn AtlasShell() -> Element {
                     // own chart and furniture inside. The workspace's identity
                     // and epoch ride along so every altitude stamps the same
                     // cartouche facts.
+                    // Each side of the arrow is one quoted idiom — the plate
+                    // may break the line at the arrow, never inside
+                    // `master @ 1a2b3c4` or `working copy`.
+                    let nb = |s: &str| s.replace(' ', "\u{a0}");
                     let diff_line = format!(
                         "diff {} → {}",
-                        graph.epoch.base, graph.epoch.target
+                        nb(&graph.epoch.base),
+                        nb(&graph.epoch.target)
                     );
                     rsx! {
                         SurveyShell { workspace: graph.name.clone(), diff_line }

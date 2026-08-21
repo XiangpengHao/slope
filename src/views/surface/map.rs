@@ -782,7 +782,7 @@ fn build_chart(model: &SurfaceModel) -> Built {
 /// numbers, punctuation. The one run that names the row's held workspace type
 /// is bold on top of its class, so `Vec<FileDetail>` still reads as the
 /// wrapper it is around the type it reaches.
-fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool)> {
+pub(crate) fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool)> {
     const KEYWORDS: [&str; 8] = ["dyn", "mut", "impl", "fn", "pub", "crate", "const", "as"];
     let ident = |c: char| c.is_alphanumeric() || c == '_';
     let mut out: Vec<(&'static str, String, bool)> = Vec::new();
