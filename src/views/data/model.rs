@@ -224,6 +224,10 @@ pub struct DataFacts {
     pub nested: usize,
     pub standing: usize,
     pub ties: usize,
+    /// How many of them rest on the paper under the current reading; the
+    /// rest ink in on hover and selection. The cartouche states both, so a
+    /// count never claims ink the resting chart is not showing.
+    pub ties_rest: usize,
     pub added: usize,
     pub removed: usize,
     pub changed: usize,
@@ -247,6 +251,7 @@ pub struct DataModel {
     pub naming: Vec<Naming>,
     pub multi_crate: bool,
     // ---- Facts for the cartouche. ----
+    pub ties_rest: usize,
     pub structs: usize,
     pub enums: usize,
     pub unions: usize,
@@ -272,6 +277,7 @@ impl DataModel {
             nested: self.nested,
             standing: self.standing,
             ties: self.ties.len(),
+            ties_rest: self.ties_rest,
             added: self.added,
             removed: self.removed,
             changed: self.changed,
@@ -1029,6 +1035,7 @@ impl DataModel {
             mark.used_by = unseen_in.get(&mark.id).copied().unwrap_or(0);
             mark.unseen_uses = unseen_out.get(&mark.id).copied().unwrap_or(0);
         }
+        let ties_rest = ties.iter().filter(|t| t.rest).count();
 
         // ---- Facts. -----------------------------------------------------------
         let current = |m: &&DataMark| !m.ghost;
@@ -1083,6 +1090,7 @@ impl DataModel {
             ties,
             naming,
             multi_crate,
+            ties_rest,
             structs,
             enums,
             unions,

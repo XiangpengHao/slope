@@ -24,7 +24,7 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::CodeGraph;
-use crate::views::data::chrome::{DataCartouche, DataLegend, DataSheet};
+use crate::views::data::chrome::{DataCartouche, DataLegend, DataSearch, DataSheet};
 use crate::views::data::map::DataChart;
 use crate::views::codemap::use_code;
 use crate::views::data::model::DataModel;
@@ -136,7 +136,7 @@ pub fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Elem
     }));
 
     rsx! {
-        DataChart { graph, sel }
+        DataChart { graph: graph.clone(), sel }
         Outlet::<Route> {}
         div { class: "pointer-events-none absolute bottom-3 left-3 top-3 z-10 hidden w-64 flex-col gap-2 sm:flex",
             DataCartouche {
@@ -149,9 +149,15 @@ pub fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Elem
         // Narrow viewports are a serviceable fallback, not a composition.
         div { class: "pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-col gap-2 sm:hidden",
             DataCartouche { facts: facts(), workspace, diff_line }
+            DataSearch { graph: graph.clone() }
         }
         div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
             DataLegend { facts: facts(), start_open: false }
+        }
+        // Search top-right, the choreography every altitude keeps. Wide, so
+        // a hit's `src/analyze/manifest.rs:67` never squeezes the name.
+        div { class: "pointer-events-none absolute right-3 top-3 z-10 hidden w-72 flex-col gap-2 sm:flex",
+            DataSearch { graph }
         }
     }
 }

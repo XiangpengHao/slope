@@ -4,8 +4,8 @@
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, Delta, HoldEvent, HoldKind};
-use crate::views::codemap::chrome::{Altitude, AltitudeSwitch, decl_words, plural};
+use crate::api::{CodeGraph, Delta, HoldEvent, HoldKind, ItemMark};
+use crate::views::codemap::chrome::{Altitude, AltitudeSwitch, decl_words, kind_words, plural};
 use crate::views::codemap::{item_route, use_code};
 use crate::views::data::model::{DataFacts, DataMark, DataModel, Stand, Tier};
 use crate::views::data::{mark_route, mod_route, use_data};
@@ -64,11 +64,17 @@ pub fn DataCartouche(facts: DataFacts, workspace: String, diff_line: String) -> 
                     "{workspace}"
                 }
                 p { class: "mt-1 font-data text-[10.5px] text-ink-soft", "{kinds}" }
-                p { class: "mt-0.5 font-data text-[10.5px] text-ink-soft",
+                p {
+                    class: "mt-0.5 font-data text-[10.5px] text-ink-soft",
+                    title: "roots: statics, and types no other type holds — the ink left edge. nested: drawn inside the block of their heaviest owner. standing: held, but drawn beside their holders — shared handles, cross-module owners, rings, and widely held vocabulary.",
                     "{plural(facts.roots, \"root\")} · {facts.nested} nested · {facts.standing} standing"
                 }
                 p { class: "mt-0.5 font-data text-[10.5px] text-ink-soft",
-                    "{plural(facts.ties, \"body dependence\")} drawn"
+                    if facts.ties_rest < facts.ties {
+                        "{plural(facts.ties, \"body dependence\")} · {facts.ties_rest} at rest"
+                    } else {
+                        "{plural(facts.ties, \"body dependence\")} drawn"
+                    }
                 }
                 div { class: "mt-2 space-y-1 border-t border-ink-line pt-2 font-data text-[10.5px] leading-relaxed text-ink",
                     AltitudeSwitch { at: Altitude::Data }
@@ -165,9 +171,12 @@ fn uses_rows(model: &DataModel, rows: Vec<UsesRow<'_>>) -> Vec<HoldRow> {
             };
             let far = by_id.get(id)?;
             let mut word = plural(count as usize, "reference");
-            // One clause at most: the sheet's row has a name to keep legible,
-            // and the selection can always be re-centered for the rest.
-            if let Some((row, _)) = clauses.first() {
+            // One clause at most, and only when the whole row fits: the name
+            // is the one thing the row exists to state, so the clause drops
+            // before the name would clip.
+            if let Some((row, _)) = clauses.first()
+                && far.name.chars().count() + row.chars().count() <= 13
+            {
                 word = format!("{word} · {row}");
             }
             Some(HoldRow {
@@ -584,6 +593,122 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
     }
 }
 
+/// Find a datum by name. Marks only — this altitude's places are types and
+/// statics — ranked the way the code search ranks: a prefix match is what the
+/// reviewer meant, then whatever more of the workspace leans on.
+#[component]
+pub fn DataSearch(graph: CodeGraph) -> Element {
+    let mut query = use_signal(String::new);
+    let mut active = use_signal(|| 0usize);
+    let nav = use_navigator();
+
+    // How one hit ranks: a prefix match is what the reviewer meant, then
+    // whatever more of the workspace leans on, then the name itself.
+    type Rank = (bool, std::cmp::Reverse<u32>, String);
+    let results = use_memo(move || {
+        let q = query().trim().to_lowercase();
+        if q.is_empty() {
+            return Vec::new();
+        }
+        let datum = |kind: crate::api::ItemKind| {
+            matches!(
+                kind,
+                crate::api::ItemKind::Struct
+                    | crate::api::ItemKind::Enum
+                    | crate::api::ItemKind::Union
+                    | crate::api::ItemKind::Static
+            )
+        };
+        let mut hits: Vec<(Rank, (ItemMark, String))> = graph
+            .items
+            .iter()
+            .filter(|m| m.parent.is_none() && datum(m.kind))
+            .filter(|m| m.name.to_lowercase().contains(&q))
+            .filter_map(|m| {
+                let path = graph.files.get(m.file as usize)?.path.clone();
+                Some((
+                    (
+                        !m.name.to_lowercase().starts_with(&q),
+                        std::cmp::Reverse(m.fan_in),
+                        m.name.clone(),
+                    ),
+                    (m.clone(), path),
+                ))
+            })
+            .collect();
+        hits.sort_by(|a, b| a.0.cmp(&b.0));
+        hits.truncate(10);
+        hits.into_iter().map(|(_, hit)| hit).collect::<Vec<_>>()
+    });
+
+    rsx! {
+        div { class: "pointer-events-auto relative w-full",
+            input {
+                id: "data-search",
+                class: "plate w-full px-3 py-1.5 font-data text-[11px] text-ink placeholder:text-ink-soft focus:outline-none",
+                r#type: "search",
+                placeholder: "find a struct, enum or static…   /",
+                autocomplete: "off",
+                spellcheck: "false",
+                "aria-label": "Find a struct, enum, union or static",
+                value: "{query}",
+                oninput: move |e| {
+                    query.set(e.value());
+                    active.set(0);
+                },
+                onkeydown: move |e| {
+                    let n = results().len();
+                    match e.key() {
+                        Key::ArrowDown if n > 0 => {
+                            e.prevent_default();
+                            active.set((active() + 1) % n);
+                        }
+                        Key::ArrowUp if n > 0 => {
+                            e.prevent_default();
+                            active.set((active() + n - 1) % n);
+                        }
+                        Key::Enter => {
+                            if let Some((m, path)) = results().get(active().min(n.saturating_sub(1)))
+                            {
+                                nav.push(mark_route(path, &m.label));
+                                query.set(String::new());
+                            }
+                        }
+                        Key::Escape => query.set(String::new()),
+                        _ => {}
+                    }
+                },
+            }
+            if !query().trim().is_empty() {
+                if results().is_empty() {
+                    div { class: "plate absolute left-0 right-0 top-full z-20 mt-1 px-3 py-2",
+                        p { class: "font-data text-[10px] text-ink-soft", "no matches" }
+                    }
+                } else {
+                    ul { class: "plate absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-auto py-1",
+                        for (i , (m , path)) in results().into_iter().enumerate() {
+                            li { key: "{path}|{m.label}",
+                                Link {
+                                    to: mark_route(&path, &m.label),
+                                    class: if i == active() { "flex w-full items-baseline gap-1.5 px-2.5 py-1 bg-ink/5" } else { "flex w-full items-baseline gap-1.5 px-2.5 py-1 hover:bg-ink/5" },
+                                    onclick: move |_| query.set(String::new()),
+                                    span { class: "shrink-0 font-data text-[9.5px] text-ink-soft",
+                                        "{kind_words(m.kind)}"
+                                    }
+                                    span { class: "truncate font-data text-[11px] text-ink", "{m.name}" }
+                                    span { class: "ml-auto shrink-0 truncate font-data text-[9px] text-ink-soft",
+                                        "{path}:{m.line}"
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// One drawn edge sample for the legend, off the chart's own classes.
 #[component]
 fn WireSample(
@@ -731,7 +856,7 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                         span {
                             span { class: "text-ink", "uses" }
                             span { class: "text-ink-soft",
-                                " — dashed: one type's impls lean on another, summed and counted. each block rests its heaviest few; the rest ink in on hover and stay while either end is selected."
+                                " — dashed: one type's impls lean on another, summed and counted. each block rests its heaviest two; the rest ink in on hover and stay while either end is selected."
                             }
                         }
                     }
@@ -771,13 +896,33 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                         ", a dropped one is struck where it stood. an added or removed holding takes flare with its word on the line. while the diff has anything to say, untouched blocks rest lighter; hover restores."
                     }
                 }
+                div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
+                    p { class: "text-ink-soft",
+                        "below reading zoom the chart holds its far edition: each block draws its name and kind alone, roots keep their edge at constant width, and module names engrave across their frames. descend — or select — and the rows return."
+                    }
+                    p { class: "text-ink-soft",
+                        "a selected boundary bundles its crossing lines: one line per far module with its count on it. hover a block inside for that block's own lines."
+                    }
+                    p { class: "text-ink-soft",
+                        span { class: "text-ink", "f" }
+                        " refits · "
+                        span { class: "text-ink", "esc" }
+                        " deselects · "
+                        span { class: "text-ink", "/" }
+                        " finds a datum · "
+                        span { class: "text-ink", "←" }
+                        " "
+                        span { class: "text-ink", "→" }
+                        " retrace the trail. selecting a mark the glass cannot show glides the camera to it; nothing else ever moves it."
+                    }
+                }
                 div { class: "space-y-1 border-t border-ink-line pt-2.5 text-ink-soft",
                     p {
-                        "what has no block here is counted, never cut: "
-                        span { class: "text-ink", "named by n signatures" }
-                        " is every free fn, const, alias and method row whose declared surface names the type, and "
-                        span { class: "text-ink", "used by n bodies" }
-                        " is every reference from code with no mark of its own. the sheet lists both."
+                        "what has no block here is counted, never cut: a block's hover words say "
+                        span { class: "text-ink", "named by n signatures · used by n bodies" }
+                        " — every free fn, const, alias and method row whose declared surface names the type, and every reference from code with no mark of its own — and the sheet lists both as rows. the one count on a block's foot is "
+                        span { class: "text-ink", "held by n types" }
+                        ", the fan-in the chart folded."
                     }
                     p {
                         "a "

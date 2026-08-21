@@ -485,12 +485,27 @@ pub(super) fn walk<'db>(
 /// discriminant, with whitespace runs collapsed so a record variant broken
 /// across lines still reads as one row. Nothing is reconstructed.
 pub(super) fn variant_text(variant: &ast::Variant, name: &str) -> String {
+    // A payload written across lines can hold doc comments between its
+    // fields; they are prose about the declaration, not the declaration, and
+    // a row that inlines one reads as a corrupted quotation. Comments drop,
+    // whitespace runs collapse to one space.
     let collapse = |node: &SyntaxNode| {
-        node.text()
-            .to_string()
-            .split_whitespace()
-            .collect::<Vec<_>>()
-            .join(" ")
+        let mut out = String::new();
+        for token in node
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+        {
+            match token.kind() {
+                SyntaxKind::COMMENT => {}
+                SyntaxKind::WHITESPACE => {
+                    if !out.is_empty() && !out.ends_with(' ') {
+                        out.push(' ');
+                    }
+                }
+                _ => out.push_str(token.text()),
+            }
+        }
+        out.trim().to_string()
     };
     let payload = match variant.field_list() {
         Some(ast::FieldList::TupleFieldList(list)) => collapse(list.syntax()),

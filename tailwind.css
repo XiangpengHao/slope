@@ -1207,6 +1207,105 @@ details.fold:not([open]) > summary::after {
 .atlas .df-node:has(.data-mark.is-picked) {
   z-index: 900 !important;
 }
+/* ---- The far edition. ------------------------------------------------------
+   Zoom is the fold: below reading zoom the quoted rows are dust, so the chart
+   swaps to a projection of names, tiers and wires — each block its name and
+   kind alone, the root's edge held near constant screen width, module names
+   engraved across their own frames the way an atlas names a region. Descend
+   and the rows return; nothing is cut, only deferred to the zoom that can
+   carry it. The blocks keep their boxes, so nothing moves and every wire
+   still lands where it landed. */
+.atlas .data-chart .data-mark {
+  container-type: inline-size;
+}
+.atlas .data-chart.is-far .dm-ty,
+.atlas .data-chart.is-far .dm-row,
+.atlas .data-chart.is-far .dm-var,
+.atlas .data-chart.is-far .dm-folds,
+.atlas .data-chart.is-far .dm-kids {
+  display: none;
+}
+.atlas .data-chart.is-far .dm-head {
+  display: block;
+  height: auto;
+}
+.atlas .data-chart.is-far .dm-kw {
+  display: block;
+  font-size: 13px;
+  line-height: 1.3;
+}
+.atlas .data-chart.is-far .dm-nm {
+  display: block;
+  font-size: 30px;
+  line-height: 1.05;
+  font-weight: 700;
+  white-space: normal;
+  word-break: break-word;
+}
+.atlas .data-chart.is-far .dm-chg {
+  font-size: 24px;
+}
+@container (max-width: 230px) {
+  .atlas .data-chart.is-far .dm-nm {
+    font-size: 21px;
+  }
+}
+/* The tier must survive the shrink: the root's edge and the chosen block's
+   ring hold near-constant screen width while the chart is far. */
+.atlas .data-chart.is-far .data-mark.is-root {
+  border-left-width: 8px;
+  padding-left: 0;
+}
+.atlas .data-chart.is-far .data-mark.is-picked {
+  outline-width: 5px;
+  outline-offset: 6px;
+}
+/* Wire words are unreadable below reading zoom; the lines thicken to stay
+   lines. The inline stroke-width is per-wire data, so the far edition has to
+   outrank it. */
+.atlas .data-chart.is-far .data-wire .wire-path {
+  stroke-width: 3.5px !important;
+}
+.atlas .data-chart.is-far .wire-label {
+  display: none;
+}
+/* A boundary bundle's count is the bundle's whole point: it survives the far
+   edition, sized for it. */
+.atlas .data-chart.is-far .data-wire.is-bundle .wire-label {
+  display: inline;
+  font-size: 26px;
+}
+/* The region name: engraved over its module at half pressure with a paper
+   halo, shown only while the chart is far. Its layer rides above the blocks
+   — the skyline packs frames tight, so on the ground the name would spend
+   its ink behind the paper — but below the chosen block's lift. */
+.atlas .df-world-layer.data-names {
+  z-index: 30;
+}
+.atlas .df-world-layer.data-names svg {
+  pointer-events: none;
+}
+.atlas .data-frame-name {
+  font-family: var(--font-data);
+  font-weight: 500;
+  fill: var(--color-ink);
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 8px;
+  stroke-linejoin: round;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 400ms ease-out;
+}
+.atlas .data-chart.is-far .data-frame-name {
+  opacity: 0.55;
+}
+.atlas .data-chart.is-far .data-frame-name.is-dim {
+  opacity: 0.12;
+}
+.atlas .data-chart.is-far .data-frame-name.is-sel {
+  opacity: 0.8;
+}
 .atlas .data-wire.is-folded.is-near {
   display: inline;
 }

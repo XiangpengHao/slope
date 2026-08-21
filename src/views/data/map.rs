@@ -51,7 +51,9 @@ const ROW_H: f64 = 15.0;
 const TY_H: f64 = 14.0;
 const FOLDS_TOP: f64 = 6.0;
 const FOLD_H: f64 = 12.0;
-const LOC_H: f64 = 14.0;
+/// Small-type slack: at 8.5–9px the browser rounds each glyph up, so text
+/// measured with the font's exact 0.6em advance clips its last characters.
+const META_SLACK: f64 = 1.08;
 const MARK_MIN_W: f64 = 152.0;
 /// A row's clip width. A block holding kids may grow wider than this — the
 /// kids set the box then — but no quoted row ever does.
@@ -113,9 +115,10 @@ pub(crate) struct DataView {
     /// From the block's top edge to where the kids band begins: the header
     /// and every quoted row above the rule.
     core_h: f64,
-    /// The counted lines at the foot — only ink the chart will not draw:
-    /// folded fan-in, signature naming, body use.
+    /// The counted line at the foot: a vocabulary mark's folded fan-in.
     folds: Vec<String>,
+    /// The undrawn-ink counts, said in the block's hover words.
+    counts: String,
     locator: String,
     path: String,
     label: String,
@@ -180,6 +183,12 @@ struct WireView {
     rest: bool,
     class: &'static str,
     event: &'static str,
+    /// How much the wire carries: a tie's reference count, a hold's rows.
+    /// What a boundary bundle sums.
+    weight: u32,
+    /// One line standing for a module reading's crossing family: full ink by
+    /// construction, and outside the hover/kin machinery.
+    bundle: bool,
 }
 
 /// Everything one build of the chart draws.
@@ -195,6 +204,11 @@ struct Built {
     /// Which frame every drawn anchor sits in — nested marks included, so a
     /// module reading keeps the state drawn inside its blocks.
     homes: HashMap<Anchor, u32>,
+    /// Every drawn anchor's box, nested marks included — what the camera
+    /// glides to when a selection is off the glass or below reading zoom.
+    rects: HashMap<Anchor, Placed>,
+    /// The URL's (path, item) key for every drawn mark.
+    locate: HashMap<(String, String), Anchor>,
     frame: Option<Rect>,
     dirty: bool,
 }
@@ -291,6 +305,12 @@ impl KinD {
         }
     }
 
+    /// The module reading, when this is one: the chosen frame and everything
+    /// seated inside its boundary.
+    fn mod_home(&self) -> Option<(u32, &std::collections::HashSet<Anchor>)> {
+        self.home.as_ref().map(|h| (h.frame, &h.inside))
+    }
+
     fn frame_class(&self, id: u32) -> &'static str {
         match &self.home {
             Some(home) if home.frame == id => "is-sel",
@@ -340,32 +360,45 @@ impl KinD {
     }
 }
 
-/// The counted words a block writes at its foot — only ink the chart will not
-/// draw: a vocabulary mark's folded fan-in, the signatures that name it, the
-/// bodies that use it. Nothing the block quotes or nests is ever counted.
+/// The counted words a block writes at its foot: only the genuine fold — a
+/// vocabulary mark's fan-in, whose lines rest folded. The naming and body-use
+/// counts moved off the resting paper (2026-08-21, critique): stamped on
+/// every block they were texture, not signal — 40 blocks saying `named by 1
+/// signature` — and they were never elided ink, only the sheet's facts said
+/// early. They live in the block's hover words and on the sheet.
 fn fold_words(mark: &DataMark) -> Vec<String> {
     let mut folds = Vec::new();
     if mark.held_by > 0 {
         folds.push(format!("held by {}", plural(mark.held_by as usize, "type")));
     }
+    folds
+}
+
+/// The undrawn-ink counts, for the block's hover words.
+fn count_words(mark: &DataMark) -> String {
+    let mut parts = Vec::new();
     if mark.named_by > 0 {
-        folds.push(format!(
+        parts.push(format!(
             "named by {}",
             plural(mark.named_by as usize, "signature")
         ));
     }
     if mark.used_by > 0 {
-        folds.push(match mark.used_by {
+        parts.push(match mark.used_by {
             1 => "used by 1 body".to_string(),
             n => format!("used by {n} bodies"),
         });
     }
-    folds
+    match parts.is_empty() {
+        true => String::new(),
+        false => format!(" · {}", parts.join(" · ")),
+    }
 }
 
-/// Shelve measured kids into rows aiming at a landscape band: offsets from
+/// Seat measured kids on a skyline aiming at a landscape band: offsets from
 /// the shelf origin, and the shelf's own size. Deterministic — the kids
-/// arrive in the survey's order and stay in it.
+/// arrive in the survey's order and are seated in it; a short block fills
+/// the slack beside a tall one instead of opening a new row under it.
 fn shelve_kids(kids: &[DataView]) -> (Vec<(f64, f64)>, f64, f64) {
     let widest = kids.iter().map(|k| k.size.0).fold(0.0, f64::max);
     let area: f64 = kids
@@ -373,20 +406,14 @@ fn shelve_kids(kids: &[DataView]) -> (Vec<(f64, f64)>, f64, f64) {
         .map(|k| (k.size.0 + KID_GAP) * (k.size.1 + KID_GAP))
         .sum();
     let target = widest.max((area * KID_LANDSCAPE).sqrt());
-    let mut at: Vec<(f64, f64)> = Vec::with_capacity(kids.len());
-    let (mut x, mut y, mut row_h, mut w) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
-    for kid in kids {
-        if x > 0.0 && x + kid.size.0 > target {
-            x = 0.0;
-            y += row_h + KID_GAP;
-            row_h = 0.0;
-        }
-        at.push((x, y));
-        row_h = row_h.max(kid.size.1);
+    let boxes: Vec<(f64, f64)> = kids.iter().map(|k| k.size).collect();
+    let at = layout::skyline(&boxes, target, KID_GAP);
+    let (mut w, mut h) = (0.0f64, 0.0f64);
+    for (kid, &(x, y)) in kids.iter().zip(&at) {
         w = w.max(x + kid.size.0);
-        x += kid.size.0 + KID_GAP;
+        h = h.max(y + kid.size.1);
     }
-    (at, w, y + row_h)
+    (at, w, h)
 }
 
 /// Measure one block around its already-measured kids. The width is the
@@ -401,7 +428,6 @@ fn measure(mark: &DataMark, kids: Vec<DataView>) -> DataView {
     let folds = fold_words(mark);
 
     let mut widest = text_w(&head, 10.5) + if letter.is_some() { 12.0 } else { 0.0 };
-    widest = widest.max(text_w(&locator, 8.5));
     let wrapping = MARK_MAX_W - PAD_X;
     let marker_w = |row: &FieldRow| {
         if row.state == RowState::Same {
@@ -419,7 +445,9 @@ fn measure(mark: &DataMark, kids: Vec<DataView>) -> DataView {
         widest = widest.max((text_w(&row.decl, 10.0) + marker_w(row)).min(wrapping));
     }
     for fold in &folds {
-        widest = widest.max(text_w(fold, 9.0));
+        // Browsers round each glyph up at this size; measured with the
+        // font's exact advance the last characters clip. Carry slack.
+        widest = widest.max(text_w(fold, 9.0) * META_SLACK);
     }
     if !mark.ty.is_empty() {
         widest = widest.max(text_w(&mark.ty, 9.5).min(wrapping));
@@ -454,7 +482,7 @@ fn measure(mark: &DataMark, kids: Vec<DataView>) -> DataView {
     } else {
         FOLDS_TOP + folds.len() as f64 * FOLD_H
     };
-    let h = core_h + kids_band + fold_block + LOC_H + PAD_BOTTOM;
+    let h = core_h + kids_band + fold_block + PAD_BOTTOM;
 
     DataView {
         id: mark.id,
@@ -474,6 +502,7 @@ fn measure(mark: &DataMark, kids: Vec<DataView>) -> DataView {
         kids_h,
         core_h,
         folds,
+        counts: count_words(mark),
         locator,
         path: mark.path.clone(),
         label: mark.label.clone(),
@@ -536,6 +565,16 @@ fn frames_of(view: &DataView, frame: u32, out: &mut HashMap<Anchor, u32>) {
     }
 }
 
+fn keys_of(view: &DataView, out: &mut HashMap<(String, String), Anchor>) {
+    out.insert(
+        (view.path.clone(), view.label.clone()),
+        Anchor::Mark(view.id),
+    );
+    for kid in &view.kids {
+        keys_of(kid, out);
+    }
+}
+
 fn build_chart(model: &DataModel) -> Built {
     let by_id: HashMap<u32, &DataMark> = model.marks.iter().map(|m| (m.id, m)).collect();
     // Post-order: a block is measured around its kids, so the kids go first.
@@ -593,11 +632,13 @@ fn build_chart(model: &DataModel) -> Built {
     // parents — and every anchor's frame, for the module reading.
     let mut rects: HashMap<Anchor, Placed> = HashMap::new();
     let mut homes: HashMap<Anchor, u32> = HashMap::new();
+    let mut locate: HashMap<(String, String), Anchor> = HashMap::new();
     for (id, view) in &views {
         let Some(at) = placed.marks.get(id) else {
             continue;
         };
         abs_rects(view, at.x, at.y, &mut rects);
+        keys_of(view, &mut locate);
         if let Some(mark) = by_id.get(id) {
             frames_of(view, mark.frame, &mut homes);
         }
@@ -700,6 +741,8 @@ fn build_chart(model: &DataModel) -> Built {
                     Some(HoldEvent::Removed) => "is-removed",
                     None => "",
                 },
+                weight: hold.fields,
+                bundle: false,
             })
         })
         .collect();
@@ -724,6 +767,8 @@ fn build_chart(model: &DataModel) -> Built {
                 rest: tie.rest,
                 class: "is-ref",
                 event: "",
+                weight: tie.count,
+                bundle: false,
             })
         })
         .collect();
@@ -741,6 +786,8 @@ fn build_chart(model: &DataModel) -> Built {
         ties,
         pairs: model.pairs.clone(),
         homes,
+        rects,
+        locate,
         frame,
         dirty: model.marks.iter().any(|m| m.letter().is_some()),
     }
@@ -777,7 +824,12 @@ fn DataPlate(
             view.decl, view.name
         )
     } else {
-        format!("{} {} — {} · select it", view.decl, view.name, view.locator)
+        // The locator and the undrawn-ink counts live here and on the sheet;
+        // stamped on every resting block they were the chart's loudest text.
+        format!(
+            "{} {} — {}{} · select it",
+            view.decl, view.name, view.locator, view.counts
+        )
     };
     let push = to.clone();
     let pressed = to.clone();
@@ -897,15 +949,12 @@ fn DataPlate(
                     }
                 }
             }
-            div { class: "dm-own",
-                if !view.folds.is_empty() {
-                    div { class: "dm-folds",
-                        for (i , fold) in view.folds.iter().enumerate() {
-                            p { key: "{i}", class: "dm-fold", "{fold}" }
-                        }
+            if !view.folds.is_empty() {
+                div { class: "dm-own dm-folds",
+                    for (i , fold) in view.folds.iter().enumerate() {
+                        p { key: "{i}", class: "dm-fold", "{fold}" }
                     }
                 }
-                p { class: "dm-loc", "{view.locator}" }
             }
         }
     }
@@ -1088,6 +1137,54 @@ fn FrameLayer(frames: Vec<FrameView>, kin: Option<KinD>) -> Element {
     }
 }
 
+/// The far edition's region names: at reading zoom the border chip is the
+/// label, but below it a 12px chip is dust — so each module's name engraves
+/// across its own territory the way an atlas names a region, sized to the
+/// frame, haloed in paper, at half pressure, and shown only while the chart
+/// is far. Its own layer, over the blocks: the skyline packs frames tight,
+/// so drawn on the ground the name would spend its ink behind the paper.
+#[component]
+fn NameLayer(frames: Vec<FrameView>, kin: Option<KinD>) -> Element {
+    // A frame holding other frames names its own top band: centered it would
+    // engrave over its children's territory and read as theirs. Under a
+    // reading the names recede with their frames — an engraved name at full
+    // pressure would say the opposite of what the receded boundary says.
+    let parents: std::collections::HashSet<u32> =
+        frames.iter().filter_map(|f| f.parent).collect();
+    let class = |id: u32| kin.as_ref().map_or("", |k| k.frame_class(id));
+    rsx! {
+        svg {
+            width: "2",
+            height: "2",
+            style: "position: absolute; left: 0; top: 0; overflow: visible;",
+            for f in frames.iter().filter(|f| f.label.is_some() && !f.folded) {
+                if parents.contains(&f.id) {
+                    text {
+                        key: "{f.id}",
+                        class: "data-frame-name",
+                        class: if !class(f.id).is_empty() { "{class(f.id)}" },
+                        x: "{f.at.x + 18.0}",
+                        y: "{f.at.y + (f.at.w * 0.06).clamp(24.0, 54.0) + 10.0}",
+                        font_size: "{(f.at.w * 0.06).clamp(24.0, 54.0)}",
+                        "{f.label.clone().unwrap_or_default()}"
+                    }
+                } else {
+                    text {
+                        key: "{f.id}",
+                        class: "data-frame-name",
+                        class: if !class(f.id).is_empty() { "{class(f.id)}" },
+                        x: "{f.at.x + f.at.w / 2.0}",
+                        y: "{f.at.y + f.at.h * 0.55}",
+                        text_anchor: "middle",
+                        font_size: "{(f.at.w * 0.13).min(f.at.h * 0.45).clamp(26.0, 110.0)}",
+                        "{f.label.clone().unwrap_or_default()}"
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// One curved hairline bowed toward open paper, arrowhead on the dependent.
 fn curve(a: Point, b: Point, side: f64) -> (String, Point) {
     let (dx, dy) = (b.x - a.x, b.y - a.y);
@@ -1126,6 +1223,11 @@ fn wire_classes(
     hot: Option<Anchor>,
     kin: Option<&KinD>,
 ) -> Vec<&'static str> {
+    // A bundle exists only inside a module reading and is that reading's own
+    // ink: the solid family at the radius pressure, the dashed a step behind.
+    if w.bundle {
+        return vec![if is_ref { "is-near" } else { "is-kin" }];
+    }
     let is_kin = kin.is_some_and(|k| !is_ref && k.wire_kin(w.a, w.b));
     let is_near = kin.is_some_and(|k| is_ref && k.tie_near(w.a, w.b));
     let worn = [
@@ -1209,6 +1311,18 @@ fn chrome_insets(narrow: bool, panel: bool) -> (f64, f64, f64, f64) {
 
 const MIN_CHART_ZOOM: f64 = 0.22;
 
+/// Below this the quoted rows are dust and the chart holds its far edition:
+/// names, tiers and wires alone. Hysteresis keeps the swap from flapping
+/// while the reader hovers around the threshold.
+const FAR_IN: f64 = 0.45;
+const FAR_OUT: f64 = 0.55;
+/// The zoom a selection is read at: when a chosen mark sits below this, or
+/// off the glass entirely, the camera glides to it (2026-08-21, user
+/// decision — a focus is the one move the camera discipline permits, and a
+/// selection the reader cannot see is not a focus).
+#[cfg(target_arch = "wasm32")]
+const READ_ZOOM: f64 = 0.5;
+
 /// The camera as the reviewer last left it, surviving route-variant
 /// remounts. Provided by the atlas shell, which outlives every remount.
 #[derive(Clone, Copy)]
@@ -1248,7 +1362,7 @@ fn frame_chart(
     );
 }
 
-/// Keyboard at the data altitude: `f` refits, Escape deselects.
+/// Keyboard at the data altitude: `f` refits, Escape deselects, `/` finds.
 const DATA_KEYS_JS: &str = r#"
 if (window.__slopeKeys) {
     document.removeEventListener('keydown', window.__slopeKeys);
@@ -1257,6 +1371,15 @@ window.__slopeKeys = (e) => {
     const t = e.target, tag = t && t.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || (t && t.isContentEditable)) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.key === '/') {
+        e.preventDefault();
+        // One search plate for the desktop and one for a narrow viewport;
+        // `/` must reach whichever is actually showing.
+        const s = [...document.querySelectorAll('#data-search')]
+            .find((el) => el.offsetParent !== null);
+        if (s) s.focus();
+        return;
+    }
     if (['f', 'Escape'].includes(e.key)) dioxus.send(e.key);
 };
 document.addEventListener('keydown', window.__slopeKeys);
@@ -1324,6 +1447,8 @@ pub fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
     let framed = use_signal(|| false);
     let hot: Signal<Option<Anchor>> = use_signal(|| None);
     let core_live: Signal<bool> = use_signal(|| false);
+    // The chart is far below FAR_IN and near again above FAR_OUT.
+    let far: Signal<bool> = use_signal(|| false);
 
     use_effect(move || {
         let b = built();
@@ -1371,9 +1496,57 @@ pub fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
             return;
         }
         let Some(core) = flow.core() else { return };
+        let vp = *core.viewport.read();
         let mut saved = camera.viewport;
-        saved.set(Some(*core.viewport.read()));
+        saved.set(Some(vp));
+        // Zoom is the fold: crossing the threshold swaps the whole chart
+        // between its near and far editions, so the swap happens once per
+        // crossing, never per frame.
+        let mut far = far;
+        let now = *far.peek();
+        if now && vp.zoom > FAR_OUT {
+            far.set(false);
+        } else if !now && vp.zoom < FAR_IN {
+            far.set(true);
+        }
     });
+
+    // The camera glides to a selection it cannot show: off the glass, or
+    // below reading zoom. A selection already legible moves nothing — the
+    // Kept-Ground rule holds everywhere the reader can actually read.
+    #[cfg(target_arch = "wasm32")]
+    use_effect(use_reactive((&sel,), move |(sel,)| {
+        if !core_live() {
+            return;
+        }
+        let Some(DataSel::Mark(path, label)) = sel else {
+            return;
+        };
+        let Some(core) = flow.core() else { return };
+        let b = built.peek();
+        let Some(&anchor) = b.locate.get(&(path, label)) else {
+            return;
+        };
+        let Some(at) = b.rects.get(&anchor).copied() else {
+            return;
+        };
+        let vp = *core.viewport.peek();
+        let Some((w, h)) = window_size() else { return };
+        let (vx, vy) = ((0.0 - vp.x) / vp.zoom, (0.0 - vp.y) / vp.zoom);
+        let (vw, vh) = (w / vp.zoom, h / vp.zoom);
+        let inside = at.x >= vx && at.y >= vy && at.x + at.w <= vx + vw && at.y + at.h <= vy + vh;
+        if inside && vp.zoom >= READ_ZOOM {
+            return;
+        }
+        let z = vp.zoom.clamp(0.85, 1.0);
+        let (t, r, btm, l) = chrome_insets(narrow_viewport(), true);
+        let free_w = (w - l - r).max(120.0);
+        let free_h = (h - t - btm).max(120.0);
+        let (cx, cy) = (l + free_w / 2.0, t + free_h / 2.0);
+        let (mx, my) = (at.x + at.w / 2.0, at.y + at.h / 2.0);
+        let duration = if prefers_reduced_motion() { 0 } else { 400 };
+        core.set_viewport(Viewport::new(cx - mx * z, cy - my * z, z), duration);
+    }));
 
     use_hook(move || {
         spawn(async move {
@@ -1397,11 +1570,81 @@ pub fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
         });
     });
 
+    // Under a module reading the crossing ink bundles: one line per far
+    // module and direction, its count on the line, in place of the dozens of
+    // near-parallel curves that were the hairball this system forbids.
+    // Everything inside the boundary keeps its own lines; hovering a block
+    // still inks that block's own wires, which is where a bundle opens.
+    let wires = use_memo(move || {
+        let b = built.read();
+        let k = kin.read();
+        let Some((chosen, inside)) = k.as_ref().and_then(|k| k.mod_home()) else {
+            return (b.holds.clone(), b.ties.clone());
+        };
+        let frame_rect = |id: u32| b.frames.iter().find(|f| f.id == id).map(|f| f.at);
+        let Some(chosen_rect) = frame_rect(chosen) else {
+            return (b.holds.clone(), b.ties.clone());
+        };
+        let bundle = |wires: &[WireView], dashed: bool| -> Vec<WireView> {
+            let mut kept: Vec<WireView> = Vec::new();
+            // (far frame, arrow lands inside) → (lines, carried weight).
+            let mut groups: HashMap<(u32, bool), (u32, u32)> = HashMap::new();
+            for w in wires {
+                let (a_in, b_in) = (inside.contains(&w.a), inside.contains(&w.b));
+                if a_in == b_in {
+                    kept.push(w.clone());
+                    continue;
+                }
+                let far = if a_in { w.b } else { w.a };
+                let Some(&frame) = b.homes.get(&far) else {
+                    kept.push(w.clone());
+                    continue;
+                };
+                let entry = groups.entry((frame, b_in)).or_default();
+                entry.0 += 1;
+                entry.1 += w.weight;
+            }
+            let mut keys: Vec<(u32, bool)> = groups.keys().copied().collect();
+            keys.sort_unstable();
+            for (frame, inbound) in keys {
+                let (lines, weight) = groups[&(frame, inbound)];
+                let Some(far_rect) = frame_rect(frame) else {
+                    continue;
+                };
+                let (from, to) = match inbound {
+                    true => tie_ends(far_rect, chosen_rect),
+                    false => tie_ends(chosen_rect, far_rect),
+                };
+                // The dashed family counts references, as its labels do
+                // everywhere; the solid family counts its lines.
+                let count = if dashed { weight } else { lines };
+                kept.push(WireView {
+                    key: format!("bundle-{}-{frame}-{inbound}", if dashed { "t" } else { "h" }),
+                    from,
+                    to,
+                    a: Anchor::Mod(frame),
+                    b: Anchor::Mod(chosen),
+                    label: Some(count.to_string()),
+                    width: if dashed { tie_width(count) } else { 1.6 },
+                    rest: true,
+                    class: if dashed { "is-ref is-bundle" } else { "is-owns is-bundle" },
+                    event: "",
+                    weight: count,
+                    bundle: true,
+                });
+            }
+            kept
+        };
+        (bundle(&b.holds, false), bundle(&b.ties, true))
+    });
+
     let edges: Signal<Vec<dioxus_flow::prelude::Edge>> = use_signal(Vec::new);
     let panel = matches!(sel, Some(DataSel::Mark(..)));
 
     rsx! {
-        div { class: "absolute inset-0",
+        div {
+            class: "data-chart absolute inset-0",
+            class: if far() { "is-far" },
             Flow {
                 nodes,
                 edges,
@@ -1441,11 +1684,14 @@ pub fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
                 }
                 WorldLayer { class: "data-wires",
                     WireLayer {
-                        holds: built.read().holds.clone(),
-                        ties: built.read().ties.clone(),
+                        holds: wires.read().0.clone(),
+                        ties: wires.read().1.clone(),
                         hot,
                         kin: kin(),
                     }
+                }
+                WorldLayer { class: "data-names",
+                    NameLayer { frames: built.read().frames.clone(), kin: kin() }
                 }
                 dioxus_flow::prelude::Controls {}
             }

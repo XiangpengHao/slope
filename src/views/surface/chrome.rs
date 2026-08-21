@@ -319,14 +319,15 @@ pub(crate) fn HoldList(rows: Vec<HoldRow>) -> Element {
                             if !row.decl.is_empty() {
                                 span { class: "shrink-0 text-ink-soft", "{row.decl}" }
                             }
-                            span { class: "truncate font-medium text-ink", "{row.name}" }
+                            // The name is the one thing the row exists to
+                            // state: it takes the row's free width, and the
+                            // count-and-clause column truncates against a
+                            // hard cap before the name gives up a pixel.
+                            span { class: "flex-1 shrink-0 font-medium text-ink", "{row.name}" }
                             if let Some(letter) = row.letter {
                                 span { class: "shrink-0 font-bold text-flare", "{letter}" }
                             }
-                            // The name is the one thing the row exists to
-                            // state: the count-and-clause column truncates
-                            // long before the name gives up a pixel.
-                            span { class: "ml-auto min-w-0 shrink-[8] truncate text-[9px] text-ink-soft",
+                            span { class: "max-w-[45%] shrink-0 truncate text-right text-[9px] text-ink-soft",
                                 "{row.word}"
                             }
                             if let Some(event) = row.event {
@@ -335,8 +336,8 @@ pub(crate) fn HoldList(rows: Vec<HoldRow>) -> Element {
                         }
                     } else {
                         span { class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] text-ink-soft",
-                            span { class: "truncate", "{row.name}" }
-                            span { class: "ml-auto min-w-0 shrink-[8] truncate text-[9px]",
+                            span { class: "min-w-0 flex-1 truncate", "{row.name}" }
+                            span { class: "max-w-[45%] shrink-0 truncate text-right text-[9px]",
                                 "{row.word}"
                             }
                             if let Some(event) = row.event {

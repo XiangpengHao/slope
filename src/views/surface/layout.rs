@@ -99,7 +99,72 @@ fn shift(packed: Packed, dx: f64, dy: f64) -> Packed {
     }
 }
 
-/// Seat a frame's children in shelves and draw the frame around them. The
+/// Ordered bottom-left packing: each box in turn seats at the lowest open
+/// spot — leftmost on a tie — that the target width allows, so a short box
+/// fills the slack beside a tall one instead of opening a new row under it.
+/// Row-shelving left half of every frame as empty paper whenever one tree
+/// towered over its neighbors, and every wasted unit lowers the fit zoom the
+/// whole chart is read at. Deterministic: the boxes arrive in reading order
+/// and are seated in it, positions and all.
+pub(crate) fn skyline(boxes: &[(f64, f64)], target: f64, gap: f64) -> Vec<(f64, f64)> {
+    const EPS: f64 = 1e-6;
+    let width = boxes.iter().map(|b| b.0).fold(target, f64::max) + gap;
+    // The line as segments of (x, w, top), always tiling [0, width].
+    let mut segs: Vec<(f64, f64, f64)> = vec![(0.0, width, 0.0)];
+    let mut out: Vec<(f64, f64)> = Vec::with_capacity(boxes.len());
+    for &(w, h) in boxes {
+        let need = w + gap;
+        // The lowest spot, then the leftmost: candidates start where a
+        // segment does, and the support is the tallest segment under the span.
+        let mut best: Option<(f64, f64)> = None;
+        for i in 0..segs.len() {
+            let x = segs[i].0;
+            if x + need > width + EPS {
+                break;
+            }
+            let mut y = 0.0f64;
+            let mut j = i;
+            while j < segs.len() && segs[j].0 < x + need - EPS {
+                y = y.max(segs[j].2);
+                j += 1;
+            }
+            if best.is_none_or(|(by, bx)| y < by - EPS || (y < by + EPS && x < bx)) {
+                best = Some((y, x));
+            }
+        }
+        let (y, x) = best.unwrap_or((segs.iter().map(|s| s.2).fold(0.0, f64::max), 0.0));
+        out.push((x, y));
+        // Raise the line over the span the box now owns.
+        let (bx, bx2, btop) = (x, x + need, y + h + gap);
+        let mut next: Vec<(f64, f64, f64)> = Vec::new();
+        for &(sx, sw, st) in &segs {
+            let sx2 = sx + sw;
+            if sx2 <= bx + EPS || sx >= bx2 - EPS {
+                next.push((sx, sw, st));
+                continue;
+            }
+            if sx < bx - EPS {
+                next.push((sx, bx - sx, st));
+            }
+            if sx2 > bx2 + EPS {
+                next.push((bx2, sx2 - bx2, st));
+            }
+        }
+        next.push((bx, bx2 - bx, btop));
+        next.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap());
+        let mut merged: Vec<(f64, f64, f64)> = Vec::new();
+        for seg in next {
+            match merged.last_mut() {
+                Some(last) if (last.2 - seg.2).abs() < EPS => last.1 = seg.0 + seg.1 - last.0,
+                _ => merged.push(seg),
+            }
+        }
+        segs = merged;
+    }
+    out
+}
+
+/// Seat a frame's children on a skyline and draw the frame around them. The
 /// forest comes first — a frame's own types before the frames nested in it —
 /// and the child frames last, so the reading order down a frame is the same
 /// everywhere on the chart.
@@ -108,14 +173,11 @@ fn shelve(kids: Vec<(Kid, f64, f64)>, label_w: f64) -> Packed {
     let area: f64 = kids.iter().map(|(_, w, h)| (w + GAP) * (h + GAP)).sum();
     let target = widest.max((area * LANDSCAPE).sqrt());
 
+    let boxes: Vec<(f64, f64)> = kids.iter().map(|&(_, w, h)| (w, h)).collect();
+    let at = skyline(&boxes, target, GAP);
     let mut out = Packed::default();
-    let (mut x, mut y, mut row_h, mut content_w) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
-    for (kid, w, h) in kids {
-        if x > 0.0 && x + w > target {
-            y += row_h + GAP;
-            x = 0.0;
-            row_h = 0.0;
-        }
+    let (mut content_w, mut content_h) = (0.0f64, 0.0f64);
+    for ((kid, w, h), (x, y)) in kids.into_iter().zip(at) {
         match kid {
             Kid::Tree(packed) => {
                 let inner = shift(packed, x, y);
@@ -130,16 +192,15 @@ fn shelve(kids: Vec<(Kid, f64, f64)>, label_w: f64) -> Packed {
                 out.frames.extend(inner.frames);
             }
         }
-        x += w + GAP;
-        content_w = content_w.max(x - GAP);
-        row_h = row_h.max(h);
+        content_w = content_w.max(x + w);
+        content_h = content_h.max(y + h);
     }
 
     // The frame around them, with room on the border for its own label.
     let w = (content_w + PAD * 2.0)
         .max(label_w + PAD * 2.0)
         .max(MIN_FRAME_W);
-    let h = y + row_h + PAD * 2.0 + LABEL_H;
+    let h = content_h + PAD * 2.0 + LABEL_H;
     let inner = shift(
         Packed {
             marks: out.marks,
