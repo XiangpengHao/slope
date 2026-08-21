@@ -1,10 +1,10 @@
 //! The code survey, fetched once for the two altitudes that read it.
 //!
-//! `/code` and `/data` are two readings of one rust-analyzer survey — the same
+//! `/code` and `/surface` are two readings of one rust-analyzer survey — the same
 //! files, the same items, the same resolved references — so the fetch, its
 //! loading moment, and its failure plate live here instead of in either
 //! altitude. This shell stays mounted across a rung change on the altitude
-//! ladder, so stepping from the code map to the data chart never asks the
+//! ladder, so stepping from the code map to the surface chart never asks the
 //! server for the survey a second time.
 
 use dioxus::prelude::*;
@@ -12,7 +12,7 @@ use dioxus::prelude::*;
 use crate::Route;
 use crate::api::{CodeGraph, code_graph};
 use crate::views::codemap::CodeShell;
-use crate::views::datamap::DataShell;
+use crate::views::surface::SurfaceShell;
 
 type CodeResource = Resource<Result<CodeGraph, ServerFnError>>;
 
@@ -25,14 +25,17 @@ pub fn use_code_graph() -> Option<CodeGraph> {
 
 /// Loads the survey, gates its loading and error states, and hands it to
 /// whichever altitude the route asks for. Mounted by the atlas shell for every
-/// `/code` and `/data` route.
+/// `/code` and `/surface` route.
 #[component]
 pub fn SurveyShell(workspace: String, diff_line: String) -> Element {
     let resource: CodeResource = use_resource(code_graph);
     use_context_provider(|| resource);
 
     let route = use_route::<Route>();
-    let data = matches!(route, Route::DataOverview {} | Route::DataType { .. });
+    let surface = matches!(
+        route,
+        Route::SurfaceOverview {} | Route::SurfaceFocus { .. }
+    );
 
     let state = resource.read();
     rsx! {
@@ -43,8 +46,8 @@ pub fn SurveyShell(workspace: String, diff_line: String) -> Element {
             Some(Err(err)) => rsx! {
                 SurveyFailed { message: err.to_string(), resource }
             },
-            Some(Ok(graph)) if data => rsx! {
-                DataShell {
+            Some(Ok(graph)) if surface => rsx! {
+                SurfaceShell {
                     graph: graph.clone(),
                     workspace: workspace.clone(),
                     diff_line: diff_line.clone(),

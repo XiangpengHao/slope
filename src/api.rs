@@ -266,6 +266,36 @@ pub struct GhostMark {
     pub variants: Vec<String>,
     /// A static's declared type, or a function's return type, at the base.
     pub ty: String,
+    /// The methods the base wrote for it, quoted as (name, signature). A
+    /// ghost's band is drawn whole: the base edition is all there is of it,
+    /// so nothing here is gated on a door.
+    pub method_rows: Vec<(String, String)>,
+}
+
+/// One method of a type, as the surface reads it: a clause of the contract
+/// the type publishes, quoted from its own source. Methods are never marks —
+/// a method belongs to its type the way a field does, and giving each one a
+/// block would bury the shapes under their own API.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MethodRow {
+    /// The method's own name, which is what its edges and its callers file
+    /// under.
+    pub name: String,
+    /// The signature exactly as written, from the `fn` keyword's line through
+    /// the return type, whitespace collapsed — visibility included, body and
+    /// doc comment left where they are.
+    pub sig: String,
+    /// As the method declares it. A door decides whether the row is drawn,
+    /// and that decision is the client's.
+    pub vis: Vis,
+    /// Declared in an `impl Trait for Type` block. Such a method carries no
+    /// `pub` of its own and is not private for it: it is callable wherever
+    /// the trait is, so the surface reads it as published.
+    pub via_trait: bool,
+    /// Its own [`ItemMark::id`] — so a reference the survey resolved to the
+    /// method itself can be filed under this row rather than blurred into
+    /// its type.
+    pub mark: u32,
 }
 
 /// One landmark the map may engrave: an item, seated in the containment tree
@@ -311,6 +341,11 @@ pub struct ItemMark {
     /// A static's declared type or a free function's return type, as written.
     /// Empty for everything else, and for a function that returns nothing.
     pub ty: String,
+    /// The methods declared for this type anywhere in the workspace, in the
+    /// survey's order — the second band of its block. Every one of them is
+    /// here, whatever its visibility: which ones are rows is a door, and a
+    /// door is the client's to set. Empty for everything that is not a type.
+    pub method_rows: Vec<MethodRow>,
     /// How this declaration differs from the diff base.
     pub delta: Delta,
     /// Fields added since the base: indexes into `field_rows`.
@@ -323,11 +358,16 @@ pub struct ItemMark {
     /// Variants the base had that the working copy dropped, quoted from the
     /// base: (insert before this index of `variants`, the variant as written).
     pub variants_removed: Vec<(u32, String)>,
+    /// Methods added since the base: indexes into `method_rows`.
+    pub methods_added: Vec<u32>,
+    /// Methods the base had that the working copy dropped, quoted from the
+    /// base: (insert before this index of `method_rows`, name, signature).
+    pub methods_removed: Vec<(u32, String, String)>,
 }
 
-/// What a field says about the state its type reaches: whether the holder
-/// owns it outright, shares a handle to it, only views it, or names a trait
-/// instead of a type.
+/// What a row says about what it reaches: whether the dependent owns the
+/// value outright, shares a handle to it, only views it, names a trait
+/// instead of a type — or promises the trait's whole contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum HoldKind {
     /// No shared handle anywhere on the walk: the holder owns the value.
@@ -340,6 +380,10 @@ pub enum HoldKind {
     Borrows,
     /// `dyn Trait`: the edge lands on a trait, not on a type.
     Dyn,
+    /// `impl Trait for Type`, resolved semantically: the type promises the
+    /// trait's contract. No row draws it — the impl block does — and no
+    /// wrapper word rides on it.
+    Implements,
 }
 
 /// One holding relation: `from` has one or more fields whose type walk
@@ -364,7 +408,14 @@ pub struct HoldEdge {
     /// order: (name as written, declared type as written). A tuple field's
     /// name is its index; an enum payload's is its variant's name; a static's
     /// is the static's own name, and so is a free function's return type's.
+    /// A method row's is the method's name, whichever part of its signature
+    /// reached the target.
     pub fields: Vec<(String, String)>,
+    /// The rows drawing this edge are `from`'s **methods**, not its fields:
+    /// its API names the held type rather than keeping one. Aggregation
+    /// splits on this, so a pair reached both ways draws both edges and
+    /// neither reading has to be guessed at.
+    pub from_method: bool,
     /// This relation against the diff base: `None` = the base held it too.
     /// A `Removed` edge is not structure — the working copy no longer has the
     /// field that drew it — and either end may name a ghost.
@@ -384,6 +435,39 @@ pub struct ItemEdge {
     pub count: u32,
 }
 
+/// One `impl Trait for Type` between two marks the chart draws. The
+/// arrowhead rests on the type, as every family's does: the trait is the
+/// contract, and a change to it travels to everything that promised it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ImplEdge {
+    /// The trait's [`ItemMark::id`] — the tail.
+    pub trait_mark: u32,
+    /// The implementing type's [`ItemMark::id`] — the dependent.
+    pub ty: u32,
+    /// The header as the impl writes it (`impl Clone for Vis`), for the
+    /// sheet's row.
+    pub header: String,
+    /// This impl against the diff base. A workspace type promising a new
+    /// contract, or dropping one, is the kind of change a reviewer came for.
+    pub event: Option<HoldEvent>,
+}
+
+/// A reference between two items of one file, at mark precision, summed. The
+/// cross-file [`ItemEdge`]s carry their endpoints' files because either end
+/// may be a whole file; both ends of one of these is a mark by construction,
+/// so it carries nothing else. The cutaway reads a file's own references from
+/// its [`FileDetail`]; the surface chart reads these, because which file a
+/// reference was written in says nothing about whether one contract leans on
+/// another.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MarkRef {
+    /// The [`ItemMark::id`] whose body names the other. A reference written
+    /// in an impl block belongs to the type the impl names.
+    pub from: u32,
+    pub to: u32,
+    pub count: u32,
+}
+
 /// The code-structure survey: every workspace source file, every resolved
 /// reference at both file and item precision, and every item the map can
 /// engrave. Item *bodies* — fields, variants, signatures — ship separately,
@@ -395,8 +479,18 @@ pub struct CodeGraph {
     /// Every chartable item, in (file, source) order. Impl blocks are not
     /// here: they are attribution, not geometry.
     pub items: Vec<ItemMark>,
+    /// Which workspace types implement which workspace traits, resolved
+    /// through the impl's own self type and trait — never from the header
+    /// text. An impl of a foreign trait, or for a foreign type, is not here:
+    /// it stays a string on [`ItemMark::impls`], because it has no second end
+    /// to land on.
+    pub implements: Vec<ImplEdge>,
     /// Cross-file references at item precision, aggregated per pair.
     pub item_edges: Vec<ItemEdge>,
+    /// The references the pair above cannot carry: two items of one file,
+    /// both ends a mark. Together the two lists are every resolved reference
+    /// the survey placed at item precision.
+    pub local_refs: Vec<MarkRef>,
     /// Which type holds which, and through what wrapper — the data
     /// altitude's structure. Every surveyed type is here, private ones
     /// included. Edges carrying a [`HoldEvent`] are the structural diff's:

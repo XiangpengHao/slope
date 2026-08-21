@@ -1,4 +1,4 @@
-//! Where the data chart's marks and frames sit on the paper.
+//! Where the surface chart's marks and frames sit on the paper.
 //!
 //! A pure function of (frames, measured sizes): every block is measured before
 //! anything is placed, a frame's ownership forest is tidied into trees, the
@@ -17,7 +17,7 @@
 use std::collections::HashMap;
 
 use crate::views::codemap::tree::Placed;
-use crate::views::datamap::model::{Anchor, Frame, Seat};
+use crate::views::surface::model::{Anchor, Frame, Seat};
 
 /// Frame furniture, in flow units — one unit is one CSS pixel at zoom 1.
 const PAD: f64 = 14.0;
@@ -49,7 +49,7 @@ pub struct Sizes {
 
 /// The whole chart, placed and centered on the flow origin.
 #[derive(Clone, PartialEq, Debug, Default)]
-pub struct DataLayout {
+pub struct SurfaceLayout {
     pub marks: HashMap<u32, Placed>,
     pub rows: HashMap<Anchor, Placed>,
     /// Outermost first, so a nested tint lays over its parent's.
@@ -57,7 +57,7 @@ pub struct DataLayout {
     pub size: (f64, f64),
 }
 
-impl DataLayout {
+impl SurfaceLayout {
     /// Where an edge's end is, whichever kind of anchor it landed on.
     pub fn rect(&self, anchor: Anchor) -> Option<Placed> {
         match anchor {
@@ -229,7 +229,7 @@ fn kids_of(frame: &Frame, frames: &[Frame], sizes: &Sizes) -> Vec<(Kid, f64, f64
 }
 
 /// Lay every frame and every mark, centered on the flow origin.
-pub fn layout(frames: &[Frame], sizes: &Sizes) -> DataLayout {
+pub fn layout(frames: &[Frame], sizes: &Sizes) -> SurfaceLayout {
     // The crate frames, side by side on the sheet.
     let sheet: Vec<(Kid, f64, f64)> = frames
         .iter()
@@ -270,7 +270,7 @@ pub fn layout(frames: &[Frame], sizes: &Sizes) -> DataLayout {
     }
     let (w, h) = (content_w, y + row_h);
     let placed = shift(out, -w / 2.0, -h / 2.0);
-    DataLayout {
+    SurfaceLayout {
         marks: placed.marks.into_iter().collect(),
         rows: placed.rows.into_iter().collect(),
         frames: placed.frames,

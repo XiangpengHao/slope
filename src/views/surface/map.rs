@@ -1,17 +1,19 @@
-//! The data chart: type marks, module frames, holding edges, reference ties.
+//! The chart: contract marks, module frames, and the two inks between them.
 //!
-//! One block per type the workspace declares — and one per free function,
-//! wearing its signature where a type wears its fields — seated in the frame of
-//! the module that declares it, with a hairline from every held type to its
-//! holder. The block is measured before it is placed, so its plate and its box
-//! agree to the pixel, and the whole layout is a pure function of the survey —
-//! the same workspace always draws the same chart.
+//! One block per contract the workspace publishes — a type with its fields
+//! and then a second band of the methods it publishes, a trait that is nearly
+//! all band, a function wearing its signature, a static or const or alias one
+//! line long — each seated in the frame of the module that declares it. The
+//! block is measured before it is placed, so its plate and its box agree to
+//! the pixel, and the whole layout is a pure function of the survey: the same
+//! workspace always draws the same chart.
 //!
-//! Two edge families share the paper. **Holds** is structure and is always
-//! drawn: kind is dash grammar and the wrapper writes its own word on the line.
-//! **References** is a reading of the same item-level edges the code map draws,
-//! lifted to types and thinned by the cartouche's toggle; it rests at half ink
-//! under the holds edges so the two never read as one family.
+//! Two families share the paper, and the ink tells them apart. **Holds** is
+//! interface coupling, drawn solid at one pressure, with the wrapper's own
+//! word on the line where the walk met one. **Uses** is implementation
+//! coupling — a body leaning on a contract — drawn dashed and lighter, thinned
+//! by the cartouche's toggle, with its count on the line. Both point at the
+//! dependent.
 
 use std::collections::{HashMap, HashSet};
 
@@ -27,10 +29,10 @@ use crate::views::codemap::chrome::{decl_words, plural};
 use crate::views::codemap::map::{narrow_viewport, prefers_reduced_motion, tie_ends, window_size};
 use crate::views::codemap::tree::{Placed, text_w};
 use crate::views::codemap::use_code;
-use crate::views::datamap::data_type_route;
-use crate::views::datamap::layout::{self, DataLayout, Sizes};
-use crate::views::datamap::model::{
-    Anchor, DataMark, DataModel, FIELD_CAP, FieldRow, RowState, upstream,
+use crate::views::surface::layout::{self, Sizes, SurfaceLayout};
+use crate::views::surface::mark_route;
+use crate::views::surface::model::{
+    Anchor, FIELD_CAP, FieldRow, METHOD_CAP, RowState, SurfaceMark, SurfaceModel, upstream,
 };
 
 // ---------------------------------------------------------------------------
@@ -48,6 +50,8 @@ const HEAD_H: f64 = 16.0;
 const ROW_H: f64 = 15.0;
 /// One wrapped line of a static's declared type.
 const TY_H: f64 = 14.0;
+/// The rule that opens the method band, when a block has one.
+const BAND_TOP: f64 = 5.0;
 /// The counted folds: the rule above them, then one line each.
 const FOLDS_TOP: f64 = 6.0;
 const FOLD_H: f64 = 12.0;
@@ -60,14 +64,14 @@ const ROW_FOLD_H: f64 = 22.0;
 /// What ragged line breaks cost over a straight width ratio.
 const WRAP_SLACK: f64 = 1.12;
 
-/// A reference tie's weight follows the code map's rule exactly: the more
-/// references a pair of types has between them, the firmer the hairline.
+/// A uses edge's weight follows the code map's rule exactly: the more
+/// references a pair of marks has between them, the firmer the hairline.
 fn tie_width(count: u32) -> f64 {
     (0.55 + count as f64 * 0.13).min(2.8)
 }
 
-/// A hold's weight. Structure is drawn at one steady pressure; the ties rest
-/// lighter under it, so the two families never read as one.
+/// A hold's weight. The published surface is drawn at one steady pressure; the
+/// uses edges rest lighter under it, so the two families never read as one.
 fn hold_width(kind: HoldKind) -> f64 {
     match kind {
         HoldKind::Shares => 1.3,
@@ -118,6 +122,11 @@ struct MarkView {
     variants: Vec<FieldRow>,
     /// Variants a resting block draws.
     shown_variants: usize,
+    /// The methods the door draws, quoted as written — the block's second
+    /// band, under a rule of its own so the shape reads before the API.
+    methods: Vec<FieldRow>,
+    /// Methods a resting block draws.
+    shown_methods: usize,
     /// Every counted line at the foot of a resting block, in words.
     folds: Vec<String>,
     /// The lines that still stand when the block is open — what selecting it
@@ -141,20 +150,20 @@ struct FoldView {
     size: (f64, f64),
 }
 
-/// One node on the data chart. A mark's view is much the wider of the two —
+/// One node on the surface chart. A mark's view is much the wider of the two —
 /// it carries the block's whole quotation — so it travels boxed rather than
 /// making every fold row in the node list as large as a mark.
 #[derive(Clone, PartialEq)]
-enum DataNodeData {
+enum SurfaceNodeData {
     Mark(Box<MarkView>),
     Fold(FoldView),
 }
 
-impl DataNodeData {
+impl SurfaceNodeData {
     fn anchor(&self) -> Anchor {
         match self {
-            DataNodeData::Mark(m) => Anchor::Mark(m.id),
-            DataNodeData::Fold(f) => f.anchor,
+            SurfaceNodeData::Mark(m) => Anchor::Mark(m.id),
+            SurfaceNodeData::Fold(f) => f.anchor,
         }
     }
 
@@ -162,8 +171,8 @@ impl DataNodeData {
     /// dirty chart recedes.
     fn touched(&self) -> bool {
         match self {
-            DataNodeData::Mark(m) => m.letter.is_some(),
-            DataNodeData::Fold(_) => false,
+            SurfaceNodeData::Mark(m) => m.letter.is_some(),
+            SurfaceNodeData::Fold(_) => false,
         }
     }
 }
@@ -176,7 +185,7 @@ struct FrameView {
     label: Option<String>,
 }
 
-/// One drawn edge — a hold or a reference tie — with its ends already found.
+/// One drawn edge — a hold or a uses edge — with its ends already found.
 #[derive(Clone, PartialEq)]
 struct WireView {
     key: String,
@@ -184,12 +193,13 @@ struct WireView {
     to: Point,
     a: Anchor,
     b: Anchor,
-    /// The word engraved on the line: a wrapper for a hold, a count for a tie.
+    /// The word engraved on the line: a wrapper for a hold, a count for a
+    /// uses edge.
     label: Option<String>,
     width: f64,
     /// Drawn at rest; a folded wire inks in when either end is hovered.
     rest: bool,
-    /// The kind's dash grammar, as a CSS class.
+    /// Which family and, for a hold, which kind — as a CSS class.
     class: &'static str,
     /// The structural diff's class — `is-added` / `is-removed` — or empty.
     event: &'static str,
@@ -198,7 +208,7 @@ struct WireView {
 /// Everything one build of the chart draws.
 #[derive(Clone, PartialEq)]
 struct Built {
-    nodes: Vec<FlowNode<DataNodeData>>,
+    nodes: Vec<FlowNode<SurfaceNodeData>>,
     frames: Vec<FrameView>,
     holds: Vec<WireView>,
     ties: Vec<WireView>,
@@ -240,9 +250,10 @@ impl KinView {
         (upward(held) && upward(holder)) || (holder == self.sel && self.down.contains(&held))
     }
 
-    /// A reference tie the selection keeps at its own ink: one that touches the
-    /// selected mark itself. Ties are a reading, not structure, so they never
-    /// join the blast radius — they just escape the receding.
+    /// A uses edge the selection keeps at its own ink: one that touches the
+    /// selected mark itself. Implementation coupling never joins the blast
+    /// radius — a body can be rewritten without the surface moving — so these
+    /// only escape the receding.
     fn tie_kept(&self, a: Anchor, b: Anchor) -> bool {
         a == self.sel || b == self.sel
     }
@@ -253,7 +264,12 @@ impl KinView {
 /// where something is hidden; a mark that hides nothing writes none. The
 /// elided rows are the block's own, so opening it takes those lines back; a
 /// folded fan-in is the chart's, and stays counted.
-fn fold_words(mark: &DataMark, fields: usize, variants: usize) -> (Vec<String>, Vec<String>) {
+fn fold_words(
+    mark: &SurfaceMark,
+    fields: usize,
+    variants: usize,
+    methods: usize,
+) -> (Vec<String>, Vec<String>) {
     let mut rest = Vec::new();
     if mark.fields.len() > fields {
         // A function's rows are its parameters, and a count has to name what
@@ -269,6 +285,12 @@ fn fold_words(mark: &DataMark, fields: usize, variants: usize) -> (Vec<String>, 
         rest.push(format!(
             "+ {}",
             plural(mark.variants.len() - variants, "more variant")
+        ));
+    }
+    if mark.methods.len() > methods {
+        rest.push(format!(
+            "+ {}",
+            plural(mark.methods.len() - methods, "more method")
         ));
     }
     let mut open = Vec::new();
@@ -290,7 +312,7 @@ fn fold_words(mark: &DataMark, fields: usize, variants: usize) -> (Vec<String>, 
 /// A mark, measured. The width is the widest line it must not clip — every
 /// quoted row, drawn or folded, so opening the block only ever grows it
 /// downward — and the height follows from the rows that rest inside it.
-fn measure(mark: &DataMark) -> MarkView {
+fn measure(mark: &SurfaceMark) -> MarkView {
     let decl = decl_words(mark.vis, mark.kind);
     let head = format!("{decl} {}", mark.name);
     let locator = mark.locator();
@@ -304,17 +326,18 @@ fn measure(mark: &DataMark) -> MarkView {
     };
     // Diff rows never rest hidden: the resting window stretches down to the
     // last added or removed row, and only what follows them still folds.
-    let window = |rows: &[FieldRow]| -> usize {
+    let window = |rows: &[FieldRow], cap: usize| -> usize {
         let need = rows
             .iter()
             .rposition(|r| r.state != RowState::Same)
             .map(|at| at + 1)
             .unwrap_or(0);
-        rows.len().min(FIELD_CAP.max(need))
+        rows.len().min(cap.max(need))
     };
-    let shown_fields = window(&mark.fields);
-    let shown_variants = window(&mark.variants);
-    let (folds, open_folds) = fold_words(mark, shown_fields, shown_variants);
+    let shown_fields = window(&mark.fields, FIELD_CAP);
+    let shown_variants = window(&mark.variants, FIELD_CAP);
+    let shown_methods = window(&mark.methods, METHOD_CAP);
+    let (folds, open_folds) = fold_words(mark, shown_fields, shown_variants, shown_methods);
 
     let mut widest = text_w(&head, 10.5) + if letter.is_some() { 12.0 } else { 0.0 };
     widest = widest.max(text_w(&locator, 8.5));
@@ -333,7 +356,7 @@ fn measure(mark: &DataMark) -> MarkView {
             (text_w(&format!("{}: {}", row.name, row.decl), 10.0) + marker_w(row)).min(wrapping),
         );
     }
-    for row in &mark.variants {
+    for row in mark.variants.iter().chain(&mark.methods) {
         widest = widest.max((text_w(&row.decl, 10.0) + marker_w(row)).min(wrapping));
     }
     for fold in &folds {
@@ -355,11 +378,18 @@ fn measure(mark: &DataMark) -> MarkView {
     } else {
         FOLDS_TOP + folds.len() as f64 * FOLD_H
     };
+    // The band opens on a rule of its own, so the shape reads before the API.
+    let band = if mark.methods.is_empty() {
+        0.0
+    } else {
+        BAND_TOP + shown_methods as f64 * ROW_H
+    };
     let h = PAD_TOP
         + HEAD_H
         + ty_lines * TY_H
         + shown_fields as f64 * ROW_H
         + shown_variants as f64 * ROW_H
+        + band
         + fold_block
         + LOC_H
         + PAD_BOTTOM;
@@ -379,6 +409,8 @@ fn measure(mark: &DataMark) -> MarkView {
         ty_target: mark.ty_target.clone(),
         variants: mark.variants.clone(),
         shown_variants,
+        methods: mark.methods.clone(),
+        shown_methods,
         folds,
         open_folds,
         locator,
@@ -407,20 +439,22 @@ fn node_key(anchor: Anchor) -> String {
     }
 }
 
-/// The dash grammar of a hold, as a CSS class. Kind is a line, and the wrapper
-/// writes its own word beside it — no color, and nothing to memorize that the
-/// legend does not draw.
+/// A hold's kind, as a CSS class. The kind no longer moves the ink — dash
+/// means implementation coupling now, and every hold is solid — but the class
+/// rides along for the hover and diff rules, and for whatever the grammar
+/// needs to reach next.
 fn hold_class(kind: HoldKind) -> &'static str {
     match kind {
         HoldKind::Owns => "is-owns",
         HoldKind::Shares => "is-shares",
         HoldKind::Borrows => "is-borrows",
         HoldKind::Dyn => "is-dyn",
+        HoldKind::Implements => "is-impl",
     }
 }
 
 /// Measure everything, place it, and gather what the chart draws.
-fn build_chart(model: &DataModel) -> Built {
+fn build_chart(model: &SurfaceModel) -> Built {
     let mut sizes = Sizes::default();
     let mut views: HashMap<u32, MarkView> = HashMap::new();
     for mark in &model.marks {
@@ -442,11 +476,11 @@ fn build_chart(model: &DataModel) -> Built {
         }
         if frame.more > 0 {
             let anchor = Anchor::More(frame.id);
-            let words = format!("+ {}", plural(frame.more as usize, "more type"));
+            let words = format!("+ {}", plural(frame.more as usize, "more item"));
             let row = measure_row(
                 anchor,
                 words,
-                "the quietest types in this module, folded to fit the chart's budget; \
+                "the quietest contracts in this module, folded to fit the chart's budget; \
                  every edge that touches one lands here",
             );
             sizes.rows.insert(anchor, row.size);
@@ -457,9 +491,9 @@ fn build_chart(model: &DataModel) -> Built {
         }
     }
 
-    let placed: DataLayout = layout::layout(&model.frames, &sizes);
+    let placed: SurfaceLayout = layout::layout(&model.frames, &sizes);
 
-    let mut nodes: Vec<FlowNode<DataNodeData>> = Vec::new();
+    let mut nodes: Vec<FlowNode<SurfaceNodeData>> = Vec::new();
     for (id, view) in &views {
         let Some(at) = placed.marks.get(id) else {
             continue;
@@ -469,7 +503,7 @@ fn build_chart(model: &DataModel) -> Built {
                 node_key(Anchor::Mark(*id)),
                 view.name.clone(),
                 (at.x, at.y),
-                DataNodeData::Mark(Box::new(view.clone())),
+                SurfaceNodeData::Mark(Box::new(view.clone())),
             )
             .size(Size::new(at.w, at.h))
             .sides(Side::Left, Side::Right)
@@ -486,7 +520,7 @@ fn build_chart(model: &DataModel) -> Built {
                 node_key(*anchor),
                 row.words.clone(),
                 (at.x, at.y),
-                DataNodeData::Fold(row.clone()),
+                SurfaceNodeData::Fold(row.clone()),
             )
             .size(Size::new(at.w, at.h))
             .sides(Side::Left, Side::Right)
@@ -543,7 +577,7 @@ fn build_chart(model: &DataModel) -> Built {
         })
         .collect();
 
-    // The reference reading: the arrowhead rests on the user, as everywhere.
+    // The uses family: the arrowhead rests on the dependent, as everywhere.
     let ties: Vec<WireView> = model
         .ties
         .iter()
@@ -656,9 +690,9 @@ fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool)> {
 fn MarkPlate(view: MarkView, selected: bool) -> Element {
     let nav = use_navigator();
     let to = if selected {
-        Route::DataOverview {}
+        Route::SurfaceOverview {}
     } else {
-        data_type_route(&view.path, &view.label)
+        mark_route(&view.path, &view.label)
     };
     let title = if selected {
         format!(
@@ -679,6 +713,11 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
     } else {
         view.shown_variants
     };
+    let methods = if selected {
+        view.methods.len()
+    } else {
+        view.shown_methods
+    };
     let folds = if selected {
         &view.open_folds
     } else {
@@ -689,6 +728,7 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
         a {
             class: "data-mark",
             class: if view.is_static { "is-root" },
+            class: if view.is_fn { "is-sig" },
             class: if view.letter.is_some() { "is-diff" },
             class: if view.ghost { "is-ghost" },
             href: to.to_string(),
@@ -777,6 +817,28 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
                     }
                 }
             }
+            // The second band: what the type promises, under a rule that
+            // says the shape above it has ended.
+            if !view.methods.is_empty() {
+                div { class: "dm-band",
+                    for (i , row) in view.methods.iter().take(methods).enumerate() {
+                        p { key: "m{i}", class: "dm-sig",
+                            class: if !row.state.class().is_empty() { "{row.state.class()}" },
+                            if let Some(mk) = row.state.marker() {
+                                span { class: "dm-mk", "{mk}" }
+                            }
+                            for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
+                                span {
+                                    key: "{j}",
+                                    class: if !class.is_empty() { "{class}" },
+                                    class: if held { "dm-held" },
+                                    "{run}"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             if !folds.is_empty() {
                 div { class: "dm-folds",
                     for (i , fold) in folds.iter().enumerate() {
@@ -789,14 +851,14 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
     }
 }
 
-/// Node view for the data chart.
+/// Node view for the surface chart.
 #[component]
-fn DataNode(ctx: NodeViewCtx<DataNodeData>, selected: bool) -> Element {
+fn SurfaceNode(ctx: NodeViewCtx<SurfaceNodeData>, selected: bool) -> Element {
     match ctx.node.data.clone() {
-        DataNodeData::Mark(view) => rsx! {
+        SurfaceNodeData::Mark(view) => rsx! {
             MarkPlate { view: *view, selected }
         },
-        DataNodeData::Fold(row) => rsx! {
+        SurfaceNodeData::Fold(row) => rsx! {
             p { class: "data-foldrow", title: row.title, "{row.words}" }
         },
     }
@@ -873,7 +935,7 @@ fn arrowhead(b: Point, ctrl: Point, size: f64) -> String {
 }
 
 /// Both edge families as one engraved layer, over the frame tints and under the
-/// blocks: the reference reading first and lighter, the holding structure over
+/// blocks: the uses family first and lighter, the published surface over
 /// it. Hovering either end of a wire brings it up to full ink, which is how a
 /// folded wire is given back.
 #[component]
@@ -945,7 +1007,7 @@ fn WireLayer(
     }
 }
 
-/// Chrome insets at the data altitude: the cartouche column on the left, and —
+/// Chrome insets at the surface altitude: the cartouche column on the left, and —
 /// while a type is selected — the selection sheet on the right. The narrow
 /// layout docks the sheet at the foot and stays a serviceable fallback.
 fn chrome_insets(narrow: bool, panel: bool) -> (f64, f64, f64, f64) {
@@ -966,11 +1028,11 @@ const MIN_CHART_ZOOM: f64 = 0.22;
 /// (the Kept-Ground rule). `f` still refits on demand. Provided as a context
 /// by the atlas shell, which outlives every remount.
 #[derive(Clone, Copy)]
-pub(crate) struct DataCamera {
+pub(crate) struct SurfaceCamera {
     pub(crate) viewport: Signal<Option<Viewport>>,
 }
 
-impl DataCamera {
+impl SurfaceCamera {
     pub(crate) fn new() -> Self {
         Self {
             viewport: Signal::new(None),
@@ -979,7 +1041,7 @@ impl DataCamera {
 }
 
 fn frame_chart(
-    flow: dioxus_flow::prelude::FlowHandle<DataNodeData>,
+    flow: dioxus_flow::prelude::FlowHandle<SurfaceNodeData>,
     bounds: Rect,
     panel: bool,
     duration_ms: u64,
@@ -1002,9 +1064,9 @@ fn frame_chart(
     );
 }
 
-/// Keyboard at the data altitude: `f` refits, Escape deselects; `←` and `→`
+/// Keyboard at the surface altitude: `f` refits, Escape deselects; `←` and `→`
 /// retrace the trail from the shell, as they do on every route.
-const DATA_KEYS_JS: &str = r#"
+const SURFACE_KEYS_JS: &str = r#"
 if (window.__slopeKeys) {
     document.removeEventListener('keydown', window.__slopeKeys);
 }
@@ -1017,12 +1079,12 @@ window.__slopeKeys = (e) => {
 document.addEventListener('keydown', window.__slopeKeys);
 "#;
 
-/// The data chart, mounted for `/data`.
+/// The surface chart, mounted for `/surface`.
 #[component]
-pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
+pub fn SurfaceChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
     let code = use_code();
-    let camera = use_context::<DataCamera>();
-    let flow = dioxus_flow::use_flow_handle::<DataNodeData>();
+    let camera = use_context::<SurfaceCamera>();
+    let flow = dioxus_flow::use_flow_handle::<SurfaceNodeData>();
     let nav = use_navigator();
 
     // `graph` is a prop, not a signal; the two toggles are signals and track
@@ -1030,7 +1092,7 @@ pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
     // types are drawn at all, so this re-seats on either.
     let built = use_memo(use_reactive((&graph,), {
         move |(graph,)| {
-            let model = DataModel::build(&graph, *code.ref_dir.read(), *code.doors.read());
+            let model = SurfaceModel::build(&graph, *code.ref_dir.read(), *code.doors.read());
             build_chart(&model)
         }
     }));
@@ -1042,7 +1104,7 @@ pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
         let (path, label) = sel?;
         let b = built.read();
         let id = b.nodes.iter().find_map(|n| match &n.data {
-            DataNodeData::Mark(m) if m.path == path && m.label == label => Some(m.id),
+            SurfaceNodeData::Mark(m) if m.path == path && m.label == label => Some(m.id),
             _ => None,
         })?;
         let at = Anchor::Mark(id);
@@ -1066,7 +1128,7 @@ pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
         }
     }));
 
-    let nodes: Signal<Vec<FlowNode<DataNodeData>>> = use_signal(Vec::new);
+    let nodes: Signal<Vec<FlowNode<SurfaceNodeData>>> = use_signal(Vec::new);
     let framed = use_signal(|| false);
     let mut hot: Signal<Option<Anchor>> = use_signal(|| None);
     // True once the flow's core is live; the camera mirror below waits on it.
@@ -1131,7 +1193,7 @@ pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
 
     use_hook(move || {
         spawn(async move {
-            let mut eval = document::eval(DATA_KEYS_JS);
+            let mut eval = document::eval(SURFACE_KEYS_JS);
             while let Ok(key) = eval.recv::<String>().await {
                 match key.as_str() {
                     "f" => {
@@ -1143,7 +1205,7 @@ pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
                         }
                     }
                     "Escape" if *sel_on.peek() => {
-                        nav.push(Route::DataOverview {});
+                        nav.push(Route::SurfaceOverview {});
                     }
                     _ => {}
                 }
@@ -1166,10 +1228,10 @@ pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
                 // Bare paper deselects, the way Escape does.
                 on_pane_click: move |_| {
                     if *sel_on.peek() {
-                        nav.push(Route::DataOverview {});
+                        nav.push(Route::SurfaceOverview {});
                     }
                 },
-                node_view: move |ctx: NodeViewCtx<DataNodeData>| {
+                node_view: move |ctx: NodeViewCtx<SurfaceNodeData>| {
                     let anchor = ctx.node.data.anchor();
                     let kin_class = kin
                         .read()
@@ -1189,7 +1251,7 @@ pub fn DataChart(graph: CodeGraph, sel: Option<(String, String)>) -> Element {
                             class: if rest { "is-rest" },
                             onmouseenter: move |_| hot.set(Some(anchor)),
                             onmouseleave: move |_| hot.set(None),
-                            DataNode { ctx, selected }
+                            SurfaceNode { ctx, selected }
                         }
                     }
                 },
@@ -1230,8 +1292,8 @@ mod tests {
     use super::*;
     use crate::api::{ItemKind, Vis};
 
-    fn mark(name: &str, kind: ItemKind, fields: Vec<(&str, &str, &str)>) -> DataMark {
-        DataMark {
+    fn mark(name: &str, kind: ItemKind, fields: Vec<(&str, &str, &str)>) -> SurfaceMark {
+        SurfaceMark {
             id: 0,
             frame: 0,
             kind,
@@ -1252,8 +1314,11 @@ mod tests {
                 })
                 .collect(),
             variants: Vec::new(),
+            methods: Vec::new(),
             ty: String::new(),
             ty_target: String::new(),
+            unseen_users: 0,
+            unseen_uses: 0,
             held_by: 0,
             named_by: 0,
         }

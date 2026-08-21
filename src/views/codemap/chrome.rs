@@ -60,8 +60,8 @@ pub enum Altitude {
     Deps,
     /// `/code` — files and items as nested territory.
     Code,
-    /// `/data` — types, and what holds what.
-    Data,
+    /// `/surface` — the contracts the code publishes, and what leans on what.
+    Surface,
 }
 
 /// The altitude line: the ladder between the three charts, and the only
@@ -86,7 +86,7 @@ pub fn AltitudeSwitch(at: Altitude) -> Element {
         p { class: "flex gap-3 font-data text-[9.5px] tracking-[0.14em] uppercase",
             {rung("dependencies", Route::Overview {}, Altitude::Deps)}
             {rung("code", Route::CodeOverview {}, Altitude::Code)}
-            {rung("data", Route::DataOverview {}, Altitude::Data)}
+            {rung("surface", Route::SurfaceOverview {}, Altitude::Surface)}
         }
     }
 }

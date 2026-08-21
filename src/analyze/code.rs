@@ -40,8 +40,8 @@ use tokio::sync::OnceCell;
 
 use super::data;
 use crate::api::{
-    CodeGraph, FileDetail, FileInfo, FileRef, ItemEdge, ItemInfo, ItemKind, ItemMark, ItemRef,
-    ItemSource, SrcLink, SrcRun, Tok, Vis,
+    CodeGraph, FileDetail, FileInfo, FileRef, ImplEdge, ItemEdge, ItemInfo, ItemKind, ItemMark,
+    ItemRef, ItemSource, MarkRef, SrcLink, SrcRun, Tok, Vis,
 };
 
 /// The whole survey, precomputed once: the shipped graph plus every file's
@@ -301,6 +301,11 @@ fn survey_attached(
     // nesting.
     let mut impl_self: HashMap<(u32, u32), u32> = HashMap::new();
     let mut impl_traits: Vec<(u32, String)> = Vec::new();
+    // Which impl blocks are trait impls. A method inside one carries no `pub`
+    // of its own and is not private for it — it is callable wherever the
+    // trait is — so the surface has to be able to tell the two apart.
+    let mut trait_impl: HashSet<(u32, u32)> = HashSet::new();
+    let mut implements: Vec<ImplEdge> = Vec::new();
     for (fi, file) in raw.iter().enumerate() {
         if !file.items.iter().any(|i| i.kind == ItemKind::Impl) {
             continue;
@@ -342,6 +347,25 @@ fn survey_attached(
             impl_self.insert((fi as u32, li as u32), mark);
             if node.trait_().is_some() {
                 impl_traits.push((mark, impl_header(node)));
+                trait_impl.insert((fi as u32, li as u32));
+                // The trait it promises, resolved the way the self type was:
+                // through the impl itself, never off the header's words. A
+                // foreign trait has no mark to land on and stays a string.
+                if let Some(trait_mark) = imp
+                    .trait_(db)
+                    .and_then(|t| def_target(&sema, db, vfs, &root, &file_of, &raw, t.into()))
+                    .and_then(|target| {
+                        let local = target.item?;
+                        mark_of[target.file as usize].get(local as usize).copied()?
+                    })
+                {
+                    implements.push(ImplEdge {
+                        trait_mark,
+                        ty: mark,
+                        header: impl_header(node),
+                        event: None,
+                    });
+                }
             }
         }
     }
@@ -454,23 +478,65 @@ fn survey_attached(
         }
         mark_of[target.file as usize][local as usize]
     };
+    // A type's methods are rows of the type, so they are walked from the
+    // type's mark: the method's own file and range say where to read the
+    // signature, and the edges leave the block that draws it.
+    let charted_type = |mark: u32| {
+        let (fi, li) = mark_at[mark as usize];
+        matches!(
+            raw[fi as usize].items[li as usize].kind,
+            ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Trait
+        )
+    };
     let holders: Vec<data::Holder> = mark_at
         .iter()
         .enumerate()
         .filter_map(|(id, &(fi, li))| {
             let item = &raw[fi as usize].items[li as usize];
+            let method = match (item.kind, parent_of[id]) {
+                // A row of the block its owner draws: a method of a type, or
+                // one of the clauses a trait declares — a method signature, an
+                // associated type, an associated const. Anything under an impl
+                // for a type this chart never draws keeps to itself.
+                (ItemKind::Fn | ItemKind::TypeAlias | ItemKind::Const, Some(owner))
+                    if charted_type(owner) =>
+                {
+                    let block = item.owner.and_then(|range| {
+                        raw[fi as usize]
+                            .items
+                            .iter()
+                            .position(|it| it.range == range)
+                    });
+                    Some(data::MethodOf {
+                        mark: id as u32,
+                        vis: item.vis,
+                        via_trait: block.is_some_and(|li| trait_impl.contains(&(fi, li as u32))),
+                    })
+                }
+                _ => None,
+            };
             let walked = match item.kind {
+                // A trait has no rows of its own to walk: its clauses are
+                // items in their own right, and they arrive as their own
+                // holders, pointed at the trait's mark.
                 ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Static => true,
-                // Only a free function: a method's signature is its type's
-                // business, and the type already holds the ground.
-                ItemKind::Fn => parent_of[id].is_none(),
+                // A free function is its own contract; a method is its type's.
+                ItemKind::Fn => parent_of[id].is_none() || method.is_some(),
+                // An associated type or const is a row of the block that
+                // declares it; a free one is a contract of its own, one line
+                // long.
+                ItemKind::TypeAlias | ItemKind::Const => true,
                 _ => false,
             };
             walked.then_some(data::Holder {
-                mark: id as u32,
+                mark: match &method {
+                    Some(of) => parent_of[of.mark as usize].unwrap_or(id as u32),
+                    None => id as u32,
+                },
                 kind: item.kind,
                 file: fi,
                 range: item.range,
+                method,
             })
         })
         .collect();
@@ -485,6 +551,11 @@ fn survey_attached(
     // impl blocks for one type collapse onto the same endpoint, so the pairs
     // must be summed, not pushed.
     let mut edge_acc: HashMap<(u32, Option<u32>, u32, Option<u32>), u32> = HashMap::new();
+    // The same thing for two items of one file. The cutaway reads those from
+    // the file's own detail, but a chart that draws dependence needs them on
+    // the wire: which file a reference was written in says nothing about
+    // whether one contract leans on another.
+    let mut local_acc: HashMap<(u32, u32), u32> = HashMap::new();
 
     let mut ordered: Vec<(RefSource, u32)> = acc.into_iter().collect();
     ordered.sort_by_key(|((f, i, t), _)| (*f, *i, t.file, t.item));
@@ -497,6 +568,18 @@ fn survey_attached(
                 && from != to
             {
                 item_refs[src_file as usize].push(ItemRef { from, to, count });
+                // The same reference at mark precision. An impl block is
+                // attribution, so a reference written inside one comes from
+                // the type it names; a reference *to* an impl block is a
+                // reference to nothing the chart can land on.
+                let from = mark_of[src_file as usize][from as usize]
+                    .or_else(|| impl_self.get(&(src_file, from)).copied());
+                let to = mark_of[src_file as usize][to as usize];
+                if let (Some(from), Some(to)) = (from, to)
+                    && from != to
+                {
+                    *local_acc.entry((from, to)).or_default() += count;
+                }
             }
             continue;
         }
@@ -539,6 +622,12 @@ fn survey_attached(
         .collect();
     item_edges.sort_by_key(|e| (e.from_file, e.from, e.to_file, e.to));
 
+    let mut local_refs: Vec<MarkRef> = local_acc
+        .into_iter()
+        .map(|((from, to), count)| MarkRef { from, to, count })
+        .collect();
+    local_refs.sort_by_key(|r| (r.from, r.to));
+
     // The landmarks themselves, with the trait impls written for them
     // anywhere in the workspace.
     let mut impls_of: Vec<Vec<String>> = vec![Vec::new(); mark_at.len()];
@@ -566,12 +655,15 @@ fn survey_attached(
             field_rows: std::mem::take(&mut walk.field_rows[id]),
             variants: std::mem::take(&mut walk.variants[id]),
             ty: std::mem::take(&mut walk.ty[id]),
+            method_rows: std::mem::take(&mut walk.method_rows[id]),
             // The structural diff writes these once the graph stands.
             delta: crate::api::Delta::Same,
             fields_added: Vec::new(),
             fields_removed: Vec::new(),
             variants_added: Vec::new(),
             variants_removed: Vec::new(),
+            methods_added: Vec::new(),
+            methods_removed: Vec::new(),
         });
     }
 
@@ -687,7 +779,9 @@ fn survey_attached(
         files,
         refs,
         items,
+        implements,
         item_edges,
+        local_refs,
         holds: walk.holds,
         ghosts: Vec::new(),
         unresolved,

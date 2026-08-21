@@ -20,7 +20,7 @@ every cartouche:
 | --- | --- | --- |
 | `/` | dependencies | crates as stars on rings of hops from the root |
 | `/code` | code | files as blocks in nested directory frames, with reference ties |
-| `/data` | data | types as blocks in module frames, with holding edges |
+| `/surface` | surface | every contract the code publishes — types, traits, functions, statics, consts, aliases — as blocks in module frames, with interface and body-dependence edges |
 
 Changed things take amber; everything else stays monochrome ink. Every
 selection is a URL, so the back button retraces the review trail.

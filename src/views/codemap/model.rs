@@ -490,6 +490,9 @@ mod tests {
             fields_removed: Vec::new(),
             variants_added: Vec::new(),
             variants_removed: Vec::new(),
+            method_rows: Vec::new(),
+            methods_added: Vec::new(),
+            methods_removed: Vec::new(),
         }
     }
 
@@ -505,6 +508,7 @@ mod tests {
                 mark(2, 1, "draw", Vis::Pub, None),
                 mark(3, 1, "helper", Vis::Private, None),
             ],
+            implements: Vec::new(),
             item_edges: vec![
                 // `draw` uses `Plate`.
                 ItemEdge {
@@ -531,6 +535,7 @@ mod tests {
                     count: 4,
                 },
             ],
+            local_refs: Vec::new(),
             holds: Vec::new(),
             ghosts: Vec::new(),
             unresolved: 0,

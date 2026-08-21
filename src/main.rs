@@ -1,7 +1,8 @@
 use dioxus::prelude::*;
 
 use views::{
-    AtlasShell, CodeCrate, CodeFile, CodeOverview, DataOverview, DataType, Focus, Overview, RingSel,
+    AtlasShell, CodeCrate, CodeFile, CodeOverview, Focus, Overview, RingSel, SurfaceFocus,
+    SurfaceOverview,
 };
 
 /// Server-side analysis: cargo metadata, VCS diff, manifest events.
@@ -18,8 +19,9 @@ mod views;
 /// joins crate names with `+` (impossible in a crate name); a whole ring is
 /// `/ring/:hop`. The `/code` family is the code altitude: the file map,
 /// one crate's district, one file (its path segments), one item (`?item=`).
-/// `/data` is the data altitude: every type, and what holds what; selecting
-/// one type is `/data/type/:..path?item=` (its defining file, then its label).
+/// `/surface` is the surface altitude: every contract the code publishes, and
+/// what leans on what; selecting one is `/surface/mark/:..path?item=` (its
+/// defining file, then its label).
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
@@ -36,10 +38,10 @@ enum Route {
         CodeCrate { name: String },
         #[route("/code/file/:..path?:item")]
         CodeFile { path: Vec<String>, item: String },
-        #[route("/data")]
-        DataOverview {},
-        #[route("/data/type/:..path?:item")]
-        DataType { path: Vec<String>, item: String },
+        #[route("/surface")]
+        SurfaceOverview {},
+        #[route("/surface/mark/:..path?:item")]
+        SurfaceFocus { path: Vec<String>, item: String },
 }
 
 /* impeccable direction contract — served inside the page, greppable in the

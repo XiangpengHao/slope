@@ -49,7 +49,7 @@ mode: **Operate**.
   are session state, like the fold toggles: opening a focus plate and coming
   back — by any path, back button included — restores the camera exactly as
   the reviewer left it. The map frames itself only on a fresh session; `f`
-  refits on demand. The same rule holds on `/data`.
+  refits on demand. The same rule holds on `/surface`.
 
 ## The six mechanisms
 

@@ -11,9 +11,13 @@
 //! A full semantic survey of the base would slot in behind the same wire
 //! model; this is the cheap edition, not the final word.
 //!
-//! Scope (the data altitude): structs, enums, unions, statics, and free
-//! functions — everything that earns a block. The other item kinds keep
-//! `Delta::Same` until the code altitude takes its pass.
+//! Scope (the surface altitude): structs, enums, unions, statics, and free
+//! functions — everything that earns a block — plus the method band a type
+//! block wears. A band is compared only against the impls in the type's own
+//! file, because that is the only base edition this pass fetches; a method
+//! written in an impl block in another file is quoted as a row and left out
+//! of the weave. The other item kinds keep `Delta::Same` until the code
+//! altitude takes its pass.
 
 use std::collections::{HashMap, HashSet};
 
@@ -22,7 +26,8 @@ use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 
 use super::vcs::{Diff, file_at_base};
 use crate::api::{
-    CodeGraph, Delta, FileDetail, GhostMark, HoldEdge, HoldEvent, HoldKind, ItemKind, ItemMark, Vis,
+    CodeGraph, Delta, FileDetail, GhostMark, HoldEdge, HoldEvent, HoldKind, ImplEdge, ItemKind,
+    ItemMark, Vis,
 };
 
 /// One declaration as the base edition wrote it.
@@ -41,6 +46,11 @@ struct BaseDecl {
     field_rows: Vec<(String, String)>,
     variants: Vec<String>,
     ty: String,
+    /// The methods the base's own impl blocks in *this file* wrote for it,
+    /// quoted as (name, signature). Impls in other files are not read: the
+    /// diff only fetches the base edition of the files that changed, so the
+    /// live side is held to the same file when the two are compared.
+    method_rows: Vec<(String, String)>,
 }
 
 /// Runs of whitespace collapsed to one space — the same edit `type_text` and
@@ -121,9 +131,43 @@ fn base_params(list: Option<ast::ParamList>) -> Vec<(String, String)> {
         .collect()
 }
 
+/// The method bands one base edition writes, keyed the way a declaration is
+/// named: the inline-module path of the impl block, then the self type as the
+/// impl writes it. `impl Wire` and `impl Clone for Wire` both land on `Wire`,
+/// in source order, which is how the live survey files them too.
+fn base_methods(file: &ast::SourceFile) -> HashMap<String, Vec<(String, String)>> {
+    let mut out: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    for imp in file.syntax().descendants().filter_map(ast::Impl::cast) {
+        let Some(prefix) = module_prefix(imp.syntax()) else {
+            continue;
+        };
+        let Some(self_ty) = imp.self_ty() else {
+            continue;
+        };
+        let key = format!(
+            "{prefix}{}",
+            collapsed(&self_ty.syntax().text().to_string())
+        );
+        let rows = out.entry(key).or_default();
+        for method in imp
+            .assoc_item_list()
+            .into_iter()
+            .flat_map(|list| list.assoc_items())
+        {
+            let ast::AssocItem::Fn(f) = method else {
+                continue;
+            };
+            let Some(name) = f.name() else { continue };
+            rows.push((name.text().to_string(), super::data::signature_text(&f)));
+        }
+    }
+    out
+}
+
 /// Every charted declaration in one base edition, in source order.
 fn base_decls(text: &str) -> Vec<BaseDecl> {
     let parse = ra_ap_syntax::SourceFile::parse(text, ra_ap_syntax::Edition::CURRENT);
+    let mut methods = base_methods(&parse.tree());
     let mut out = Vec::new();
     for node in parse.tree().syntax().descendants() {
         let kind = match node.kind() {
@@ -131,14 +175,17 @@ fn base_decls(text: &str) -> Vec<BaseDecl> {
             SyntaxKind::ENUM => ItemKind::Enum,
             SyntaxKind::UNION => ItemKind::Union,
             SyntaxKind::STATIC => ItemKind::Static,
+            SyntaxKind::TRAIT => ItemKind::Trait,
             SyntaxKind::FN => ItemKind::Fn,
+            SyntaxKind::CONST => ItemKind::Const,
+            SyntaxKind::TYPE_ALIAS => ItemKind::TypeAlias,
             _ => continue,
         };
         let Some(prefix) = module_prefix(&node) else {
             continue;
         };
         let range = node.text_range();
-        let (name, vis, field_rows, variants, ty) = match kind {
+        let (name, vis, field_rows, variants, ty, own_rows) = match kind {
             ItemKind::Struct => {
                 let Some(s) = ast::Struct::cast(node.clone()) else {
                     continue;
@@ -151,6 +198,7 @@ fn base_decls(text: &str) -> Vec<BaseDecl> {
                     base_fields(s.field_list()),
                     Vec::new(),
                     String::new(),
+                    Vec::new(),
                 )
             }
             ItemKind::Union => {
@@ -165,6 +213,7 @@ fn base_decls(text: &str) -> Vec<BaseDecl> {
                     base_fields(u.record_field_list().map(ast::FieldList::RecordFieldList)),
                     Vec::new(),
                     String::new(),
+                    Vec::new(),
                 )
             }
             ItemKind::Enum => {
@@ -188,6 +237,7 @@ fn base_decls(text: &str) -> Vec<BaseDecl> {
                     Vec::new(),
                     variants,
                     String::new(),
+                    Vec::new(),
                 )
             }
             ItemKind::Static => {
@@ -202,6 +252,68 @@ fn base_decls(text: &str) -> Vec<BaseDecl> {
                     Vec::new(),
                     Vec::new(),
                     super::data::type_text(s.ty()),
+                    Vec::new(),
+                )
+            }
+            // A trait's band is written inside its own declaration, so the
+            // base reads it where it stands — no impl block to find, and no
+            // same-file limit on it.
+            ItemKind::Trait => {
+                let Some(t) = ast::Trait::cast(node.clone()) else {
+                    continue;
+                };
+                let Some(name) = t.name() else { continue };
+                let rows = t
+                    .assoc_item_list()
+                    .into_iter()
+                    .flat_map(|list| list.assoc_items())
+                    .filter_map(|item| {
+                        let (name, node) = match &item {
+                            ast::AssocItem::Fn(f) => (f.name()?, f.syntax()),
+                            ast::AssocItem::TypeAlias(a) => (a.name()?, a.syntax()),
+                            ast::AssocItem::Const(c) => (c.name()?, c.syntax()),
+                            _ => return None,
+                        };
+                        Some((name.text().to_string(), super::data::decl_text(node)))
+                    })
+                    .collect();
+                (
+                    name.text().to_string(),
+                    super::code::vis_kind(t.visibility()),
+                    Vec::new(),
+                    Vec::new(),
+                    String::new(),
+                    rows,
+                )
+            }
+            // A contract one line long: what it names stands in the slot a
+            // static's declared type uses.
+            ItemKind::Const => {
+                let Some(c) = ast::Const::cast(node.clone()) else {
+                    continue;
+                };
+                let Some(name) = c.name() else { continue };
+                (
+                    name.text().to_string(),
+                    super::code::vis_kind(c.visibility()),
+                    Vec::new(),
+                    Vec::new(),
+                    super::data::type_text(c.ty()),
+                    Vec::new(),
+                )
+            }
+            ItemKind::TypeAlias => {
+                let Some(a) = ast::TypeAlias::cast(node.clone()) else {
+                    continue;
+                };
+                let Some(name) = a.name() else { continue };
+                (
+                    name.text().to_string(),
+                    super::code::vis_kind(a.visibility()),
+                    Vec::new(),
+                    Vec::new(),
+                    super::data::type_text(a.ty()),
+                    Vec::new(),
                 )
             }
             ItemKind::Fn => {
@@ -219,12 +331,22 @@ fn base_decls(text: &str) -> Vec<BaseDecl> {
                     base_params(f.param_list()),
                     Vec::new(),
                     if ret == "()" { String::new() } else { ret },
+                    Vec::new(),
                 )
             }
             _ => continue,
         };
+        let name = format!("{prefix}{name}");
+        let method_rows = match kind {
+            ItemKind::Struct | ItemKind::Enum | ItemKind::Union => {
+                methods.remove(&name).unwrap_or_default()
+            }
+            // A trait's clauses stand inside its own declaration.
+            ItemKind::Trait => own_rows,
+            _ => Vec::new(),
+        };
         out.push(BaseDecl {
-            name: format!("{prefix}{name}"),
+            name,
             kind,
             vis,
             line: line_of(text, usize::from(range.start())),
@@ -232,9 +354,17 @@ fn base_decls(text: &str) -> Vec<BaseDecl> {
             field_rows,
             variants,
             ty,
+            method_rows,
         });
     }
     out
+}
+
+/// The last segment of a written path: `fmt::Display` is `Display`, which is
+/// how the live survey names the mark it resolved.
+fn bare_name(written: &str) -> String {
+    let head = written.split(['<', '(', ' ']).next().unwrap_or(written);
+    head.rsplit("::").next().unwrap_or(head).to_string()
 }
 
 /// The leading identifier of a variant's written form — how the live model
@@ -330,6 +460,8 @@ fn rank(kind: HoldKind) -> u8 {
         HoldKind::Borrows => 1,
         HoldKind::Dyn => 2,
         HoldKind::Shares => 3,
+        // Never met on a type walk: an impl block draws it, not a row.
+        HoldKind::Implements => 4,
     }
 }
 
@@ -437,8 +569,15 @@ pub(super) fn apply(
     // file's own, and two types can each own a `build` without either being
     // the base's free `build`.
     let charted = |item: &ItemMark| match item.kind {
-        ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Static => true,
-        ItemKind::Fn => item.parent.is_none(),
+        ItemKind::Struct
+        | ItemKind::Enum
+        | ItemKind::Union
+        | ItemKind::Static
+        | ItemKind::Trait => true,
+        // Free only: an associated const or type is its owner's row, and the
+        // base reads it the same way — `module_prefix` never leaves an impl
+        // or a trait block.
+        ItemKind::Fn | ItemKind::Const | ItemKind::TypeAlias => item.parent.is_none(),
         _ => false,
     };
 
@@ -484,6 +623,7 @@ pub(super) fn apply(
                             field_rows: decl.field_rows.clone(),
                             variants: decl.variants.clone(),
                             ty: decl.ty.clone(),
+                            method_rows: decl.method_rows.clone(),
                         },
                     )),
                     None => added.push(item.id),
@@ -518,11 +658,45 @@ pub(super) fn apply(
     }
     for (id, decl) in matched {
         let item = &graph.items[id as usize];
+        // The type's own method band, held to the file the type is declared
+        // in — the only file whose base edition this pass read. `seat` maps
+        // each of those rows back to its place in the whole band, so the
+        // weave marks the row the reader is looking at.
+        let seat: Vec<usize> = item
+            .method_rows
+            .iter()
+            .enumerate()
+            .filter(|(_, row)| {
+                // A trait's clauses are written inside it, so all of them are
+                // in the file the base read; a type's are wherever its impl
+                // blocks are, and only its own file's were fetched.
+                item.kind == ItemKind::Trait
+                    || graph
+                        .items
+                        .get(row.mark as usize)
+                        .is_some_and(|m| m.file == item.file)
+            })
+            .map(|(at, _)| at)
+            .collect();
+        let live_methods: Vec<(String, String)> = seat
+            .iter()
+            .map(|&at| {
+                let row = &item.method_rows[at];
+                (row.name.clone(), row.sig.clone())
+            })
+            .collect();
         // A function's block quotes its signature, so its signature is what
         // this altitude reads: a rewritten body is the code altitude's news,
-        // and an `M` here would point at rows that did not move.
+        // and an `M` here would point at rows that did not move. A type's
+        // block quotes its methods too, and an impl block lives outside the
+        // declaration's own text, so the band is compared beside it.
         let same = if decl.kind == ItemKind::Fn {
             item.vis == decl.vis && item.field_rows == decl.field_rows && item.ty == decl.ty
+        } else if decl.kind == ItemKind::Trait {
+            // A trait's block is its band, and its declaration's own text
+            // carries the default methods' bodies: comparing the text would
+            // flare a trait whose promise never moved.
+            item.vis == decl.vis && live_methods == decl.method_rows
         } else {
             let live_text = details
                 .get(item.file as usize)
@@ -534,11 +708,13 @@ pub(super) fn apply(
                 })
                 .map(collapsed)
                 .unwrap_or_default();
-            live_text == decl.text
+            live_text == decl.text && live_methods == decl.method_rows
         };
         if same {
             continue; // Same, moved or not: the shape is the base's shape.
         }
+        let full = item.method_rows.len() as u32;
+        let (ma, mr) = diff_rows(&decl.method_rows, &live_methods);
         let item = &mut graph.items[id as usize];
         item.delta = Delta::Changed;
         let (fa, fr) = diff_rows(&decl.field_rows, &item.field_rows);
@@ -547,6 +723,16 @@ pub(super) fn apply(
         let (va, vr) = diff_variants(&decl.variants, &item.variants);
         item.variants_added = va;
         item.variants_removed = vr;
+        // Back into the whole band's own indexes: a row the base dropped
+        // seats before the same-file row that took its place, or at the end.
+        item.methods_added = ma.into_iter().map(|at| seat[at as usize] as u32).collect();
+        item.methods_removed = mr
+            .into_iter()
+            .map(|(before, name, sig)| {
+                let at = seat.get(before as usize).map_or(full, |&at| at as u32);
+                (at, name, sig)
+            })
+            .collect();
     }
 
     // ---- Ghosts for what did not come back. ---------------------------------
@@ -563,6 +749,7 @@ pub(super) fn apply(
             field_rows: decl.field_rows,
             variants: decl.variants,
             ty: decl.ty,
+            method_rows: decl.method_rows,
         });
     }
 
@@ -585,6 +772,12 @@ pub(super) fn apply(
                     .iter()
                     .filter_map(|&at| i.variants.get(at as usize))
                     .map(|w| variant_name(w)),
+            );
+            names.extend(
+                i.methods_added
+                    .iter()
+                    .filter_map(|&at| i.method_rows.get(at as usize))
+                    .map(|row| row.name.clone()),
             );
             (i.id, names)
         })
@@ -613,7 +806,7 @@ pub(super) fn apply(
     for item in &graph.items {
         if matches!(
             item.kind,
-            ItemKind::Struct | ItemKind::Enum | ItemKind::Union
+            ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Trait
         ) {
             let bare = item.name.rsplit("::").next().unwrap_or(&item.name);
             targets.entry(bare.to_string()).or_default().push(item.id);
@@ -622,51 +815,66 @@ pub(super) fn apply(
     for ghost in &graph.ghosts {
         if matches!(
             ghost.kind,
-            ItemKind::Struct | ItemKind::Enum | ItemKind::Union
+            ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Trait
         ) {
             let bare = ghost.name.rsplit("::").next().unwrap_or(&ghost.name);
             targets.entry(bare.to_string()).or_default().push(ghost.id);
         }
     }
-    let live_pair: HashSet<(u32, u32)> = graph
+    // A pair that still stands through another live row draws no removed
+    // edge — and the two readings are kept apart here too: a field the base
+    // dropped is still news when the API happens to name the same type.
+    let live_pair: HashSet<(u32, u32, bool)> = graph
         .holds
         .iter()
         .filter(|e| e.event.is_none())
-        .map(|e| (e.from, e.to))
+        .map(|e| (e.from, e.to, e.from_method))
         .collect();
 
     let mut ambiguous = 0u32;
-    let mut dropped: Vec<(u32, String, String, bool)> = Vec::new(); // (from, name, decl, skip_leading)
+    // (from, name, quoted row, skip the row's own leading name, a method row)
+    let mut dropped: Vec<(u32, String, String, bool, bool)> = Vec::new();
     for item in &graph.items {
         for (_, name, decl) in &item.fields_removed {
-            dropped.push((item.id, name.clone(), decl.clone(), false));
+            dropped.push((item.id, name.clone(), decl.clone(), false, false));
         }
         for (_, written) in &item.variants_removed {
-            dropped.push((item.id, variant_name(written), written.clone(), true));
+            dropped.push((item.id, variant_name(written), written.clone(), true, false));
+        }
+        for (_, name, sig) in &item.methods_removed {
+            dropped.push((item.id, name.clone(), sig.clone(), false, true));
         }
     }
     for ghost in &graph.ghosts {
         for (name, decl) in &ghost.field_rows {
-            dropped.push((ghost.id, name.clone(), decl.clone(), false));
+            dropped.push((ghost.id, name.clone(), decl.clone(), false, false));
         }
         for written in &ghost.variants {
-            dropped.push((ghost.id, variant_name(written), written.clone(), true));
+            dropped.push((
+                ghost.id,
+                variant_name(written),
+                written.clone(),
+                true,
+                false,
+            ));
+        }
+        for (name, sig) in &ghost.method_rows {
+            dropped.push((ghost.id, name.clone(), sig.clone(), false, true));
         }
         if !ghost.ty.is_empty() {
-            dropped.push((ghost.id, ghost.name.clone(), ghost.ty.clone(), false));
+            dropped.push((ghost.id, ghost.name.clone(), ghost.ty.clone(), false, false));
         }
     }
     let mut gone: super::data::Edges = HashMap::new();
-    for (from, name, decl, skip) in dropped {
+    for (from, name, decl, skip, from_method) in dropped {
         let (kind, via, found) = name_walk(&decl, skip, &targets, &mut ambiguous);
-        if kind == HoldKind::Dyn {
-            continue; // traits draw no marks yet, at the base or now
-        }
         for to in found {
-            if to == from || live_pair.contains(&(from, to)) {
+            if to == from || live_pair.contains(&(from, to, from_method)) {
                 continue;
             }
-            let rows = gone.entry((from, to, kind, via.clone())).or_default();
+            let rows = gone
+                .entry((from, to, kind, via.clone(), from_method))
+                .or_default();
             if !rows.iter().any(|(n, d)| n == &name && d == &decl) {
                 rows.push((name.clone(), decl.clone()));
             }
@@ -674,24 +882,129 @@ pub(super) fn apply(
     }
     let mut gone: Vec<HoldEdge> = gone
         .into_iter()
-        .map(|((from, to, kind, via), fields)| HoldEdge {
+        .map(|((from, to, kind, via, from_method), fields)| HoldEdge {
             from,
             to,
             kind,
             via,
             fields,
+            from_method,
             event: Some(HoldEvent::Removed),
         })
         .collect();
     gone.sort_by(|a, b| {
-        (a.from, a.to, rank(a.kind), &a.via).cmp(&(b.from, b.to, rank(b.kind), &b.via))
+        (a.from, a.to, rank(a.kind), &a.via, a.from_method).cmp(&(
+            b.from,
+            b.to,
+            rank(b.kind),
+            &b.via,
+            b.from_method,
+        ))
     });
     graph.holds.extend(gone);
+
+    // ---- Implements: what the base promised, and what it does not. ----------
+    // A type taking on a contract, or dropping one, is the loudest thing this
+    // altitude can say about a change, so it is diff ink either way. The base
+    // edition is read for the pair of names an impl block writes — the live
+    // side resolved them properly, but the base has only syntax, so the two
+    // are compared as `(trait, type)` names and an ambiguous name is left
+    // alone rather than guessed at.
+    let name_of = |mark: u32| -> Option<&str> {
+        let name = &graph.items.get(mark as usize)?.name;
+        Some(name.rsplit("::").next().unwrap_or(name))
+    };
+    let mut base_impls: HashSet<(String, String)> = HashSet::new();
+    let mut read_files: HashSet<&str> = HashSet::new();
+    for path in &diff.changed_files {
+        if !path.ends_with(".rs") {
+            continue;
+        }
+        let Some(text) = file_at_base(dir, diff, path) else {
+            continue;
+        };
+        read_files.insert(path.as_str());
+        let parse = ra_ap_syntax::SourceFile::parse(&text, ra_ap_syntax::Edition::CURRENT);
+        for imp in parse
+            .tree()
+            .syntax()
+            .descendants()
+            .filter_map(ast::Impl::cast)
+        {
+            let (Some(trait_), Some(self_ty)) = (imp.trait_(), imp.self_ty()) else {
+                continue;
+            };
+            base_impls.insert((
+                bare_name(&collapsed(&trait_.syntax().text().to_string())),
+                bare_name(&collapsed(&self_ty.syntax().text().to_string())),
+            ));
+        }
+    }
+    // Only impls the base pass actually read can be compared: an impl block in
+    // a file this epoch never touched is unchanged by construction.
+    let changed_file: HashSet<u32> = graph
+        .files
+        .iter()
+        .filter(|f| read_files.contains(f.path.as_str()))
+        .map(|f| f.id)
+        .collect();
+    let mut live_impls: HashSet<(String, String)> = HashSet::new();
+    for edge in &mut graph.implements {
+        let pair = match (name_of(edge.trait_mark), name_of(edge.ty)) {
+            (Some(t), Some(ty)) => (t.to_string(), ty.to_string()),
+            _ => continue,
+        };
+        live_impls.insert(pair.clone());
+        // Where the impl block itself was not read, nothing can be said.
+        let touched = graph
+            .items
+            .get(edge.ty as usize)
+            .is_some_and(|m| changed_file.contains(&m.file))
+            || graph
+                .items
+                .get(edge.trait_mark as usize)
+                .is_some_and(|m| changed_file.contains(&m.file));
+        if touched && !base_impls.contains(&pair) {
+            edge.event = Some(HoldEvent::Added);
+        }
+    }
+    // What the base promised and the working copy does not, re-drawn from the
+    // base edition — but only where both ends still have a mark to land on.
+    let mark_named = |want: &str, kinds: &[ItemKind]| -> Option<u32> {
+        let mut found = None;
+        for item in &graph.items {
+            let bare = item.name.rsplit("::").next().unwrap_or(&item.name);
+            if bare == want && kinds.contains(&item.kind) {
+                if found.is_some() {
+                    return None; // ambiguous: two marks by that name
+                }
+                found = Some(item.id);
+            }
+        }
+        found
+    };
+    let mut dropped_impls: Vec<ImplEdge> = base_impls
+        .difference(&live_impls)
+        .filter_map(|(trait_name, ty_name)| {
+            Some(ImplEdge {
+                trait_mark: mark_named(trait_name, &[ItemKind::Trait])?,
+                ty: mark_named(
+                    ty_name,
+                    &[ItemKind::Struct, ItemKind::Enum, ItemKind::Union],
+                )?,
+                header: format!("impl {trait_name} for {ty_name}"),
+                event: Some(HoldEvent::Removed),
+            })
+        })
+        .collect();
+    dropped_impls.sort_by_key(|e| (e.trait_mark, e.ty));
+    graph.implements.extend(dropped_impls);
 
     // ---- The method, in words. ----------------------------------------------
     graph.notes.push(
         "the structural diff reads the base edition of each changed file \
-         syntactically: declarations match by kind and name, and a removed \
+         syntactically: declarations match by kind and name, a method band is \
+         matched against the impls in the type's own file, and a removed \
          relation's target is matched by name — never type-resolved"
             .to_string(),
     );
@@ -768,6 +1081,59 @@ impl Wire {
         assert_eq!(decls[5].ty, "Result<Index, String>");
         // Handing nothing back is not a return line, written either way.
         assert!(decls[4].ty.is_empty() && decls[6].ty.is_empty());
+    }
+
+    /// A type's band is written outside its declaration, so the base has to
+    /// read the impl blocks beside it and file them under the same name the
+    /// declaration is filed under — inline modules included.
+    #[test]
+    fn a_base_edition_reads_the_method_band_off_its_impls() {
+        let text = r#"
+pub struct Wire { pub id: u32 }
+impl Wire {
+    /// Doc.
+    #[inline]
+    pub fn build(nut: &Nut) -> Wire { todo!() }
+    fn secret(&self) -> u32 { self.id }
+}
+impl Clone for Wire {
+    fn clone(&self) -> Self { todo!() }
+}
+mod tests {
+    pub struct Wire;
+    impl Wire {
+        pub fn probe(&self) {}
+    }
+}
+"#;
+        let decls = base_decls(text);
+        let rows = |name: &str| {
+            decls
+                .iter()
+                .find(|d| d.name == name)
+                .unwrap()
+                .method_rows
+                .clone()
+        };
+        // Both impls, in source order, with the doc comment, the attribute
+        // and the body left where they are.
+        assert_eq!(
+            rows("Wire"),
+            vec![
+                (
+                    "build".to_string(),
+                    "pub fn build(nut: &Nut) -> Wire".to_string()
+                ),
+                ("secret".to_string(), "fn secret(&self) -> u32".to_string()),
+                ("clone".to_string(), "fn clone(&self) -> Self".to_string()),
+            ]
+        );
+        // A type inside an inline module keeps its own band, not the outer
+        // type's: the impl is named the way the declaration is.
+        assert_eq!(
+            rows("tests::Wire"),
+            vec![("probe".to_string(), "pub fn probe(&self)".to_string())]
+        );
     }
 
     #[test]

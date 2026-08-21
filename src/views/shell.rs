@@ -12,7 +12,7 @@ use crate::views::atlas::{Chart, DrawnCap};
 use crate::views::chrome::{Legend, SearchBox, TitleBlock};
 use crate::views::codemap::CodeState;
 use crate::views::codemap::map::CodeCamera;
-use crate::views::datamap::map::DataCamera;
+use crate::views::surface::map::SurfaceCamera;
 use crate::views::survey::SurveyShell;
 
 type GraphResource = Resource<Result<WorkspaceGraph, ServerFnError>>;
@@ -189,7 +189,7 @@ pub fn AtlasShell() -> Element {
     use_context_provider(DrawnCap::new);
     use_context_provider(CodeState::new);
     use_context_provider(CodeCamera::new);
-    use_context_provider(DataCamera::new);
+    use_context_provider(SurfaceCamera::new);
 
     // The back/forward keys live on the shell, not the views: they must
     // survive every route change, and they never need a channel back.
@@ -209,8 +209,8 @@ pub fn AtlasShell() -> Element {
         Route::CodeOverview {}
             | Route::CodeCrate { .. }
             | Route::CodeFile { .. }
-            | Route::DataOverview {}
-            | Route::DataType { .. }
+            | Route::SurfaceOverview {}
+            | Route::SurfaceFocus { .. }
     );
     let step: Option<TrailStep> = match &route {
         Route::Overview {} => Some(None),
@@ -263,7 +263,7 @@ pub fn AtlasShell() -> Element {
                     SurveyFailed { message: err.to_string(), resource }
                 },
                 Some(Ok(graph)) if survey_route => {
-                    // The code and data altitudes: one survey shell, and its
+                    // The code and surface altitudes: one survey shell, and its
                     // own chart and furniture inside. The workspace's identity
                     // and epoch ride along so every altitude stamps the same
                     // cartouche facts.

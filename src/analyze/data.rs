@@ -12,8 +12,12 @@
 //! just as a pub struct is: its parameters and its return type are declared
 //! types, so they are walked exactly as a field declaration is. Only the
 //! signature — a body names things at the code altitude, and that is where
-//! those names stay. A method's signature belongs to the type its impl
-//! names, so the walk starts from free functions alone.
+//! those names stay.
+//!
+//! A method is walked as one row of its *type's* contract: the edges leave the
+//! type, filed under the method's own name, and the row is the signature as
+//! written. A method never becomes a holder of its own, because it is not a
+//! landmark — it is a clause of the block its impl names.
 //!
 //! Nothing here is guessed. A wrapper is a wrapper because of its name *and*
 //! the crate that defines it, so a workspace type called `Signal` stays a
@@ -30,24 +34,40 @@ use ra_ap_ide_db::base_db::EditionedFileId;
 use ra_ap_syntax::ast::HasName;
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, TextRange, ast};
 
-use crate::api::{HoldEdge, HoldKind, ItemKind};
+use crate::api::{HoldEdge, HoldKind, ItemKind, MethodRow, Vis};
 
 /// One item the walk starts from: a struct, enum, union, static, or free
-/// function the survey has already given a mark.
+/// function the survey has already given a mark — or one method, which starts
+/// from the type its impl names.
 pub(super) struct Holder {
-    /// Its [`crate::api::ItemMark::id`].
+    /// The [`crate::api::ItemMark::id`] the rows and the edges belong to. For
+    /// a method that is its *type's* mark: a method is a clause of the type's
+    /// contract, never a landmark of its own.
     pub mark: u32,
     pub kind: ItemKind,
-    /// Index into the survey's file list.
+    /// Index into the survey's file list. An impl block can sit in a file the
+    /// type does not, so this is the method's own file, not the type's.
     pub file: u32,
     /// The item's own source range — how the survey names a syntax node.
     pub range: TextRange,
+    /// Set when this holder is one method of `mark`.
+    pub method: Option<MethodOf>,
+}
+
+/// What the survey knows about a method that its own source does not say: who
+/// declares it, and whether it arrived through a trait.
+pub(super) struct MethodOf {
+    /// The method's own mark.
+    pub mark: u32,
+    pub vis: Vis,
+    /// Declared inside `impl Trait for Type`.
+    pub via_trait: bool,
 }
 
 /// What the walk found. Everything but `holds` is indexed by mark id, so the
 /// survey can lift it straight onto the [`crate::api::ItemMark`]s.
 pub(super) struct DataWalk {
-    /// Holding edges, aggregated per (from, to, kind, via) and sorted.
+    /// Holding edges, aggregated per (from, to, kind, via, rows) and sorted.
     pub holds: Vec<HoldEdge>,
     /// A struct's or union's fields — or a free function's parameters —
     /// quoted in declaration order: (name as written, declared type as
@@ -57,6 +77,8 @@ pub(super) struct DataWalk {
     pub variants: Vec<Vec<String>>,
     /// A static's declared type or a free function's return type, as written.
     pub ty: Vec<String>,
+    /// A type's methods, in the survey's order, quoted as written.
+    pub method_rows: Vec<Vec<MethodRow>>,
 }
 
 /// Where a wrapper has to be defined to count as one. A type the reviewer
@@ -83,7 +105,7 @@ enum Home {
 /// tuples, arrays, slices, and every unknown external type — is transparent:
 /// the walk passes through into its arguments and the hold stays plain.
 /// Interior mutability without a shared handle is still ownership; sharing
-/// needs a shared handle. The legend on `/data` quotes this table, so the
+/// needs a shared handle. The legend on `/surface` quotes this table, so the
 /// two must agree.
 const WRAPPERS: &[(&str, Home, HoldKind)] = &[
     // A shared handle: the state behind it has more than one possible reader.
@@ -117,6 +139,8 @@ fn rank(kind: HoldKind) -> u8 {
         HoldKind::Borrows => 1,
         HoldKind::Dyn => 2,
         HoldKind::Shares => 3,
+        // Never met on a type walk: an impl block draws it, not a row.
+        HoldKind::Implements => 4,
     }
 }
 
@@ -137,9 +161,15 @@ fn stronger(
 /// is pathological rather than data.
 const MAX_DEPTH: usize = 16;
 
-/// The edges under construction: (from, to, kind, via) → the fields that draw
-/// it, in source order.
-pub(super) type Edges = HashMap<(u32, u32, HoldKind, String), Vec<(String, String)>>;
+/// The tail of an edge under construction: the mark it leaves, and whether a
+/// method row is what draws it.
+type Tail = (u32, bool);
+
+/// The edges under construction: (from, to, kind, via, drawn by a method) →
+/// the rows that draw it, in source order. The last key is what keeps "this
+/// type keeps one of those" and "this type's API names one" from aggregating
+/// into a single line neither reading can be recovered from.
+pub(super) type Edges = HashMap<(u32, u32, HoldKind, String, bool), Vec<(String, String)>>;
 
 /// Walk every holder's fields and aggregate what they hold. `mark_of_def`
 /// is the survey's own def → mark resolution, already filtered to the marks
@@ -155,6 +185,7 @@ pub(super) fn walk<'db>(
     let mut field_rows: Vec<Vec<(String, String)>> = vec![Vec::new(); marks];
     let mut variants: Vec<Vec<String>> = vec![Vec::new(); marks];
     let mut ty: Vec<String> = vec![String::new(); marks];
+    let mut method_rows: Vec<Vec<MethodRow>> = vec![Vec::new(); marks];
     let mut acc: Edges = HashMap::new();
 
     // Holders arrive in (file, source) order, so each file is parsed once.
@@ -179,7 +210,10 @@ pub(super) fn walk<'db>(
                         | SyntaxKind::ENUM
                         | SyntaxKind::UNION
                         | SyntaxKind::STATIC
+                        | SyntaxKind::TRAIT
                         | SyntaxKind::FN
+                        | SyntaxKind::TYPE_ALIAS
+                        | SyntaxKind::CONST
                 )
             })
             .map(|n| (n.text_range(), n))
@@ -190,6 +224,7 @@ pub(super) fn walk<'db>(
                 continue;
             };
             let mark = holder.mark as usize;
+            let tail: Tail = (holder.mark, holder.method.is_some());
             match holder.kind {
                 ItemKind::Struct | ItemKind::Union => {
                     let list = ast::Struct::cast(node.clone())
@@ -203,7 +238,7 @@ pub(super) fn walk<'db>(
                         field_edges(
                             db,
                             mark_of_def,
-                            holder.mark,
+                            tail,
                             name.clone(),
                             decl.clone(),
                             &field_ty,
@@ -228,7 +263,7 @@ pub(super) fn walk<'db>(
                             field_edges(
                                 db,
                                 mark_of_def,
-                                holder.mark,
+                                tail,
                                 name.clone(),
                                 decl,
                                 &field_ty,
@@ -247,40 +282,154 @@ pub(super) fn walk<'db>(
                         continue;
                     };
                     let decl = ty[mark].clone();
-                    field_edges(
-                        db,
-                        mark_of_def,
-                        holder.mark,
+                    field_edges(db, mark_of_def, tail, name, decl, &def.ty(db), &mut acc);
+                }
+                // A trait's associated type or const is a clause of its
+                // contract with no signature to walk: quoted as a row, and an
+                // associated const's declared type walked the way a static's
+                // is. What an associated type's bounds name is not read.
+                //
+                // A *free* one is a mark instead — a contract of one line —
+                // and quotes what it names in the slot a static's declared
+                // type uses: a const its type, an alias its target.
+                ItemKind::TypeAlias | ItemKind::Const if holder.method.is_none() => {
+                    let name = ast::AnyHasName::cast(node.clone())
+                        .and_then(|n| n.name())
+                        .map(|n| n.text().to_string())
+                        .unwrap_or_default();
+                    if let Some(c) = ast::Const::cast(node.clone()) {
+                        ty[mark] = type_text(c.ty());
+                        let Some(def) = sema.to_def(&c) else {
+                            continue;
+                        };
+                        let decl = ty[mark].clone();
+                        field_edges(db, mark_of_def, tail, name, decl, &def.ty(db), &mut acc);
+                    } else if let Some(a) = ast::TypeAlias::cast(node.clone()) {
+                        // The target as written, and the walk run over what it
+                        // resolves to: an alias is one name standing in front
+                        // of another, and the edge points at the other.
+                        ty[mark] = type_text(a.ty());
+                        let Some(def) = sema.to_def(&a) else {
+                            continue;
+                        };
+                        let decl = ty[mark].clone();
+                        field_edges(db, mark_of_def, tail, name, decl, &def.ty(db), &mut acc);
+                    }
+                }
+                ItemKind::TypeAlias | ItemKind::Const => {
+                    let Some(method) = &holder.method else {
+                        continue;
+                    };
+                    let name = ast::AnyHasName::cast(node.clone())
+                        .and_then(|n| n.name())
+                        .map(|n| n.text().to_string())
+                        .unwrap_or_default();
+                    let sig = decl_text(node);
+                    if let Some(c) = ast::Const::cast(node.clone())
+                        && let Some(def) = sema.to_def(&c)
+                    {
+                        field_edges(
+                            db,
+                            mark_of_def,
+                            tail,
+                            name.clone(),
+                            sig.clone(),
+                            &def.ty(db),
+                            &mut acc,
+                        );
+                    }
+                    method_rows[mark].push(MethodRow {
                         name,
-                        decl,
-                        &def.ty(db),
-                        &mut acc,
-                    );
+                        sig,
+                        vis: method.vis,
+                        via_trait: method.via_trait,
+                        mark: method.mark,
+                    });
                 }
                 ItemKind::Fn => {
                     let Some(f) = ast::Fn::cast(node.clone()) else {
                         continue;
                     };
-                    let Some(def) = sema.to_def(&f) else {
-                        continue;
+                    let quoted: Vec<ast::Param> = f
+                        .param_list()
+                        .into_iter()
+                        .flat_map(|l| l.params())
+                        .collect();
+                    // The rows are a quotation and never wait on inference. A
+                    // function an attribute macro rewrote — `#[server]`,
+                    // `#[component]` — resolves to the expansion or to
+                    // nothing at all, and the reader's own file is what the
+                    // block quotes either way. Where the resolved signature
+                    // does not line up with the written one, it is about
+                    // another function: quote the rows and draw no edges from
+                    // it, and let the written types answer instead.
+                    let def = sema
+                        .to_def(&f)
+                        .filter(|def| def.params_without_self(db).len() == quoted.len());
+                    // An `async fn` returns its body's type wrapped in a
+                    // future rust-analyzer synthesized; the reader wrote the
+                    // inner one, so that is the one the walk follows.
+                    let returns = |db: &'db RootDatabase| {
+                        def.map(|def| def.async_ret_type(db).unwrap_or_else(|| def.ret_type(db)))
+                            // No def to ask: the written type still resolves
+                            // in the file's own scope, which is enough to land
+                            // an edge on a mark.
+                            .or_else(|| sema.resolve_type(&f.ret_type().and_then(|r| r.ty())?))
                     };
-                    // The written parameters and the resolved ones stand in
-                    // the same order, and a free function has no `self` to
-                    // throw the count off — so each row keeps the words the
-                    // source wrote while the edge follows the resolved type.
-                    let quoted = f.param_list().into_iter().flat_map(|list| list.params());
-                    for (param, source) in def.params_without_self(db).iter().zip(quoted) {
+                    let name = f.name().map(|n| n.text().to_string()).unwrap_or_default();
+                    // A method is one row of its type's contract, so the whole
+                    // signature is the quotation and the method's own name is
+                    // what every type it names is filed under: the row is what
+                    // a reader points at, not the parameter inside it.
+                    if let Some(method) = &holder.method {
+                        let sig = signature_text(&f);
+                        let walk_row = |ty: &Type<'_>, acc: &mut Edges| {
+                            field_edges(db, mark_of_def, tail, name.clone(), sig.clone(), ty, acc);
+                        };
+                        for param in def.iter().flat_map(|def| def.params_without_self(db)) {
+                            walk_row(param.ty(), &mut acc);
+                        }
+                        for param in quoted.iter().filter(|_| def.is_none()) {
+                            if let Some(ty) = param.ty().and_then(|ty| sema.resolve_type(&ty)) {
+                                walk_row(&ty, &mut acc);
+                            }
+                        }
+                        if let Some(ret) = returns(db).filter(|ret| !ret.is_unit()) {
+                            walk_row(&ret, &mut acc);
+                        }
+                        method_rows[mark].push(MethodRow {
+                            name,
+                            sig,
+                            vis: method.vis,
+                            via_trait: method.via_trait,
+                            mark: method.mark,
+                        });
+                        continue;
+                    }
+                    // A free function's block is its signature laid out: the
+                    // written parameters and the resolved ones stand in the
+                    // same order, and a free function has no `self` to throw
+                    // the count off — so each row keeps the words the source
+                    // wrote while the edge follows the resolved type.
+                    let resolved = def.map(|def| def.params_without_self(db));
+                    for (at, source) in quoted.iter().enumerate() {
                         let name = pat_text(source.pat());
                         let decl = type_text(source.ty());
-                        field_edges(
-                            db,
-                            mark_of_def,
-                            holder.mark,
-                            name.clone(),
-                            decl.clone(),
-                            param.ty(),
-                            &mut acc,
-                        );
+                        let ty = match resolved.as_ref().and_then(|params| params.get(at)) {
+                            Some(param) => Some(param.ty().clone()),
+                            None => source.ty().and_then(|ty| sema.resolve_type(&ty)),
+                        };
+                        if let Some(ty) = ty {
+                            field_edges(
+                                db,
+                                mark_of_def,
+                                tail,
+                                name.clone(),
+                                decl.clone(),
+                                &ty,
+                                &mut acc,
+                            );
+                        }
                         field_rows[mark].push((name, decl));
                     }
                     // The return type is the signature's own row, filed under
@@ -291,12 +440,9 @@ pub(super) fn walk<'db>(
                         continue;
                     }
                     ty[mark] = ret_text.clone();
-                    let name = f.name().map(|n| n.text().to_string()).unwrap_or_default();
-                    // An `async fn` returns its body's type wrapped in a
-                    // future rust-analyzer synthesized; the reader wrote the
-                    // inner one, so that is the one the walk follows.
-                    let ret = def.async_ret_type(db).unwrap_or_else(|| def.ret_type(db));
-                    field_edges(db, mark_of_def, holder.mark, name, ret_text, &ret, &mut acc);
+                    if let Some(ret) = returns(db) {
+                        field_edges(db, mark_of_def, tail, name, ret_text, &ret, &mut acc);
+                    }
                 }
                 _ => {}
             }
@@ -306,17 +452,24 @@ pub(super) fn walk<'db>(
 
     let mut holds: Vec<HoldEdge> = acc
         .into_iter()
-        .map(|((from, to, kind, via), fields)| HoldEdge {
+        .map(|((from, to, kind, via, from_method), fields)| HoldEdge {
             from,
             to,
             kind,
             via,
             fields,
+            from_method,
             event: None,
         })
         .collect();
     holds.sort_by(|a, b| {
-        (a.from, a.to, rank(a.kind), &a.via).cmp(&(b.from, b.to, rank(b.kind), &b.via))
+        (a.from, a.to, rank(a.kind), &a.via, a.from_method).cmp(&(
+            b.from,
+            b.to,
+            rank(b.kind),
+            &b.via,
+            b.from_method,
+        ))
     });
 
     DataWalk {
@@ -324,6 +477,7 @@ pub(super) fn walk<'db>(
         field_rows,
         variants,
         ty,
+        method_rows,
     }
 }
 
@@ -349,11 +503,11 @@ pub(super) fn variant_text(variant: &ast::Variant, name: &str) -> String {
     }
 }
 
-/// Walk one field's type and file every edge it draws.
+/// Walk one row's type and file every edge it draws.
 fn field_edges(
     db: &RootDatabase,
     mark_of_def: &dyn Fn(ModuleDef) -> Option<u32>,
-    from: u32,
+    from: Tail,
     name: String,
     decl: String,
     ty: &Type<'_>,
@@ -377,7 +531,9 @@ fn field_edges(
         }
     }
     for (to, kind, via) in strongest {
-        let row = acc.entry((from, to, kind, via.to_string())).or_default();
+        let row = acc
+            .entry((from.0, to, kind, via.to_string(), from.1))
+            .or_default();
         // One field says a thing once, however many times the walk met it:
         // `(Foo, Foo)` is one row, not two.
         if !row.iter().any(|(n, d)| n == &name && d == &decl) {
@@ -517,6 +673,29 @@ pub(super) fn type_text(ty: Option<ast::Type>) -> String {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
+}
+
+/// One row's declaration as its source writes it: from the first keyword
+/// through the return type and any where clause, with the doc comment, the
+/// attributes, the body and the closing semicolon left where they are, and
+/// runs of whitespace collapsed. A row is a quotation — the body is the
+/// implementation, and this altitude is about the promise. A trait's
+/// associated type or const quotes the same way, default and all.
+pub(super) fn decl_text(node: &SyntaxNode) -> String {
+    let mut out = String::new();
+    for element in node.children_with_tokens() {
+        match element.kind() {
+            SyntaxKind::ATTR | SyntaxKind::COMMENT | SyntaxKind::SEMICOLON => continue,
+            SyntaxKind::BLOCK_EXPR => break,
+            _ => out.push_str(&element.to_string()),
+        }
+    }
+    out.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// One method's signature, the way [`decl_text`] writes any row.
+pub(super) fn signature_text(f: &ast::Fn) -> String {
+    decl_text(f.syntax())
 }
 
 /// A parameter's binding as the source writes it — `graph`, `mut at`, `_`.

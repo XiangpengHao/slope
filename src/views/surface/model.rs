@@ -1,29 +1,47 @@
-//! The data chart's reading of the survey: types as marks, holding as edges.
+//! The chart's reading of the survey: contracts as marks, dependence as edges.
+//!
+//! A block is a contract, and every row of it is a clause: a struct's fields,
+//! an enum's variants, a trait's declared methods and associated items, a
+//! function's parameters and return, the one type a static, const or alias
+//! names — and, under a rule of its own, the methods a type publishes. A
+//! method is never a mark of its own: it belongs to its type the way a field
+//! does, and giving each one a block would bury the shapes under their own
+//! API.
+//!
+//! Two inks run between the blocks, and never mix. **Solid** is interface
+//! coupling: the dependent's own published surface names the other end, so a
+//! change there forces a change here — including the one solid line no row
+//! writes, `implements`, from a trait to the type that promised it.
+//! **Dashed** is implementation coupling: the dependent's body leans on the
+//! other end, a call or a name written inside a function, which a rewrite can
+//! take back without anyone else noticing. Both run the same way round,
+//! arrowhead on the dependent.
 //!
 //! Pure functions over the wire model — no layout and no rendering. The survey
-//! ships every type it found, private ones included; this module decides which
-//! of them the chart draws as marks, which frame each one sits in, where the
-//! rest fold to, and which anchor every edge lands on. Nothing is dropped
-//! without a count: a private type folds to its frame's counted row and the
-//! edges touching it land there, the way the code map's ties land on a gate.
+//! ships everything it found, private items included; this module decides
+//! which of them the chart draws as marks, which frame each one sits in, where
+//! the rest fold to, and which anchor every edge lands on. Nothing is dropped
+//! without a count: what the door folds goes to its frame's counted row and
+//! the edges touching it land there, the way the code map's ties land on a
+//! gate.
 //!
 //! Seating is decided here too, but not measured: each frame gets an ownership
 //! forest, every type under its one heaviest same-frame `Owns` holder, and the
 //! layout turns that into geometry. The same-frame rule is the whole point —
 //! a type never leaves the module that declares it, so ownership reaching
-//! across a module stays a drawn line instead of moving a block.
+//! across a module stays a drawn line instead of moving a block. A contract is
+//! a leaf at both ends of that forest: nothing holds a function, a trait, a
+//! const or an alias, and naming a type is not containment — so they seat
+//! nothing and sit under nothing, falling in *beside* whatever they are most
+//! about, because proximity should follow dependence.
 //!
-//! Free functions are marks of their own, because a pub fn is a contract the
-//! way a pub struct is: its signature's holds edges are what keep a type only
-//! functions name from reading as a root nothing reaches. A function is a leaf
-//! at both ends of the seating — nothing holds one, and a signature is not
-//! containment — so the frames read their contracts after the shapes.
-//!
-//! Reference ties are computed here too. The survey records references between
-//! items; this altitude reads them at type precision, so each endpoint climbs
-//! its containment chain to the outermost mark and a tie is kept only when both
-//! ends land on a drawn type. References written in a function *body* never
-//! reach a type, so they are not on this chart — the legend says so.
+//! The uses family is computed here too. The survey records every reference it
+//! resolved at item precision, inside a file and across; this altitude reads
+//! them at mark precision, so each endpoint climbs its containment chain to
+//! the block that draws it — a method's call is its type's — and a pair is
+//! kept when both ends land on a drawn mark. What lands anywhere else is
+//! counted on the mark it did reach, so a quiet contract can be read as quiet
+//! rather than mistaken for dead.
 
 use std::collections::{HashMap, HashSet};
 
@@ -42,10 +60,15 @@ const HELD_CAP: usize = 3;
 /// The mark carries every field either way: selecting it draws them all, which
 /// is the only way to read a wide type without leaving the chart.
 pub const FIELD_CAP: usize = 8;
-/// Resting reference ties whose counts are engraved. Past this the labels are
+/// Method rows a resting type quotes. Lower than the field cap on purpose: a
+/// signature is a wide row, and a type's shape is what the block is for — its
+/// API is the second thing a reader wants, not the thing that buries the
+/// first. Selecting the block draws the whole band.
+pub const METHOD_CAP: usize = 5;
+/// Resting uses edges whose counts are engraved. Past this the labels are
 /// the chart's texture instead of its data.
 pub const TIE_LABELS: usize = 12;
-/// Reference ties one type rests in an anchored reading.
+/// Uses edges one mark rests in an anchored reading.
 const TIES_PER_MARK: usize = 2;
 
 /// Where an edge can land: a drawn mark, or one of a frame's counted fold rows.
@@ -55,9 +78,9 @@ const TIES_PER_MARK: usize = 2;
 pub enum Anchor {
     /// A type or static with a block of its own.
     Mark(u32),
-    /// A frame's `+ n private types` row.
+    /// A frame's `+ n private items` row.
     Private(u32),
-    /// A frame's `+ n more types` row, where the budget folded the quietest.
+    /// A frame's `+ n more items` row, where the budget folded the quietest.
     More(u32),
 }
 
@@ -167,7 +190,7 @@ pub struct FieldRow {
 
 /// One type, static, or free function with a block on the paper.
 #[derive(Clone, PartialEq, Debug)]
-pub struct DataMark {
+pub struct SurfaceMark {
     pub id: u32,
     pub frame: u32,
     pub kind: ItemKind,
@@ -190,6 +213,11 @@ pub struct DataMark {
     /// An enum's variants as written — payloads and discriminants included —
     /// quoted as rows (the row text in `decl`, `name` empty), all of them.
     pub variants: Vec<FieldRow>,
+    /// The second band: the methods that clear the door, quoted as written
+    /// signatures in the survey's order. The row text is in `decl` and the
+    /// method's own name in `name`, which is what its edges and its callers
+    /// are filed under. A resting block draws [`METHOD_CAP`] of them.
+    pub methods: Vec<FieldRow>,
     /// A static's declared type or a function's return type, as written.
     pub ty: String,
     /// The workspace type that type reaches, if it reaches one — the run of
@@ -198,6 +226,17 @@ pub struct DataMark {
     /// line draws no holds edge: `GlobalSignal<Option<Viewport>>` names a
     /// type from a dependency, and a dependency has no mark to point at.
     pub ty_target: String,
+    /// References into it the chart cannot draw a line for, summed: the ones
+    /// leaving a mark the visibility setting or the budget folded, or an item
+    /// with no mark of its own.
+    /// The uses family draws everything else, so this is exactly the residue
+    /// — and the difference between "nothing uses it" and "nothing the chart
+    /// draws uses it", which a reviewer deciding whether code is dead must
+    /// never have to guess at.
+    pub unseen_users: u32,
+    /// The same residue on the way out: references from its own body that
+    /// land where the chart draws no mark.
+    pub unseen_uses: u32,
     /// Incoming holds edges folded to a count: how many types hold this one.
     /// Zero when they are all drawn.
     pub held_by: u32,
@@ -206,7 +245,7 @@ pub struct DataMark {
     pub named_by: u32,
 }
 
-impl DataMark {
+impl SurfaceMark {
     /// A static is state no type holds — the chart's other kind of mark.
     pub fn is_static(&self) -> bool {
         self.kind == ItemKind::Static
@@ -254,8 +293,12 @@ pub struct Hold {
     /// The strongest wrapper on the walk, in its own word. Empty for a plain
     /// hold, which needs none.
     pub via: String,
-    /// Fields drawing this edge.
+    /// Rows drawing this edge.
     pub fields: u32,
+    /// The rows are the holder's *methods*: its API names the held mark
+    /// rather than keeping one of it. Never true of a function mark, whose
+    /// whole block is a signature already.
+    pub from_method: bool,
     /// Drawn at rest. A folded edge stays in the set and inks in the moment the
     /// reader hovers either of its ends.
     pub rest: bool,
@@ -267,11 +310,16 @@ pub struct Hold {
 impl Hold {
     pub fn key(&self) -> String {
         format!(
-            "{:?}>{:?}:{:?}:{}:{:?}",
-            self.held, self.holder, self.kind, self.via, self.event
+            "{:?}>{:?}:{:?}:{}:{}:{:?}",
+            self.held, self.holder, self.kind, self.via, self.from_method, self.event
         )
     }
 }
+
+/// One drawn interface line under construction: where it lands, what wrapper
+/// it met, whether a method row draws it, and its own diff event. Everything
+/// that must not aggregate away is in the key.
+type HoldKey = (Anchor, Anchor, HoldKind, String, bool, Option<HoldEvent>);
 
 /// Every anchor a shape change to `from` could reach, walking holds edges
 /// holder-ward: the transitive holders, and the contracts that name them —
@@ -297,13 +345,20 @@ pub fn upstream(pairs: &[(Anchor, Anchor)], from: Anchor) -> HashSet<Anchor> {
     seen
 }
 
-/// One reference tie between two types, summed. The arrowhead rests on the
-/// user, as it does at every other altitude.
+/// One implementation dependence between two drawn marks, summed: every
+/// reference the user's body writes to the def, whatever file it was written
+/// in. Drawn dashed, and the arrowhead rests on the user — the dependent — as
+/// it does in every family at every altitude.
 #[derive(Clone, PartialEq, Debug)]
 pub struct Tie {
     pub def: Anchor,
     pub user: Anchor,
     pub count: u32,
+    /// Which of the def's drawn method rows this leans on, heaviest first —
+    /// the part of the API being used, where the survey resolved the call to
+    /// a method rather than to the block as a whole. Empty when it reaches
+    /// the mark itself, or a row the door folded.
+    pub rows: Vec<(String, u32)>,
     /// Drawn at rest under the current reading.
     pub rest: bool,
     /// Heavy enough among the resting ties to carry its count on the paper.
@@ -316,12 +371,12 @@ impl Tie {
     }
 }
 
-/// Everything one build of the data chart reads out of the survey.
+/// Everything one build of the surface chart reads out of the survey.
 #[derive(Clone, PartialEq, Debug)]
-pub struct DataModel {
+pub struct SurfaceModel {
     pub frames: Vec<Frame>,
     /// Drawn marks, in the survey's (file, source) order.
-    pub marks: Vec<DataMark>,
+    pub marks: Vec<SurfaceMark>,
     pub holds: Vec<Hold>,
     pub ties: Vec<Tie>,
     /// More than one crate in the survey: crate frames earn their names.
@@ -334,6 +389,17 @@ pub struct DataModel {
     pub enums: usize,
     /// Drawn free functions: the surface the chart reads as contracts.
     pub fns: usize,
+    /// Drawn traits: contracts with nothing but clauses.
+    pub traits: usize,
+    /// Drawn consts and type aliases: contracts one line long.
+    pub consts: usize,
+    pub aliases: usize,
+    /// Method rows drawn on type blocks — the rest of the published surface,
+    /// which is not marks and would otherwise go uncounted.
+    pub methods: usize,
+    /// Drawn uses edges: how much of the workspace's coupling is one body
+    /// leaning on another contract rather than a published surface naming it.
+    pub uses: usize,
     /// Statics, plus every drawn type no other type holds. A function is not
     /// one: nothing can hold a function, so counting it would say nothing.
     pub roots: usize,
@@ -343,41 +409,46 @@ pub struct DataModel {
     pub changed: usize,
     /// Top-level modules holding a diff-touched type, in name order.
     pub changed_modules: Vec<String>,
-    /// Holds edges whose held end is a workspace trait. Traits get no mark of
-    /// their own in v1, so these have nowhere to land.
-    pub trait_holds: usize,
 }
 
 /// What the cartouche and the legend state about the survey. Small enough to
 /// hand the furniture without carrying the whole chart along with it.
 #[derive(Clone, PartialEq, Debug)]
-pub struct DataFacts {
+pub struct SurfaceFacts {
     pub structs: usize,
     pub enums: usize,
     pub fns: usize,
+    pub traits: usize,
+    pub consts: usize,
+    pub aliases: usize,
+    pub methods: usize,
+    pub uses: usize,
     pub roots: usize,
     pub added: usize,
     pub removed: usize,
     pub changed: usize,
     pub changed_modules: Vec<String>,
-    pub trait_holds: usize,
     /// Names the survey could not resolve, straight from the wire model.
     pub unresolved: u32,
 }
 
-impl DataModel {
+impl SurfaceModel {
     /// The facts, lifted off the model for the furniture that states them.
-    pub fn facts(&self, unresolved: u32) -> DataFacts {
-        DataFacts {
+    pub fn facts(&self, unresolved: u32) -> SurfaceFacts {
+        SurfaceFacts {
             structs: self.structs,
             enums: self.enums,
             fns: self.fns,
+            traits: self.traits,
+            consts: self.consts,
+            aliases: self.aliases,
+            methods: self.methods,
+            uses: self.uses,
             roots: self.roots,
             added: self.added,
             removed: self.removed,
             changed: self.changed,
             changed_modules: self.changed_modules.clone(),
-            trait_holds: self.trait_holds,
             unresolved,
         }
     }
@@ -392,26 +463,39 @@ impl DataModel {
 fn drawable(mark: &ItemMark, doors: Doors) -> bool {
     match mark.kind {
         ItemKind::Static => true,
-        ItemKind::Struct | ItemKind::Enum | ItemKind::Union => doors.admits(mark.vis),
-        ItemKind::Fn => is_free_fn(mark) && doors.admits(mark.vis),
+        // A trait is a contract with nothing but clauses: it clears the door
+        // the same way a shape does.
+        ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Trait => {
+            doors.admits(mark.vis)
+        }
+        // A free function, const, or type alias is a contract of its own; the
+        // same names inside a type or a trait are that block's rows.
+        ItemKind::Fn | ItemKind::Const | ItemKind::TypeAlias => {
+            free(mark) && doors.admits(mark.vis)
+        }
         _ => false,
     }
 }
 
-/// A mark the chart could draw or fold: everything the data walk starts from.
+/// A mark the chart could draw or fold: every contract the survey found.
 fn charted(mark: &ItemMark) -> bool {
     match mark.kind {
-        ItemKind::Static | ItemKind::Struct | ItemKind::Enum | ItemKind::Union => true,
-        ItemKind::Fn => is_free_fn(mark),
+        ItemKind::Static
+        | ItemKind::Struct
+        | ItemKind::Enum
+        | ItemKind::Union
+        | ItemKind::Trait => true,
+        ItemKind::Fn | ItemKind::Const | ItemKind::TypeAlias => free(mark),
         _ => false,
     }
 }
 
-/// A function the file itself declares. A method or an associated function
-/// carries the type its impl names as its parent, and stays attributed to it:
-/// this altitude charts contracts, and a method's contract is its type's.
-fn is_free_fn(mark: &ItemMark) -> bool {
-    mark.kind == ItemKind::Fn && mark.parent.is_none()
+/// An item the file itself declares. A method, an associated const, an
+/// associated type carries the block its impl or trait names as its parent,
+/// and stays attributed to it: this altitude charts contracts, and theirs is
+/// their owner's.
+fn free(mark: &ItemMark) -> bool {
+    mark.parent.is_none()
 }
 
 /// The part of a path below the crate's source root — `src/views/star.rs`
@@ -498,7 +582,7 @@ fn would_cycle(child: u32, candidate: Anchor, parents: &HashMap<u32, Anchor>) ->
     false
 }
 
-impl DataModel {
+impl SurfaceModel {
     pub fn build(graph: &CodeGraph, ref_dir: RefDir, doors: Doors) -> Self {
         let changed_file: Vec<bool> = graph.files.iter().map(|f| f.changed).collect();
         let file_changed = |file: u32| changed_file.get(file as usize).copied().unwrap_or(false);
@@ -526,6 +610,14 @@ impl DataModel {
         };
         let ghost_key = |g: &GhostMark| (g.krate.clone(), module_of(&g.path).map(str::to_string));
         let is_fn = |id: u32| kind_of(id) == Some(ItemKind::Fn);
+        // Everything that is a contract rather than a shape: never seated
+        // under anything, never a seat, and placed beside what it names.
+        let is_contract = |id: u32| {
+            matches!(
+                kind_of(id),
+                Some(ItemKind::Fn | ItemKind::Trait | ItemKind::Const | ItemKind::TypeAlias)
+            )
+        };
 
         // ---- Which marks are drawn, and which fold. ------------------------
         let mut degree = vec![0u32; graph.items.len() + graph.ghosts.len()];
@@ -537,6 +629,15 @@ impl DataModel {
                 *d += 1;
             }
         }
+
+        // Which method rows the reading draws. A method below the door is
+        // implementation, not surface — its body's references still climb to
+        // its type in the uses family, so nothing is lost by leaving it out of
+        // the contract. A trait impl's method carries no `pub` and is
+        // published all the same: it is callable wherever the trait is.
+        let door = |row: &crate::api::MethodRow| {
+            doors.admits(if row.via_trait { Vis::Pub } else { row.vis })
+        };
 
         let mut drawn: Vec<u32> = Vec::new();
         let mut private: Vec<u32> = Vec::new();
@@ -671,23 +772,49 @@ impl DataModel {
             }
         }
 
-        // ---- Holds: every edge, landed on an anchor. -----------------------
-        let mut trait_holds = 0usize;
-        let mut acc: HashMap<(Anchor, Anchor, HoldKind, String, Option<HoldEvent>), u32> =
-            HashMap::new();
-        for edge in &graph.holds {
-            let (holder, held) = (
-                anchor_of.get(edge.from as usize).copied().flatten(),
-                anchor_of.get(edge.to as usize).copied().flatten(),
-            );
-            if held.is_none()
-                && graph
-                    .items
-                    .get(edge.to as usize)
-                    .is_some_and(|m| m.kind == ItemKind::Trait)
-            {
-                trait_holds += 1;
-            }
+        // ---- The interface family: every edge, landed on an anchor. --------
+        // A `dyn Trait` lands on the trait's own block now, and an
+        // `impl Trait for Type` joins the same ink: both are one contract
+        // naming another, and both point at the dependent.
+        let mut acc: HashMap<HoldKey, u32> = HashMap::new();
+        let implements = graph.implements.iter().map(|edge| {
+            (
+                edge.trait_mark,
+                edge.ty,
+                HoldKind::Implements,
+                // The word rust writes for it, engraved on the line: no
+                // wrapper stands between a type and a contract it promises.
+                "implements".to_string(),
+                false,
+                edge.event,
+                1u32,
+            )
+        });
+        let walked = graph.holds.iter().map(|edge| {
+            (
+                edge.from,
+                edge.to,
+                edge.kind,
+                edge.via.clone(),
+                edge.from_method,
+                edge.event,
+                edge.fields.len() as u32,
+            )
+        });
+        // An implements edge runs trait → type, which is already tail → head;
+        // every other edge is written holder-ward and is turned here.
+        for (from, to, kind, via, from_method, event, rows) in walked.chain(implements) {
+            let (holder, held) = if kind == HoldKind::Implements {
+                (
+                    anchor_of.get(to as usize).copied().flatten(),
+                    anchor_of.get(from as usize).copied().flatten(),
+                )
+            } else {
+                (
+                    anchor_of.get(from as usize).copied().flatten(),
+                    anchor_of.get(to as usize).copied().flatten(),
+                )
+            };
             let (Some(holder), Some(held)) = (holder, held) else {
                 continue;
             };
@@ -696,20 +823,32 @@ impl DataModel {
             if holder == held {
                 continue;
             }
-            *acc.entry((held, holder, edge.kind, edge.via.clone(), edge.event))
-                .or_default() += edge.fields.len() as u32;
+            // An alias standing in front of a plain type has no wrapper to
+            // name, and the line would go wordless where rust has a word for
+            // exactly this. The walk keeps the wrapper where it met one.
+            let via = match holder {
+                Anchor::Mark(m) if via.is_empty() && kind_of(m) == Some(ItemKind::TypeAlias) => {
+                    "aliases".to_string()
+                }
+                _ => via,
+            };
+            *acc.entry((held, holder, kind, via, from_method, event))
+                .or_default() += rows;
         }
         let mut holds: Vec<Hold> = acc
             .into_iter()
-            .map(|((held, holder, kind, via, event), fields)| Hold {
-                held,
-                holder,
-                kind,
-                via,
-                fields,
-                rest: true,
-                event,
-            })
+            .map(
+                |((held, holder, kind, via, from_method, event), fields)| Hold {
+                    held,
+                    holder,
+                    kind,
+                    via,
+                    fields,
+                    from_method,
+                    rest: true,
+                    event,
+                },
+            )
             .collect();
         let event_ord = |e: Option<HoldEvent>| match e {
             None => 0u8,
@@ -717,13 +856,22 @@ impl DataModel {
             Some(HoldEvent::Removed) => 2,
         };
         holds.sort_by(|a, b| {
-            (a.held, a.holder, a.kind as u8, &a.via, event_ord(a.event)).cmp(&(
-                b.held,
-                b.holder,
-                b.kind as u8,
-                &b.via,
-                event_ord(b.event),
-            ))
+            (
+                a.held,
+                a.holder,
+                a.kind as u8,
+                &a.via,
+                a.from_method,
+                event_ord(a.event),
+            )
+                .cmp(&(
+                    b.held,
+                    b.holder,
+                    b.kind as u8,
+                    &b.via,
+                    b.from_method,
+                    event_ord(b.event),
+                ))
         });
 
         // Who holds what. The arrowhead rests on the holder, so a type's fan-in
@@ -732,11 +880,23 @@ impl DataModel {
         // either end inks them back in. A removed edge is diff ink, not
         // structure: it neither counts toward the fold nor ever joins it.
         let mut fan_in: HashMap<Anchor, HashSet<Anchor>> = HashMap::new();
+        // Which of those holders keep the thing, and which only name it in a
+        // signature — a function's whole block, or one method row of a type.
+        let mut names_it: HashMap<Anchor, HashSet<Anchor>> = HashMap::new();
         for hold in &holds {
             if hold.event == Some(HoldEvent::Removed) {
                 continue;
             }
+            // Implementing a trait is not the trait holding the type, and
+            // not the type holding the trait: it is a promise, and it belongs
+            // in neither count.
+            if hold.kind == HoldKind::Implements {
+                continue;
+            }
             fan_in.entry(hold.held).or_default().insert(hold.holder);
+            if hold.from_method || matches!(hold.holder, Anchor::Mark(m) if is_fn(m)) {
+                names_it.entry(hold.held).or_default().insert(hold.holder);
+            }
         }
         // Only a drawn mark may fold its fan-in: it has a foot to say `held by
         // n types` on. A counted fold row has no room for a second count, so
@@ -749,10 +909,9 @@ impl DataModel {
                 matches!(anchor, Anchor::Mark(_)) && holders.len() > HELD_CAP
             })
             .map(|(anchor, holders)| {
-                let named = holders
-                    .iter()
-                    .filter(|h| matches!(h, Anchor::Mark(id) if is_fn(*id)))
-                    .count() as u32;
+                let named = names_it.get(anchor).map_or(0, |set| {
+                    holders.iter().filter(|h| set.contains(h)).count() as u32
+                });
                 (*anchor, (holders.len() as u32 - named, named))
             })
             .collect();
@@ -777,7 +936,11 @@ impl DataModel {
         for &id in &drawn {
             if matches!(
                 graph.items[id as usize].kind,
-                ItemKind::Static | ItemKind::Fn
+                ItemKind::Static
+                    | ItemKind::Fn
+                    | ItemKind::Trait
+                    | ItemKind::Const
+                    | ItemKind::TypeAlias
             ) {
                 continue;
             }
@@ -799,16 +962,20 @@ impl DataModel {
                 if folded_fan.contains_key(&hold.holder) {
                     continue;
                 }
-                // A signature naming a type says nothing about where the type
-                // lives, so a function seats nobody under it.
-                if matches!(hold.holder, Anchor::Mark(holder) if is_fn(holder)) {
+                // Naming a type says nothing about where the type lives, so
+                // no contract seats anybody: not a method row that hands one
+                // back, not a function's signature, not a const's declared
+                // type, not an alias standing in front of it.
+                if hold.from_method
+                    || matches!(hold.holder, Anchor::Mark(holder) if is_contract(holder))
+                {
                     continue;
                 }
                 let same_frame = match hold.holder {
                     Anchor::Mark(holder) => frame_of(holder) == Some(home),
                     // A frame's private fold row is the drawn stand-in for its
                     // private code, so it can seat what only private code
-                    // owns. The `+ n more types` row cannot: it stands for
+                    // owns. The `+ n more items` row cannot: it stands for
                     // types the budget took away, not for a place in the
                     // module's shape.
                     Anchor::Private(frame) => frame == home,
@@ -845,15 +1012,82 @@ impl DataModel {
                 seated.entry(parent).or_default().push(id);
             }
         }
+        // Which top-level seat a mark ends up under, so a contract can be
+        // placed beside the shape it names instead of in a band of its own.
+        // `None` where the trail runs into a counted fold row, which stands
+        // for code the chart does not draw and cannot seat a contract beside.
+        let tree_of = |mark: u32| -> Option<u32> {
+            let mut at = mark;
+            // The seat parents are acyclic by construction; the bound is only
+            // there so a future rule cannot hang the chart.
+            for _ in 0..64 {
+                match seat_parent.get(&at) {
+                    Some(Anchor::Mark(up)) => at = *up,
+                    Some(_) => return None,
+                    None => return Some(at),
+                }
+            }
+            None
+        };
+        // The mark a contract stands nearest: the same-frame mark it is most
+        // about. For a function that is what its signature names hardest; for
+        // a trait it is the type that implements it most, and its signature
+        // targets after that. Proximity follows dependence — and a contract
+        // about nothing in its own frame reads after the shapes, in the band.
+        let signature_home = |fn_id: u32, frame: u32| -> Option<u32> {
+            let mut weight: HashMap<u32, u32> = HashMap::new();
+            let same_frame = |target: u32| {
+                target != fn_id
+                    && (target as usize) < graph.items.len()
+                    && frame_of(target) == Some(frame)
+            };
+            for hold in &holds {
+                // A removed edge is diff ink, not structure: it places
+                // nothing, the way it seats nothing.
+                if hold.event == Some(HoldEvent::Removed) {
+                    continue;
+                }
+                // An implementor is what a trait is most about, and it stands
+                // at the head of that edge rather than the tail.
+                if hold.kind == HoldKind::Implements {
+                    if hold.held != Anchor::Mark(fn_id) {
+                        continue;
+                    }
+                    if let Anchor::Mark(target) = hold.holder
+                        && same_frame(target)
+                    {
+                        *weight.entry(target).or_default() += 2;
+                    }
+                    continue;
+                }
+                if hold.holder != Anchor::Mark(fn_id) {
+                    continue;
+                }
+                let Anchor::Mark(target) = hold.held else {
+                    continue;
+                };
+                if hold.from_method || !same_frame(target) {
+                    continue;
+                }
+                *weight.entry(target).or_default() += hold.fields;
+            }
+            // The heaviest by field count, the survey's own order breaking a
+            // tie — the rule the ownership seating already follows.
+            weight
+                .into_iter()
+                .max_by_key(|&(target, fields)| (fields, std::cmp::Reverse(target)))
+                .map(|(target, _)| target)
+                .and_then(tree_of)
+        };
         for frame in &mut frames {
             // Nothing holds a function, so a function is never vocabulary; the
             // bands stay disjoint and every mark seats exactly once.
-            let vocabulary = |m: u32| folded_fan.contains_key(&Anchor::Mark(m)) && !is_fn(m);
+            let vocabulary = |m: u32| folded_fan.contains_key(&Anchor::Mark(m)) && !is_contract(m);
             let mut roots: Vec<u32> = frame
                 .marks
                 .iter()
                 .copied()
-                .filter(|&m| !seat_parent.contains_key(&m) && !vocabulary(m) && !is_fn(m))
+                .filter(|&m| !seat_parent.contains_key(&m) && !vocabulary(m) && !is_contract(m))
                 .collect();
             roots.sort_by_key(|&m| {
                 (
@@ -862,31 +1096,35 @@ impl DataModel {
                     m,
                 )
             });
-            let mut forest: Vec<Seat> = roots
-                .iter()
-                .map(|&m| seat_of(Anchor::Mark(m), &seated))
-                .collect();
-            // Then the contracts, in the survey's order: a function is drawn
-            // after the shapes its signature names, because it is a reading of
-            // them rather than a place any of them sits.
-            forest.extend(
-                frame
-                    .marks
-                    .iter()
-                    .copied()
-                    .filter(|&m| is_fn(m))
-                    .map(|m| Seat::leaf(Anchor::Mark(m))),
-            );
-            // Then the vocabulary leaves, then the counted rows: what a frame
-            // holds back reads last, under everything it draws in full.
-            forest.extend(
-                frame
-                    .marks
-                    .iter()
-                    .copied()
-                    .filter(|&m| vocabulary(m))
-                    .map(|m| Seat::leaf(Anchor::Mark(m))),
-            );
+            // Each contract falls in beside the tree holding the shape its
+            // signature names hardest; the rest keep the band at the end. A
+            // function still seats nothing and sits under nothing — this is
+            // reading order inside the frame, not parenthood.
+            let mut beside: HashMap<u32, Vec<u32>> = HashMap::new();
+            let mut band: Vec<u32> = Vec::new();
+            for m in frame.marks.iter().copied().filter(|&m| is_contract(m)) {
+                match signature_home(m, frame.id) {
+                    Some(tree) if tree != m => beside.entry(tree).or_default().push(m),
+                    _ => band.push(m),
+                }
+            }
+            let mut forest: Vec<Seat> = Vec::new();
+            let place = |forest: &mut Vec<Seat>, m: u32| {
+                forest.push(seat_of(Anchor::Mark(m), &seated));
+                for &f in beside.get(&m).into_iter().flatten() {
+                    forest.push(Seat::leaf(Anchor::Mark(f)));
+                }
+            };
+            for &m in &roots {
+                place(&mut forest, m);
+            }
+            // Then the vocabulary leaves, then the contracts about nothing
+            // here, then the counted rows: what a frame holds back reads
+            // last, under everything it draws in full.
+            for m in frame.marks.iter().copied().filter(|&m| vocabulary(m)) {
+                place(&mut forest, m);
+            }
+            forest.extend(band.into_iter().map(|m| Seat::leaf(Anchor::Mark(m))));
             if frame.private > 0 {
                 forest.push(seat_of(Anchor::Private(frame.id), &seated));
             }
@@ -943,7 +1181,7 @@ impl DataModel {
             }
         };
 
-        let mut marks: Vec<DataMark> = drawn
+        let mut marks: Vec<SurfaceMark> = drawn
             .iter()
             .filter_map(|&id| {
                 let mark = &graph.items[id as usize];
@@ -1013,7 +1251,51 @@ impl DataModel {
                     })
                     .collect();
                 weave(&mut variants, &mut dropped);
-                Some(DataMark {
+                // The second band: the methods that clear the door.
+                let seat: Vec<usize> = mark
+                    .method_rows
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, row)| door(row))
+                    .map(|(at, _)| at)
+                    .collect();
+                let mut methods: Vec<FieldRow> = seat
+                    .iter()
+                    .map(|&at| {
+                        let row = &mark.method_rows[at];
+                        FieldRow {
+                            name: row.name.clone(),
+                            decl: row.sig.clone(),
+                            target: target(id, &row.name),
+                            state: if mark.methods_added.contains(&(at as u32)) {
+                                RowState::Added
+                            } else {
+                                RowState::Same
+                            },
+                        }
+                    })
+                    .collect();
+                // A dropped method seats before the drawn row that took its
+                // place: its recorded index is into the whole band, and the
+                // door may have folded rows out from under it.
+                let mut dropped: Vec<(usize, FieldRow)> = mark
+                    .methods_removed
+                    .iter()
+                    .map(|(before, name, sig)| {
+                        let at = seat.partition_point(|&row| row < *before as usize);
+                        (
+                            at,
+                            FieldRow {
+                                name: name.clone(),
+                                decl: sig.clone(),
+                                target: target(id, name),
+                                state: RowState::Removed,
+                            },
+                        )
+                    })
+                    .collect();
+                weave(&mut methods, &mut dropped);
+                Some(SurfaceMark {
                     id,
                     frame,
                     kind: mark.kind,
@@ -1026,11 +1308,16 @@ impl DataModel {
                     ghost: false,
                     fields,
                     variants,
+                    methods,
                     ty: mark.ty.clone(),
                     // A static's one edge is filed under the static's own
                     // name, the way a field's is under the field's — and so is
                     // a function's return type.
                     ty_target: target(id, &mark.name),
+                    // The uses family fills these in once it knows which
+                    // marks it could not land on.
+                    unseen_users: 0,
+                    unseen_uses: 0,
                     held_by: folded_fan
                         .get(&Anchor::Mark(id))
                         .map_or(0, |&(held, _)| held),
@@ -1046,7 +1333,7 @@ impl DataModel {
             let Some(&frame) = frame_index.get(&ghost_key(ghost)) else {
                 continue;
             };
-            marks.push(DataMark {
+            marks.push(SurfaceMark {
                 id: ghost.id,
                 frame,
                 kind: ghost.kind,
@@ -1077,41 +1364,113 @@ impl DataModel {
                         state: RowState::Same,
                     })
                     .collect(),
+                // A ghost's band is the base's whole band: no door can fold
+                // what is not there any more.
+                methods: ghost
+                    .method_rows
+                    .iter()
+                    .map(|(name, sig)| FieldRow {
+                        name: name.clone(),
+                        decl: sig.clone(),
+                        target: target(ghost.id, name),
+                        state: RowState::Same,
+                    })
+                    .collect(),
                 ty: ghost.ty.clone(),
                 ty_target: target(ghost.id, &ghost.name),
+                // A ghost has no users to count either way: the survey read
+                // the working copy, and the working copy no longer declares
+                // it, so nothing in it can name it.
+                unseen_users: 0,
+                unseen_uses: 0,
                 held_by: 0,
                 named_by: 0,
             });
         }
 
-        // ---- Reference ties, at type precision. ----------------------------
+        // ---- The uses family, at mark precision. ---------------------------
+        // Implementation coupling: one mark's body leans on another. Every
+        // resolved reference the survey placed at item precision counts —
+        // across files and inside one — with each end climbing its containment
+        // chain to the mark that draws it, so a method's call is its type's
+        // and a free function's is its own. A pair is kept when both ends land
+        // on a drawn mark; what lands anywhere else is counted, not cut.
         let containment = Containment::build(graph);
-        let is_type = |m: u32| -> bool {
-            drawn_set.contains(&m)
-                && matches!(
-                    graph.items[m as usize].kind,
-                    ItemKind::Struct | ItemKind::Enum | ItemKind::Union
-                )
-        };
         let mut tie_acc: HashMap<(u32, u32), u32> = HashMap::new();
-        for edge in &graph.item_edges {
-            let (Some(from), Some(to)) = (edge.from, edge.to) else {
+        let mut unseen_in: HashMap<u32, u32> = HashMap::new();
+        let mut unseen_out: HashMap<u32, u32> = HashMap::new();
+        // Which method row a reference landed on before it climbed. The
+        // survey resolves a call to the method itself, and that is the part
+        // of the API being leaned on: keeping it means the sheet can say
+        // which clause, not merely which block. Only drawn rows — a call to a
+        // method the door folded is the type's, and says nothing more.
+        let row_of: HashMap<u32, (u32, String)> = drawn
+            .iter()
+            .filter_map(|&id| Some((id, graph.items.get(id as usize)?)))
+            .flat_map(|(id, mark)| {
+                mark.method_rows
+                    .iter()
+                    .filter(|row| door(row))
+                    .map(move |row| (row.mark, (id, row.name.clone())))
+            })
+            .collect();
+        let mut rows_acc: HashMap<(u32, u32), HashMap<String, u32>> = HashMap::new();
+        let cross = graph
+            .item_edges
+            .iter()
+            .map(|e| (e.from, e.to, e.count))
+            .chain(
+                graph
+                    .local_refs
+                    .iter()
+                    .map(|r| (Some(r.from), Some(r.to), r.count)),
+            );
+        for (from, to, count) in cross {
+            // A reference written at file scope — a `use` line — has no mark
+            // to leave from. What it enables is counted where it is written,
+            // so counting the import too would count one dependence twice.
+            let (Some(from), Some(to)) = (from, to) else {
                 continue;
             };
             let (user, def) = (containment.root(from), containment.root(to));
-            if user == def || !is_type(user) || !is_type(def) {
+            if user == def {
                 continue;
             }
-            *tie_acc.entry((def, user)).or_default() += edge.count;
+            match (drawn_set.contains(&user), drawn_set.contains(&def)) {
+                (true, true) => {
+                    *tie_acc.entry((def, user)).or_default() += count;
+                    // A call naming one row of the def's API files under it.
+                    if let Some((owner, row)) = row_of.get(&to)
+                        && *owner == def
+                    {
+                        *rows_acc
+                            .entry((def, user))
+                            .or_default()
+                            .entry(row.clone())
+                            .or_default() += count;
+                    }
+                }
+                (false, true) => *unseen_in.entry(def).or_default() += count,
+                (true, false) => *unseen_out.entry(user).or_default() += count,
+                (false, false) => {}
+            }
         }
         let mut ties: Vec<Tie> = tie_acc
             .into_iter()
-            .map(|((def, user), count)| Tie {
-                def: Anchor::Mark(def),
-                user: Anchor::Mark(user),
-                count,
-                rest: true,
-                labeled: false,
+            .map(|((def, user), count)| {
+                let mut rows: Vec<(String, u32)> = rows_acc
+                    .get(&(def, user))
+                    .map(|rows| rows.iter().map(|(r, n)| (r.clone(), *n)).collect())
+                    .unwrap_or_default();
+                rows.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
+                Tie {
+                    def: Anchor::Mark(def),
+                    user: Anchor::Mark(user),
+                    count,
+                    rows,
+                    rest: true,
+                    labeled: false,
+                }
             })
             .collect();
         ties.sort_by(|a, b| {
@@ -1120,9 +1479,10 @@ impl DataModel {
                 .then(b.count.cmp(&a.count))
         });
 
-        // Which ties rest on the paper. Direction alone cannot thin the chart —
-        // every tie is one type's use and another's users — so each reading
-        // anchors on the types themselves and hands the rest back on hover.
+        // Which of them rest on the paper. Direction alone cannot thin the
+        // chart — every edge here is one mark's use and another's users — so
+        // each reading anchors on the marks themselves and hands the rest
+        // back on hover.
         if let Some(cap) = ref_dir.per_territory().map(|c| c.min(TIES_PER_MARK)) {
             let mut by_anchor: HashMap<Anchor, Vec<usize>> = HashMap::new();
             for (i, tie) in ties.iter().enumerate() {
@@ -1151,6 +1511,14 @@ impl DataModel {
         for tie in &mut ties {
             tie.labeled = tie.rest && tie.count > label_bar;
         }
+        // What the family could not land, kept on the mark it did reach. The
+        // sheet says it out loud, because the difference between a mark
+        // nothing uses and one whose users the doors folded is the whole
+        // question a reviewer asks of a quiet contract.
+        for mark in &mut marks {
+            mark.unseen_users = unseen_in.get(&mark.id).copied().unwrap_or(0);
+            mark.unseen_uses = unseen_out.get(&mark.id).copied().unwrap_or(0);
+        }
 
         // ---- Facts. ---------------------------------------------------------
         // The workspace's counts are the working copy's: a ghost is drawn,
@@ -1167,6 +1535,19 @@ impl DataModel {
             .iter()
             .filter(|m| !m.ghost && m.kind == ItemKind::Fn)
             .count();
+        let traits = marks
+            .iter()
+            .filter(|m| !m.ghost && m.kind == ItemKind::Trait)
+            .count();
+        let kinds = |want: ItemKind| marks.iter().filter(|m| !m.ghost && m.kind == want).count();
+        let consts = kinds(ItemKind::Const);
+        let aliases = kinds(ItemKind::TypeAlias);
+        let uses = ties.len();
+        let methods = marks
+            .iter()
+            .filter(|m| !m.ghost)
+            .map(|m| m.methods.len())
+            .sum();
         // A root is state nothing else holds: every static, and every type no
         // other type has a field of. A function is counted as a contract
         // instead — nothing can hold one, so "root" would be true of every
@@ -1174,7 +1555,12 @@ impl DataModel {
         let roots = marks
             .iter()
             .filter(|m| {
-                !m.ghost && m.kind != ItemKind::Fn && !fan_in.contains_key(&Anchor::Mark(m.id))
+                !m.ghost
+                    && !matches!(
+                        m.kind,
+                        ItemKind::Fn | ItemKind::Trait | ItemKind::Const | ItemKind::TypeAlias
+                    )
+                    && !fan_in.contains_key(&Anchor::Mark(m.id))
             })
             .count();
         let added = marks.iter().filter(|m| m.delta == Delta::Added).count();
@@ -1202,12 +1588,16 @@ impl DataModel {
             structs,
             enums,
             fns,
+            traits,
+            consts,
+            aliases,
+            methods,
+            uses,
             roots,
             added,
             removed,
             changed,
             changed_modules,
-            trait_holds,
         }
     }
 }
@@ -1215,7 +1605,7 @@ impl DataModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{Delta, FileInfo, HoldEdge, HoldEvent, ItemEdge};
+    use crate::api::{Delta, FileInfo, HoldEdge, HoldEvent, ItemEdge, MarkRef};
 
     fn file(id: u32, path: &str, changed: bool) -> FileInfo {
         FileInfo {
@@ -1250,6 +1640,9 @@ mod tests {
             fields_removed: Vec::new(),
             variants_added: Vec::new(),
             variants_removed: Vec::new(),
+            method_rows: Vec::new(),
+            methods_added: Vec::new(),
+            methods_removed: Vec::new(),
         }
     }
 
@@ -1281,6 +1674,7 @@ mod tests {
                 mark(2, 1, "Hidden", ItemKind::Struct, Vis::Private),
                 cache,
             ],
+            implements: Vec::new(),
             item_edges: vec![ItemEdge {
                 from_file: 1,
                 from: Some(1),
@@ -1288,6 +1682,7 @@ mod tests {
                 to: Some(0),
                 count: 4,
             }],
+            local_refs: Vec::new(),
             holds: vec![
                 HoldEdge {
                     from: 1,
@@ -1295,6 +1690,7 @@ mod tests {
                     kind: HoldKind::Owns,
                     via: String::new(),
                     fields: vec![("wire".into(), "Wire".into())],
+                    from_method: false,
                     event: None,
                 },
                 HoldEdge {
@@ -1303,6 +1699,7 @@ mod tests {
                     kind: HoldKind::Owns,
                     via: String::new(),
                     fields: vec![("wire".into(), "Wire".into())],
+                    from_method: false,
                     event: None,
                 },
                 HoldEdge {
@@ -1311,6 +1708,7 @@ mod tests {
                     kind: HoldKind::Shares,
                     via: "Arc".into(),
                     fields: vec![("CACHE".into(), "OnceCell<Arc<Index>>".into())],
+                    from_method: false,
                     event: None,
                 },
             ],
@@ -1322,7 +1720,7 @@ mod tests {
 
     #[test]
     fn privacy_folds_a_type_and_keeps_its_edge() {
-        let model = DataModel::build(&graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&graph(), RefDir::Uses, Doors::Crate);
         // Two module frames under one crate frame; the crate frame is empty
         // but holds them.
         assert_eq!(model.frames.len(), 3);
@@ -1365,7 +1763,7 @@ mod tests {
 
         // At `pub` it folds in with the private type: one drawn static left,
         // and the frame counts two behind its row.
-        let shut = DataModel::build(&g, RefDir::Uses, Doors::Pub);
+        let shut = SurfaceModel::build(&g, RefDir::Uses, Doors::Pub);
         let analyze = shut
             .frames
             .iter()
@@ -1380,10 +1778,10 @@ mod tests {
                 .iter()
                 .any(|h| h.held == Anchor::Private(analyze.id) && h.holder == Anchor::Mark(3))
         );
-        assert_eq!(shut.doors.fold_word(), "internal type");
+        assert_eq!(shut.doors.fold_word(), "internal item");
 
         // At `pub(crate)` it is drawn again, and only the private type folds.
-        let open = DataModel::build(&g, RefDir::Uses, Doors::Crate);
+        let open = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
         let analyze = open
             .frames
             .iter()
@@ -1391,11 +1789,11 @@ mod tests {
             .unwrap();
         assert_eq!(analyze.marks.len(), 2);
         assert_eq!(analyze.private, 1);
-        assert_eq!(open.doors.fold_word(), "private type");
+        assert_eq!(open.doors.fold_word(), "private item");
 
         // At `private` nothing folds for visibility: every charted type is a
         // mark, and no frame carries a counted row.
-        let all = DataModel::build(&g, RefDir::Uses, Doors::All);
+        let all = SurfaceModel::build(&g, RefDir::Uses, Doors::All);
         assert_eq!(all.marks.len(), 4);
         assert!(all.frames.iter().all(|f| f.private == 0));
         assert!(
@@ -1415,7 +1813,7 @@ mod tests {
 
     #[test]
     fn a_static_quotes_its_type_instead_of_a_field_row() {
-        let model = DataModel::build(&graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&graph(), RefDir::Uses, Doors::Crate);
         let cache = model.marks.iter().find(|m| m.name == "CACHE").unwrap();
         assert!(cache.is_static());
         assert!(cache.fields.is_empty());
@@ -1451,6 +1849,7 @@ mod tests {
             field_rows: vec![("from".into(), "u32".into())],
             variants: Vec::new(),
             ty: String::new(),
+            method_rows: Vec::new(),
         });
         g.holds.push(HoldEdge {
             from: 1,
@@ -1458,9 +1857,10 @@ mod tests {
             kind: HoldKind::Owns,
             via: String::new(),
             fields: vec![("refs".into(), "Vec<FileRef>".into())],
+            from_method: false,
             event: Some(HoldEvent::Removed),
         });
-        let model = DataModel::build(&g, RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
         let ghost = model.marks.iter().find(|m| m.name == "FileRef").unwrap();
         assert!(ghost.ghost);
         assert_eq!(ghost.letter(), Some("D"));
@@ -1485,9 +1885,11 @@ mod tests {
         assert_eq!(model.structs, 2);
     }
 
+    /// A uses edge needs a block at both ends. `Hidden` is folded here, so the
+    /// one drawn pair is `Index` reaching `Wire`.
     #[test]
-    fn ties_land_on_types_only() {
-        let model = DataModel::build(&graph(), RefDir::Both, Doors::Crate);
+    fn a_uses_edge_needs_a_drawn_mark_at_both_ends() {
+        let model = SurfaceModel::build(&graph(), RefDir::Both, Doors::Crate);
         assert_eq!(model.ties.len(), 1);
         assert_eq!(model.ties[0].def, Anchor::Mark(0));
         assert_eq!(model.ties[0].user, Anchor::Mark(1));
@@ -1506,6 +1908,7 @@ mod tests {
                 .iter()
                 .map(|name| ((*name).to_string(), "T".to_string()))
                 .collect(),
+            from_method: false,
             event: None,
         }
     }
@@ -1532,7 +1935,9 @@ mod tests {
                 mark(6, 0, "CACHE", ItemKind::Static, Vis::Private),
                 mark(7, 1, "Index", ItemKind::Struct, Vis::Pub),
             ],
+            implements: Vec::new(),
             item_edges: Vec::new(),
+            local_refs: Vec::new(),
             // Sorted by (from, to), the way the survey ships them.
             holds: vec![
                 holds(0, 1, &["leaf"]),
@@ -1556,7 +1961,7 @@ mod tests {
         }
     }
 
-    fn frame_named<'a>(model: &'a DataModel, module: &str) -> &'a Frame {
+    fn frame_named<'a>(model: &'a SurfaceModel, module: &str) -> &'a Frame {
         model
             .frames
             .iter()
@@ -1578,7 +1983,7 @@ mod tests {
 
     #[test]
     fn a_type_seats_under_the_same_frame_owner_that_holds_it_hardest() {
-        let model = DataModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
         let api = frame_named(&model, "api");
         let wire = api
             .forest
@@ -1600,7 +2005,7 @@ mod tests {
 
     #[test]
     fn a_type_owned_from_another_module_is_a_root_and_keeps_its_edge() {
-        let model = DataModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
         // `Index` owns `Wire`, but it is a module away: `Wire` stays a root of
         // its own frame rather than moving into `mod analyze`.
         assert!(roots(frame_named(&model, "api")).contains(&Anchor::Mark(0)));
@@ -1613,7 +2018,7 @@ mod tests {
 
     #[test]
     fn a_static_never_seats_under_a_type() {
-        let model = DataModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
         let api = frame_named(&model, "api");
         let mut seats = Vec::new();
         walk(&api.forest, 0, &mut seats);
@@ -1623,7 +2028,7 @@ mod tests {
 
     #[test]
     fn a_frame_seats_statics_then_trees_then_vocabulary_then_its_fold_rows() {
-        let model = DataModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
         let api = frame_named(&model, "api");
         assert_eq!(
             roots(api),
@@ -1650,7 +2055,20 @@ mod tests {
 
     #[test]
     fn every_drawn_mark_sits_in_its_frame_exactly_once() {
-        let model = DataModel::build(&seating_graph(), RefDir::Uses, Doors::Crate);
+        // Both fixtures: the one with only shapes to seat, and the one whose
+        // contracts are placed beside them.
+        for graph in [
+            seating_graph(),
+            contract_graph(),
+            api_graph(),
+            trait_graph(),
+        ] {
+            seats_once(&SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate));
+            seats_once(&SurfaceModel::build(&graph, RefDir::Uses, Doors::All));
+        }
+    }
+
+    fn seats_once(model: &SurfaceModel) {
         for frame in &model.frames {
             let mut seats = Vec::new();
             walk(&frame.forest, 0, &mut seats);
@@ -1677,13 +2095,15 @@ mod tests {
                 mark(0, 0, "A", ItemKind::Struct, Vis::Pub),
                 mark(1, 0, "B", ItemKind::Struct, Vis::Pub),
             ],
+            implements: Vec::new(),
             item_edges: Vec::new(),
+            local_refs: Vec::new(),
             holds: vec![holds(0, 1, &["b"]), holds(1, 0, &["a"])],
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
         };
-        let model = DataModel::build(&graph, RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate);
         let api = frame_named(&model, "api");
         // One seat takes the other; the ring is not seated twice.
         let mut seats = Vec::new();
@@ -1697,8 +2117,8 @@ mod tests {
     #[test]
     fn the_same_survey_always_seats_the_same_forest() {
         let graph = seating_graph();
-        let a = DataModel::build(&graph, RefDir::Uses, Doors::Crate);
-        let b = DataModel::build(&graph, RefDir::Uses, Doors::Crate);
+        let a = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate);
+        let b = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate);
         assert_eq!(a, b);
     }
 
@@ -1734,6 +2154,7 @@ mod tests {
                 .iter()
                 .map(|(n, d)| ((*n).to_string(), (*d).to_string()))
                 .collect(),
+            from_method: false,
             event: None,
         }
     }
@@ -1747,7 +2168,10 @@ mod tests {
         let mut cache = mark(5, 0, "CACHE", ItemKind::Static, Vis::Private);
         cache.ty = "u8".to_string();
         CodeGraph {
-            files: vec![file(0, "src/api.rs", false)],
+            files: vec![
+                file(0, "src/api.rs", false),
+                file(1, "src/analyze/code.rs", false),
+            ],
             refs: Vec::new(),
             items: vec![
                 mark(0, 0, "Wire", ItemKind::Struct, Vis::Pub),
@@ -1756,8 +2180,36 @@ mod tests {
                 func(3, 0, "sweep", Vis::Private, &[], ""),
                 method,
                 cache,
+                func(6, 1, "index", Vis::Pub, &[], ""),
             ],
-            item_edges: Vec::new(),
+            // A module away, `index` calls `survey` five times.
+            implements: Vec::new(),
+            item_edges: vec![ItemEdge {
+                from_file: 1,
+                from: Some(6),
+                to_file: 0,
+                to: Some(2),
+                count: 5,
+            }],
+            // And inside `src/api.rs`: the method `Wire::id` calls `survey`,
+            // `survey` calls the private `sweep`, and `sweep` names `Wire`.
+            local_refs: vec![
+                MarkRef {
+                    from: 2,
+                    to: 3,
+                    count: 2,
+                },
+                MarkRef {
+                    from: 3,
+                    to: 0,
+                    count: 1,
+                },
+                MarkRef {
+                    from: 4,
+                    to: 2,
+                    count: 3,
+                },
+            ],
             holds: vec![
                 sig(2, 0, HoldKind::Borrows, "&", &[("graph", "&Wire")]),
                 // The return type's edge is filed under the function's own
@@ -1772,7 +2224,7 @@ mod tests {
 
     #[test]
     fn a_free_function_is_a_mark_and_the_door_folds_it_like_a_type() {
-        let model = DataModel::build(&contract_graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&contract_graph(), RefDir::Uses, Doors::Crate);
         let api = frame_named(&model, "api");
         // `Wire`, `Nut`, `survey`, `CACHE` — and the private function counted
         // behind the same row a private type would be.
@@ -1786,17 +2238,17 @@ mod tests {
         // A function is counted as a contract, never as a root: nothing can
         // hold one, so `root` would be true of every function and mean
         // nothing. Both types are named by the signature, so neither is one.
-        assert_eq!((model.structs, model.fns, model.roots), (2, 1, 1));
+        assert_eq!((model.structs, model.fns, model.roots), (2, 2, 1));
 
         // At `private` the door opens on the quiet function too.
-        let all = DataModel::build(&contract_graph(), RefDir::Uses, Doors::All);
+        let all = SurfaceModel::build(&contract_graph(), RefDir::Uses, Doors::All);
         assert!(all.marks.iter().any(|m| m.name == "sweep"));
-        assert_eq!(all.fns, 2);
+        assert_eq!(all.fns, 3);
     }
 
     #[test]
     fn a_signature_quotes_its_parameters_and_carries_its_wrapper() {
-        let model = DataModel::build(&contract_graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&contract_graph(), RefDir::Uses, Doors::Crate);
         let survey = model.marks.iter().find(|m| m.name == "survey").unwrap();
         assert_eq!(survey.fields.len(), 1);
         assert_eq!(survey.fields[0].name, "graph");
@@ -1814,9 +2266,69 @@ mod tests {
             && h.via == "&"));
     }
 
+    /// The other ink: bodies. Every reference the survey resolved is a
+    /// candidate, wherever it was written — the file a call sits in says
+    /// nothing about whether one contract leans on another — and each end
+    /// climbs to the mark that draws it, so a method's call is its type's.
+    #[test]
+    fn a_body_reference_is_drawn_whichever_file_it_was_written_in() {
+        let model = SurfaceModel::build(&contract_graph(), RefDir::Both, Doors::Crate);
+        let tie = |def: u32, user: u32| {
+            model
+                .ties
+                .iter()
+                .find(|t| t.def == Anchor::Mark(def) && t.user == Anchor::Mark(user))
+        };
+        // Across a module: `index` calls `survey`, and the arrowhead rests on
+        // the dependent, as it does in every family.
+        assert_eq!(tie(2, 6).map(|t| t.count), Some(5));
+        // Inside one file: `Wire::id` calls `survey`, and the method climbs to
+        // the type whose block draws it.
+        assert_eq!(tie(2, 0).map(|t| t.count), Some(3));
+        // A function's body is on the chart now: `survey` reaches nothing
+        // drawn, because the only thing it calls is folded — and that is
+        // counted, not cut.
+        assert!(tie(3, 2).is_none());
+        assert_eq!(model.ties.len(), 2);
+    }
+
+    /// What the family cannot land, it counts. The difference between a mark
+    /// nothing uses and one whose users the doors folded is the whole question
+    /// a reviewer asks of a quiet contract, so the sheet must never have to
+    /// guess at it.
+    #[test]
+    fn the_uses_family_counts_what_it_cannot_draw() {
+        let model = SurfaceModel::build(&contract_graph(), RefDir::Both, Doors::Crate);
+        let of = |name: &str| {
+            model
+                .marks
+                .iter()
+                .find(|m| m.name == name)
+                .map(|m| (m.unseen_users, m.unseen_uses))
+                .unwrap()
+        };
+        // The private `sweep` names `Wire` once and is called twice by
+        // `survey`: both ends of both references are real, and neither can be
+        // drawn, because one end has no block.
+        assert_eq!(of("Wire"), (1, 0));
+        assert_eq!(of("survey"), (0, 2));
+        // Nothing reaches `Nut` at all — the verdict a reviewer deletes on.
+        assert_eq!(of("Nut"), (0, 0));
+
+        // Open the door and the same two references are drawn instead of
+        // counted: the residue is a fold, not a fact about the code.
+        let all = SurfaceModel::build(&contract_graph(), RefDir::Both, Doors::All);
+        assert!(
+            all.marks
+                .iter()
+                .all(|m| m.unseen_users == 0 && m.unseen_uses == 0)
+        );
+        assert_eq!(all.ties.len(), 4);
+    }
+
     #[test]
     fn a_function_seats_nothing_and_sits_under_nothing() {
-        let model = DataModel::build(&contract_graph(), RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&contract_graph(), RefDir::Uses, Doors::Crate);
         let api = frame_named(&model, "api");
         let mut seats = Vec::new();
         walk(&api.forest, 0, &mut seats);
@@ -1831,30 +2343,31 @@ mod tests {
     }
 
     #[test]
-    fn a_frame_reads_statics_then_trees_then_contracts_then_vocabulary() {
+    fn a_frame_reads_statics_then_trees_each_with_its_contracts_then_vocabulary() {
         let mut g = contract_graph();
         // `Id` is reached by four marks — two types, a static, and one
         // signature — so it is vocabulary: never seated, never a seat.
-        g.items.push(mark(6, 0, "Id", ItemKind::Struct, Vis::Pub));
+        g.items.push(mark(7, 0, "Id", ItemKind::Struct, Vis::Pub));
         g.items[2].field_rows.push(("id".into(), "Id".into()));
-        g.holds.push(holds(0, 6, &["id"]));
-        g.holds.push(holds(1, 6, &["id"]));
-        g.holds.push(sig(2, 6, HoldKind::Owns, "", &[("id", "Id")]));
-        g.holds.push(holds(5, 6, &["CACHE"]));
-        let model = DataModel::build(&g, RefDir::Uses, Doors::Crate);
+        g.holds.push(holds(0, 7, &["id"]));
+        g.holds.push(holds(1, 7, &["id"]));
+        g.holds.push(sig(2, 7, HoldKind::Owns, "", &[("id", "Id")]));
+        g.holds.push(holds(5, 7, &["CACHE"]));
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
         let api = frame_named(&model, "api");
         assert_eq!(
             roots(api),
             vec![
                 // The static register first,
                 Anchor::Mark(5),
-                // then the trees, in the survey's order at equal size,
+                // then the trees, in the survey's order at equal size — and
+                // each contract falls in beside the shape it names hardest,
+                // `survey` after `Wire`, which its parameter borrows.
                 Anchor::Mark(0),
-                Anchor::Mark(1),
-                // then the contracts,
                 Anchor::Mark(2),
+                Anchor::Mark(1),
                 // then the vocabulary leaf, then what the frame does not draw.
-                Anchor::Mark(6),
+                Anchor::Mark(7),
                 Anchor::Private(api.id),
             ]
         );
@@ -1874,13 +2387,15 @@ mod tests {
             files: vec![file(0, "src/api.rs", false)],
             refs: Vec::new(),
             items,
+            implements: Vec::new(),
             item_edges: Vec::new(),
+            local_refs: Vec::new(),
             holds: Vec::new(),
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
         };
-        let model = DataModel::build(&graph, RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate);
         let api = frame_named(&model, "api");
         // The two quietest functions fold to the counted row; the static
         // stands, because it is the one mark with nowhere else to be counted.
@@ -1909,6 +2424,7 @@ mod tests {
             field_rows: vec![("wire".into(), "&Wire".into())],
             variants: Vec::new(),
             ty: String::new(),
+            method_rows: Vec::new(),
         });
         g.holds.push(HoldEdge {
             from: ghost_id,
@@ -1916,14 +2432,18 @@ mod tests {
             kind: HoldKind::Borrows,
             via: "&".into(),
             fields: vec![("wire".into(), "&Wire".into())],
+            from_method: false,
             event: Some(HoldEvent::Removed),
         });
-        let model = DataModel::build(&g, RefDir::Uses, Doors::Crate);
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
 
         let ghost = model.marks.iter().find(|m| m.name == "sweep_all").unwrap();
         assert!(ghost.ghost && ghost.is_fn());
         assert_eq!(ghost.letter(), Some("D"));
         assert_eq!(ghost.fields[0].target, "Wire");
+        // A ghost has no callers to count: the survey read the working copy,
+        // and the working copy no longer declares it.
+        assert_eq!((ghost.unseen_users, ghost.unseen_uses), (0, 0));
         // The removed signature edge is drawn, resting, from the type the base
         // named to the contract that named it.
         assert!(model.holds.iter().any(|h| h.held == Anchor::Mark(0)
@@ -1939,5 +2459,606 @@ mod tests {
         assert_eq!(survey.fields.len(), 2);
         assert_eq!(survey.fields[1].name, "quiet");
         assert_eq!(survey.fields[1].state, RowState::Removed);
+    }
+
+    // ---- The method band: a type's API as rows of its own block. -----------
+
+    fn method(
+        name: &str,
+        sig: &str,
+        vis: Vis,
+        via_trait: bool,
+        mark: u32,
+    ) -> crate::api::MethodRow {
+        crate::api::MethodRow {
+            name: name.to_string(),
+            sig: sig.to_string(),
+            vis,
+            via_trait,
+            mark,
+        }
+    }
+
+    /// A type wearing its API. `Wire` publishes `build`, keeps `hidden` to
+    /// itself, reaches `inner` only inside its crate, and answers `read`
+    /// through a trait — which carries no `pub` and is published all the same.
+    /// `build` names `Nut` by value, and the free `survey` calls it four times.
+    fn api_graph() -> CodeGraph {
+        let mut wire = mark(0, 0, "Wire", ItemKind::Struct, Vis::Pub);
+        wire.field_rows = vec![("id".into(), "u32".into())];
+        wire.method_rows = vec![
+            method(
+                "build",
+                "pub fn build(nut: Nut) -> Wire",
+                Vis::Pub,
+                false,
+                3,
+            ),
+            method("hidden", "fn hidden(&self) -> u32", Vis::Private, false, 4),
+            method("read", "fn read(&self) -> u32", Vis::Private, true, 5),
+            method(
+                "inner",
+                "pub(crate) fn inner(&self) -> u32",
+                Vis::Crate,
+                false,
+                6,
+            ),
+        ];
+        let mut methods: Vec<ItemMark> = ["build", "hidden", "read", "inner"]
+            .iter()
+            .enumerate()
+            .map(|(at, name)| mark(3 + at as u32, 0, name, ItemKind::Fn, Vis::Pub))
+            .collect();
+        for m in &mut methods {
+            m.parent = Some(0);
+        }
+        let mut items = vec![
+            wire,
+            mark(1, 0, "Nut", ItemKind::Struct, Vis::Pub),
+            func(2, 0, "survey", Vis::Pub, &[], ""),
+        ];
+        items.append(&mut methods);
+        CodeGraph {
+            files: vec![file(0, "src/api.rs", false)],
+            refs: Vec::new(),
+            items,
+            implements: Vec::new(),
+            item_edges: Vec::new(),
+            // `survey` calls `Wire::build` — the survey resolves that to the
+            // method itself, which is the row a reader wants named.
+            local_refs: vec![MarkRef {
+                from: 2,
+                to: 3,
+                count: 4,
+            }],
+            holds: vec![HoldEdge {
+                from: 0,
+                to: 1,
+                kind: HoldKind::Owns,
+                via: String::new(),
+                fields: vec![("build".into(), "pub fn build(nut: Nut) -> Wire".into())],
+                from_method: true,
+                event: None,
+            }],
+            ghosts: Vec::new(),
+            unresolved: 0,
+            notes: Vec::new(),
+        }
+    }
+
+    fn band(model: &SurfaceModel, name: &str) -> Vec<String> {
+        model
+            .marks
+            .iter()
+            .find(|m| m.name == name)
+            .unwrap()
+            .methods
+            .iter()
+            .map(|row| row.name.clone())
+            .collect()
+    }
+
+    #[test]
+    fn the_method_band_is_the_door_the_type_is_read_at() {
+        // At `pub(crate)`: everything but the private helper. A trait impl's
+        // method is published whatever it declares — it is callable wherever
+        // the trait is — so it stands beside the `pub` ones.
+        let open = SurfaceModel::build(&api_graph(), RefDir::Uses, Doors::Crate);
+        assert_eq!(band(&open, "Wire"), vec!["build", "read", "inner"]);
+        // At `pub`: only what leaves the crate, the trait's answer included.
+        let shut = SurfaceModel::build(&api_graph(), RefDir::Uses, Doors::Pub);
+        assert_eq!(band(&shut, "Wire"), vec!["build", "read"]);
+        // At `private`: the whole band, in the survey's order.
+        let all = SurfaceModel::build(&api_graph(), RefDir::Uses, Doors::All);
+        assert_eq!(band(&all, "Wire"), vec!["build", "hidden", "read", "inner"]);
+        // A method is never a mark of its own, at any door.
+        assert!(!all.marks.iter().any(|m| m.name == "build"));
+        // The row quotes the signature as written, and the type it names is
+        // the bold run of it.
+        let row = &open
+            .marks
+            .iter()
+            .find(|m| m.name == "Wire")
+            .unwrap()
+            .methods[0];
+        assert_eq!(row.decl, "pub fn build(nut: Nut) -> Wire");
+        assert_eq!(row.target, "Nut");
+    }
+
+    /// A method's signature edge is the type's, filed under the method's row —
+    /// and it is not a field. The chart must never read "Wire holds a Nut"
+    /// when all Wire does is hand one back.
+    #[test]
+    fn a_method_edge_is_the_types_api_and_not_a_field_of_it() {
+        let model = SurfaceModel::build(&api_graph(), RefDir::Uses, Doors::Crate);
+        let edge = model
+            .holds
+            .iter()
+            .find(|h| h.held == Anchor::Mark(1) && h.holder == Anchor::Mark(0))
+            .unwrap();
+        assert!(edge.from_method);
+        assert_eq!(edge.kind, HoldKind::Owns);
+        // And it seats nothing: a signature is not containment, whether it is
+        // a whole function's or one row of a type's.
+        let api = frame_named(&model, "api");
+        let mut seats = Vec::new();
+        walk(&api.forest, 0, &mut seats);
+        assert!(seats.contains(&(Anchor::Mark(1), 0)));
+        assert!(seats.iter().all(|&(_, depth)| depth == 0));
+        // The fold counts it as a signature naming the type, never a holder.
+        let nut = model.marks.iter().find(|m| m.name == "Nut").unwrap();
+        assert_eq!((nut.held_by, nut.named_by), (0, 0));
+    }
+
+    #[test]
+    fn a_call_to_a_method_lands_on_the_row_it_names() {
+        let model = SurfaceModel::build(&api_graph(), RefDir::Both, Doors::Crate);
+        let tie = model
+            .ties
+            .iter()
+            .find(|t| t.def == Anchor::Mark(0) && t.user == Anchor::Mark(2))
+            .unwrap();
+        assert_eq!(tie.count, 4);
+        // The call climbed to the type, and the sheet can still say which
+        // clause of the contract is leaned on.
+        assert_eq!(tie.rows, vec![("build".to_string(), 4)]);
+
+        // A call to a row the door folded is the type's, and says no more:
+        // filing it under a row nobody can see would point at nothing.
+        let mut g = api_graph();
+        g.local_refs[0].to = 4; // `hidden`
+        let folded = SurfaceModel::build(&g, RefDir::Both, Doors::Crate);
+        let tie = folded
+            .ties
+            .iter()
+            .find(|t| t.def == Anchor::Mark(0) && t.user == Anchor::Mark(2))
+            .unwrap();
+        assert_eq!(tie.count, 4);
+        assert!(tie.rows.is_empty());
+    }
+
+    #[test]
+    fn the_band_weaves_the_diff_the_way_the_fields_do() {
+        let mut g = api_graph();
+        // The working copy added `inner` and dropped `pub fn drain(self)`,
+        // which stood where `read` now does.
+        g.items[0].delta = Delta::Changed;
+        g.items[0].methods_added = vec![3];
+        g.items[0].methods_removed = vec![(2, "drain".into(), "pub fn drain(self)".into())];
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
+        let wire = model.marks.iter().find(|m| m.name == "Wire").unwrap();
+        assert_eq!(wire.letter(), Some("M"));
+        // The door folded `hidden` out from under the recorded index, and the
+        // struck row still seats where it stood — before `read`.
+        let rows: Vec<(&str, RowState)> = wire
+            .methods
+            .iter()
+            .map(|row| (row.name.as_str(), row.state))
+            .collect();
+        assert_eq!(
+            rows,
+            vec![
+                ("build", RowState::Same),
+                ("drain", RowState::Removed),
+                ("read", RowState::Same),
+                ("inner", RowState::Added),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_ghost_type_quotes_the_band_the_base_wrote() {
+        let mut g = api_graph();
+        let ghost_id = g.items.len() as u32;
+        g.ghosts.push(crate::api::GhostMark {
+            id: ghost_id,
+            path: "src/api.rs".into(),
+            krate: "slope".into(),
+            name: "Coil".into(),
+            kind: ItemKind::Struct,
+            vis: Vis::Pub,
+            line: 12,
+            field_rows: vec![("turns".into(), "u32".into())],
+            variants: Vec::new(),
+            ty: String::new(),
+            method_rows: vec![("wind".into(), "pub fn wind(&self) -> Nut".into())],
+        });
+        g.holds.push(HoldEdge {
+            from: ghost_id,
+            to: 1,
+            kind: HoldKind::Owns,
+            via: String::new(),
+            fields: vec![("wind".into(), "pub fn wind(&self) -> Nut".into())],
+            from_method: true,
+            event: Some(HoldEvent::Removed),
+        });
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
+        let ghost = model.marks.iter().find(|m| m.name == "Coil").unwrap();
+        assert!(ghost.ghost);
+        // A ghost's band is the base's whole band: no door can fold what is
+        // not there any more, and the row still bolds what it named.
+        assert_eq!(ghost.methods.len(), 1);
+        assert_eq!(ghost.methods[0].decl, "pub fn wind(&self) -> Nut");
+        assert_eq!(ghost.methods[0].target, "Nut");
+        assert!(model.holds.iter().any(|h| h.held == Anchor::Mark(1)
+            && h.holder == Anchor::Mark(ghost_id)
+            && h.from_method
+            && h.event == Some(HoldEvent::Removed)));
+    }
+
+    // ---- Traits: contracts with nothing but clauses. -----------------------
+
+    fn implement(trait_mark: u32, ty: u32, event: Option<HoldEvent>) -> crate::api::ImplEdge {
+        crate::api::ImplEdge {
+            trait_mark,
+            ty,
+            header: String::new(),
+            event,
+        }
+    }
+
+    /// `Reads` is a pub trait declaring `read` and `CAP`; `Quiet` is private.
+    /// `Wire` implements `Reads`, `Board` took it on this epoch, and `Board`
+    /// keeps a `dyn Reads` while `Wire` keeps a `dyn Quiet`.
+    fn trait_graph() -> CodeGraph {
+        let mut reads = mark(1, 0, "Reads", ItemKind::Trait, Vis::Pub);
+        reads.method_rows = vec![
+            method("read", "fn read(&self) -> Wire", Vis::Pub, false, 4),
+            method("CAP", "const CAP: usize", Vis::Pub, false, 5),
+        ];
+        let mut quiet = mark(2, 0, "Quiet", ItemKind::Trait, Vis::Private);
+        quiet.method_rows = vec![method("hush", "fn hush(&self)", Vis::Private, false, 6)];
+        let mut board = mark(3, 0, "Board", ItemKind::Struct, Vis::Pub);
+        board.field_rows = vec![("reader".into(), "Box<dyn Reads>".into())];
+        let mut wire = mark(0, 0, "Wire", ItemKind::Struct, Vis::Pub);
+        wire.field_rows = vec![("hush".into(), "Box<dyn Quiet>".into())];
+        let mut clauses: Vec<ItemMark> = ["read", "CAP", "hush"]
+            .iter()
+            .enumerate()
+            .map(|(at, name)| mark(4 + at as u32, 0, name, ItemKind::Fn, Vis::Pub))
+            .collect();
+        clauses[0].parent = Some(1);
+        clauses[1].parent = Some(1);
+        clauses[2].parent = Some(2);
+        let mut items = vec![wire, reads, quiet, board];
+        items.append(&mut clauses);
+        CodeGraph {
+            files: vec![file(0, "src/api.rs", false)],
+            refs: Vec::new(),
+            items,
+            implements: vec![
+                implement(1, 0, None),
+                // `Board` took the contract on this epoch: review gold.
+                implement(1, 3, Some(HoldEvent::Added)),
+                implement(2, 0, None),
+            ],
+            item_edges: Vec::new(),
+            local_refs: Vec::new(),
+            holds: vec![
+                // What a trait's own row names is the trait's edge, filed
+                // under the row.
+                HoldEdge {
+                    from: 1,
+                    to: 0,
+                    kind: HoldKind::Owns,
+                    via: String::new(),
+                    fields: vec![("read".into(), "fn read(&self) -> Wire".into())],
+                    from_method: true,
+                    event: None,
+                },
+                // Two `dyn` rows: one onto a drawn trait, one onto a folded.
+                HoldEdge {
+                    from: 3,
+                    to: 1,
+                    kind: HoldKind::Dyn,
+                    via: "dyn".into(),
+                    fields: vec![("reader".into(), "Box<dyn Reads>".into())],
+                    from_method: false,
+                    event: None,
+                },
+                HoldEdge {
+                    from: 0,
+                    to: 2,
+                    kind: HoldKind::Dyn,
+                    via: "dyn".into(),
+                    fields: vec![("hush".into(), "Box<dyn Quiet>".into())],
+                    from_method: false,
+                    event: None,
+                },
+            ],
+            ghosts: Vec::new(),
+            unresolved: 0,
+            notes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_trait_is_a_mark_the_door_admits_and_a_band_of_clauses() {
+        let model = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::Crate);
+        assert_eq!(model.facts(0).traits, 1);
+        let reads = model.marks.iter().find(|m| m.name == "Reads").unwrap();
+        // Nearly all band: a trait is its clauses, methods and associated
+        // items alike, quoted as written.
+        assert!(reads.fields.is_empty());
+        assert_eq!(
+            reads
+                .methods
+                .iter()
+                .map(|r| r.decl.as_str())
+                .collect::<Vec<_>>(),
+            vec!["fn read(&self) -> Wire", "const CAP: usize"]
+        );
+        // The row's own edge bolds what it names.
+        assert_eq!(reads.methods[0].target, "Wire");
+        // A trait is never a root: nothing can hold a contract.
+        assert!(!model.marks.iter().any(|m| m.name == "Quiet"));
+        let api = frame_named(&model, "api");
+        assert_eq!(api.private, 1);
+        // At `private` the quiet one is drawn beside it.
+        let all = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::All);
+        assert_eq!(all.facts(0).traits, 2);
+    }
+
+    #[test]
+    fn a_trait_rows_edge_is_the_traits_and_files_under_the_row() {
+        let model = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::Crate);
+        let edge = model
+            .holds
+            .iter()
+            .find(|h| h.held == Anchor::Mark(0) && h.holder == Anchor::Mark(1))
+            .unwrap();
+        assert!(edge.from_method);
+        // And it is a signature naming the type, never the trait holding it.
+        let wire = model.marks.iter().find(|m| m.name == "Wire").unwrap();
+        assert_eq!((wire.held_by, wire.named_by), (0, 0));
+    }
+
+    #[test]
+    fn implementing_runs_from_the_contract_to_the_type_that_promised_it() {
+        let model = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::Crate);
+        let edge = |trait_: Anchor, ty: Anchor| {
+            model
+                .holds
+                .iter()
+                .find(|h| h.kind == HoldKind::Implements && h.held == trait_ && h.holder == ty)
+        };
+        // Tail is the contract, head is the promise: a change to `Reads`
+        // travels to everything that implements it.
+        assert!(edge(Anchor::Mark(1), Anchor::Mark(0)).is_some());
+        // An impl this epoch added is diff ink.
+        assert_eq!(
+            edge(Anchor::Mark(1), Anchor::Mark(3)).and_then(|h| h.event),
+            Some(HoldEvent::Added)
+        );
+        // A folded trait's promise lands on its module's counted row, the way
+        // every other edge touching folded code does.
+        let api = frame_named(&model, "api");
+        assert!(edge(Anchor::Private(api.id), Anchor::Mark(0)).is_some());
+        // Promising a contract is not being held by one: `Wire` is still a
+        // root, and the word for the line is rust's own.
+        assert!(model.roots >= 1);
+        assert_eq!(
+            edge(Anchor::Mark(1), Anchor::Mark(0)).map(|h| h.via.as_str()),
+            Some("implements")
+        );
+    }
+
+    #[test]
+    fn a_dyn_row_lands_on_the_trait_it_names() {
+        let model = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::Crate);
+        let dyn_edge = |held: Anchor| {
+            model
+                .holds
+                .iter()
+                .find(|h| h.kind == HoldKind::Dyn && h.held == held)
+        };
+        // A drawn trait takes the edge on its own block.
+        assert_eq!(
+            dyn_edge(Anchor::Mark(1)).map(|h| h.holder),
+            Some(Anchor::Mark(3))
+        );
+        // A folded one takes it on the counted row — it is not dropped, and
+        // there is no honesty counter left to explain it away.
+        let api = frame_named(&model, "api");
+        assert_eq!(
+            dyn_edge(Anchor::Private(api.id)).map(|h| h.holder),
+            Some(Anchor::Mark(0))
+        );
+        // At `private` the same edge lands on the trait's own block.
+        let all = SurfaceModel::build(&trait_graph(), RefDir::Uses, Doors::All);
+        assert!(
+            all.holds
+                .iter()
+                .any(|h| h.kind == HoldKind::Dyn && h.held == Anchor::Mark(2))
+        );
+    }
+
+    #[test]
+    fn a_ghost_trait_quotes_the_band_the_base_wrote() {
+        let mut g = trait_graph();
+        let ghost_id = g.items.len() as u32;
+        g.ghosts.push(crate::api::GhostMark {
+            id: ghost_id,
+            path: "src/api.rs".into(),
+            krate: "slope".into(),
+            name: "Winds".into(),
+            kind: ItemKind::Trait,
+            vis: Vis::Pub,
+            line: 30,
+            field_rows: Vec::new(),
+            variants: Vec::new(),
+            ty: String::new(),
+            method_rows: vec![("wind".into(), "fn wind(&self) -> Wire".into())],
+        });
+        g.implements.push(crate::api::ImplEdge {
+            trait_mark: ghost_id,
+            ty: 0,
+            header: "impl Winds for Wire".into(),
+            event: Some(HoldEvent::Removed),
+        });
+        // Its band named `Wire`, the way the base diff re-draws a dropped
+        // row's edge from the edition that had it.
+        g.holds.push(HoldEdge {
+            from: ghost_id,
+            to: 0,
+            kind: HoldKind::Owns,
+            via: String::new(),
+            fields: vec![("wind".into(), "fn wind(&self) -> Wire".into())],
+            from_method: true,
+            event: Some(HoldEvent::Removed),
+        });
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
+        let ghost = model.marks.iter().find(|m| m.name == "Winds").unwrap();
+        assert!(ghost.ghost && ghost.kind == ItemKind::Trait);
+        assert_eq!(ghost.letter(), Some("D"));
+        assert_eq!(ghost.methods.len(), 1);
+        assert_eq!(ghost.methods[0].target, "Wire");
+        // The promise it took away is drawn from the base edition.
+        assert!(model.holds.iter().any(|h| h.kind == HoldKind::Implements
+            && h.held == Anchor::Mark(ghost_id)
+            && h.holder == Anchor::Mark(0)
+            && h.event == Some(HoldEvent::Removed)));
+        // A trait seats like the other contracts: never under anything.
+        let api = frame_named(&model, "api");
+        let mut seats = Vec::new();
+        walk(&api.forest, 0, &mut seats);
+        assert!(seats.contains(&(Anchor::Mark(ghost_id), 0)));
+    }
+
+    // ---- Contracts one line long: consts and type aliases. -----------------
+
+    /// `CAP` and `Wire`'s alias are pub; `SEED` is private. The alias stands
+    /// in front of `Wire`, and the const's declared type names it too.
+    fn one_line_graph() -> CodeGraph {
+        let mut cap = mark(1, 0, "CAP", ItemKind::Const, Vis::Pub);
+        cap.ty = "Wire".to_string();
+        let mut seed = mark(2, 0, "SEED", ItemKind::Const, Vis::Private);
+        seed.ty = "u32".to_string();
+        let mut alias = mark(3, 0, "Spool", ItemKind::TypeAlias, Vis::Pub);
+        alias.ty = "Vec<Wire>".to_string();
+        // An associated const of `Wire` is a row of its block, never a mark.
+        let mut assoc = mark(4, 0, "LIMIT", ItemKind::Const, Vis::Pub);
+        assoc.parent = Some(0);
+        let mut wire = mark(0, 0, "Wire", ItemKind::Struct, Vis::Pub);
+        wire.method_rows = vec![method("LIMIT", "const LIMIT: usize", Vis::Pub, false, 4)];
+        CodeGraph {
+            files: vec![file(0, "src/api.rs", false)],
+            refs: Vec::new(),
+            items: vec![wire, cap, seed, alias, assoc],
+            implements: Vec::new(),
+            item_edges: Vec::new(),
+            local_refs: Vec::new(),
+            holds: vec![
+                HoldEdge {
+                    from: 1,
+                    to: 0,
+                    kind: HoldKind::Owns,
+                    via: String::new(),
+                    fields: vec![("CAP".into(), "Wire".into())],
+                    from_method: false,
+                    event: None,
+                },
+                HoldEdge {
+                    from: 3,
+                    to: 0,
+                    kind: HoldKind::Owns,
+                    via: String::new(),
+                    fields: vec![("Spool".into(), "Vec<Wire>".into())],
+                    from_method: false,
+                    event: None,
+                },
+            ],
+            ghosts: Vec::new(),
+            unresolved: 0,
+            notes: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn a_const_and_an_alias_are_contracts_one_line_long() {
+        let model = SurfaceModel::build(&one_line_graph(), RefDir::Uses, Doors::Crate);
+        let facts = model.facts(0);
+        assert_eq!((facts.consts, facts.aliases), (1, 1));
+        let cap = model.marks.iter().find(|m| m.name == "CAP").unwrap();
+        // The line a static uses for its declared type is the line they use
+        // for what they name, and it bolds the same way.
+        assert_eq!((cap.ty.as_str(), cap.ty_target.as_str()), ("Wire", "Wire"));
+        assert!(cap.fields.is_empty() && cap.methods.is_empty());
+        // A private one folds behind the module's counted row.
+        assert!(!model.marks.iter().any(|m| m.name == "SEED"));
+        assert_eq!(frame_named(&model, "api").private, 1);
+        // An associated const is its block's row, and never drawn twice.
+        assert!(!model.marks.iter().any(|m| m.name == "LIMIT"));
+        let wire = model.marks.iter().find(|m| m.name == "Wire").unwrap();
+        assert_eq!(wire.methods.len(), 1);
+        // Neither is a root by declaration — only a static is.
+        assert_eq!(model.roots, 0);
+
+        let all = SurfaceModel::build(&one_line_graph(), RefDir::Uses, Doors::All);
+        assert_eq!(all.facts(0).consts, 2);
+    }
+
+    #[test]
+    fn an_alias_points_at_what_it_stands_in_front_of() {
+        let model = SurfaceModel::build(&one_line_graph(), RefDir::Uses, Doors::Crate);
+        let edge = model
+            .holds
+            .iter()
+            .find(|h| h.held == Anchor::Mark(0) && h.holder == Anchor::Mark(3))
+            .unwrap();
+        // A change to the target travels to the alias: the arrowhead rests on
+        // the alias, and the line carries rust's word for what it is.
+        assert_eq!(edge.via, "aliases");
+        assert!(!edge.from_method);
+        // A wrapper the walk met still wins the word — the alias is not the
+        // only thing the line has to say.
+        let mut g = one_line_graph();
+        g.holds[1].via = "Arc".to_string();
+        let shared = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate);
+        assert!(
+            shared
+                .holds
+                .iter()
+                .any(|h| h.holder == Anchor::Mark(3) && h.via == "Arc")
+        );
+    }
+
+    #[test]
+    fn a_one_line_contract_seats_beside_what_it_names() {
+        let model = SurfaceModel::build(&one_line_graph(), RefDir::Uses, Doors::Crate);
+        let api = frame_named(&model, "api");
+        // `Wire` first, then the two contracts about it, then the fold row.
+        assert_eq!(
+            roots(api),
+            vec![
+                Anchor::Mark(0),
+                Anchor::Mark(1),
+                Anchor::Mark(3),
+                Anchor::Private(api.id),
+            ]
+        );
+        let mut seats = Vec::new();
+        walk(&api.forest, 0, &mut seats);
+        assert!(seats.iter().all(|&(_, depth)| depth == 0));
     }
 }

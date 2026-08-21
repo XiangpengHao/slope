@@ -90,12 +90,13 @@ impl Doors {
     }
 
     /// The word a frame's visibility fold row counts in. At `Pub` the row
-    /// holds `pub(crate)` types beside the private ones, and *internal* is
-    /// the only word true of both.
+    /// holds `pub(crate)` items beside the private ones, and *internal* is
+    /// the only word true of both. *Item* rather than *type*: the row counts
+    /// everything below the door — functions, consts and aliases included.
     pub fn fold_word(self) -> &'static str {
         match self {
-            Doors::Pub => "internal type",
-            _ => "private type",
+            Doors::Pub => "internal item",
+            _ => "private item",
         }
     }
 
@@ -103,10 +104,10 @@ impl Doors {
     pub fn fold_title(self) -> &'static str {
         match self {
             Doors::Pub => {
-                "types with no door out of their crate are not drawn at this setting; \
+                "items with no door out of their crate are not drawn at this setting; \
                  every edge that touches one lands here"
             }
-            _ => "private types are never drawn; every edge that touches one lands here",
+            _ => "private items are never drawn; every edge that touches one lands here",
         }
     }
 }

@@ -616,6 +616,29 @@ details.fold:not([open]) > summary::after {
   border-left: 2.5px solid var(--color-ink);
   padding-left: 5.5px;
 }
+/* A free function is a contract, not a shape. It wears the gate's mark turned
+   to face the paper — a 2.5px ink rule across the top, where a static wears it
+   down the side — and stands on a wash of the same ink, dark enough to read
+   above a module frame's own tint. Between them a band of contracts tells
+   itself apart from the state around it without anyone reading the keyword.
+   The padding gives back exactly what the rule takes, so the plate still fits
+   the box the layout measured. Declared before the diff and ghost rules, so
+   the amber frame and the dashed one still speak over it: what happened to a
+   contract this epoch outranks its being one. */
+.atlas .data-mark.is-sig {
+  border-top: 2.5px solid var(--color-ink);
+  padding-top: 3.5px;
+  background: color-mix(in srgb, var(--color-ink) 11%, var(--color-paper));
+}
+/* The legend's sample of that plate, off the same two values, so the key
+   cannot drift from the map — the rule the wire samples follow. */
+.atlas .sig-sample .plate-ground {
+  fill: color-mix(in srgb, var(--color-ink) 11%, var(--color-paper));
+  stroke: var(--color-ink-line);
+}
+.atlas .sig-sample .plate-rule {
+  fill: var(--color-ink);
+}
 /* The structural diff's ink. A diff-touched block wears the flare on its own
    frame, not only its letter; a ghost — a type only the base has — keeps the
    frame but dashed, its text at the ghost's pressure. */
@@ -759,6 +782,37 @@ details.fold:not([open]) > summary::after {
 .atlas .data-mark .tok-punct {
   color: var(--color-tok-punct);
 }
+/* The second band: the methods a type publishes. The rule says the shape has
+   ended and the promise has begun — a hairline, because the band is the same
+   quotation the rows above it are, not another material. */
+.atlas .dm-band {
+  margin-top: 3px;
+  padding-top: 2px;
+  border-top: 1px solid color-mix(in srgb, var(--color-ink-line) 55%, transparent);
+}
+.atlas .dm-sig {
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--color-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.atlas .data-mark.is-ghost .dm-sig,
+.atlas .data-mark.is-ghost .dm-sig span {
+  color: var(--color-ink-soft);
+}
+.atlas .dm-sig.is-del {
+  text-decoration: line-through;
+}
+.atlas .dm-sig.is-del,
+.atlas .dm-sig.is-del span {
+  color: var(--color-ink-soft);
+}
+.atlas .dm-sig.is-del .dm-mk {
+  color: var(--color-flare);
+}
+
 /* What the mark holds back, counted. A mark that hides nothing draws no rule. */
 .atlas .dm-folds {
   margin-top: 3px;
@@ -856,22 +910,30 @@ details.fold:not([open]) > summary::after {
   stroke-width: 4px;
   stroke-linejoin: round;
 }
-/* Kind is dash grammar; the wrapper writes its own word on the line. */
-.atlas .data-wire.is-shares .wire-path,
-.atlas .data-wire.is-dyn .wire-path {
+/* Two inks, and only two. Solid is interface coupling: the dependent's own
+   published surface names the other end — a field, a signature. It draws at
+   one pressure whatever the wrapper is, because the wrapper is a word on the
+   line (`Arc`, `&`, `dyn`) and no word at all is plain ownership. Dash used
+   to encode which wrapper it was; dash is spoken for now. The kind still
+   rides on the group as a class, for the hover and diff rules to reach. */
+.atlas .data-wire.data-hold .wire-path {
   stroke: var(--color-ink-soft);
-  stroke-dasharray: 6 4;
 }
-.atlas .data-wire.is-shares .wire-head,
-.atlas .data-wire.is-dyn .wire-head {
+.atlas .data-wire.data-hold .wire-head {
   fill: var(--color-ink-soft);
 }
-.atlas .data-wire.is-borrows .wire-path {
+/* Implementing is the one interface line no row draws — the impl block does —
+   so it carries rust's own word and nothing else. It stays inside the solid
+   family: a promise is as binding as a field. */
+.atlas .data-wire.is-impl .wire-path {
   stroke: var(--color-ink-soft);
-  stroke-dasharray: 1.6 3;
 }
-.atlas .data-wire.is-borrows .wire-head {
-  fill: var(--color-ink-soft);
+
+/* Dashed is implementation coupling: a body leaning on a mark — a call, a
+   name written inside a function. Lighter than the surface it serves, and
+   dashed because it is what the published shape does not promise. */
+.atlas .data-wire.is-ref .wire-path {
+  stroke-dasharray: 5 3;
 }
 .atlas .data-wire.is-ref .wire-path,
 .atlas .data-wire.is-ref .wire-head {
