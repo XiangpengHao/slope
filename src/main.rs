@@ -1,8 +1,8 @@
 use dioxus::prelude::*;
 
 use views::{
-    AtlasShell, CodeCrate, CodeFile, CodeOverview, Focus, NavigatorAgenda, NavigatorFocus,
-    Overview, RingSel, SurfaceFocus, SurfaceModFocus, SurfaceOverview,
+    AtlasShell, CodeCrate, CodeFile, CodeOverview, Focus, Overview, RingSel, SurfaceFocus,
+    SurfaceModFocus, SurfaceOverview,
 };
 
 /// Server-side analysis: cargo metadata, VCS diff, manifest events.
@@ -21,10 +21,7 @@ mod views;
 /// one crate's district, one file (its path segments), one item (`?item=`).
 /// `/surface` is the surface altitude: every contract the code publishes, and
 /// what leans on what; selecting one is `/surface/mark/:..path?item=` (its
-/// defining file, then its label). `/navigator` is the relation-first reading of
-/// the same survey: the diff agenda, and one mark in focus at
-/// `/navigator/mark/:..path?item=` — the same selection idiom, so a link from
-/// either altitude means the same thing.
+/// defining file, then its label).
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
@@ -47,10 +44,6 @@ enum Route {
         SurfaceFocus { path: Vec<String>, item: String },
         #[route("/surface/mod/:..module")]
         SurfaceModFocus { module: Vec<String> },
-        #[route("/navigator")]
-        NavigatorAgenda {},
-        #[route("/navigator/mark/:..path?:item")]
-        NavigatorFocus { path: Vec<String>, item: String },
 }
 
 /* impeccable direction contract — served inside the page, greppable in the

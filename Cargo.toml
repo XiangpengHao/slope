@@ -16,8 +16,8 @@ categories = ["development-tools", "visualization", "command-line-utilities"]
 # An allowlist, not an `exclude` list, for one reason: `assets/tailwind.css` is
 # generated and gitignored, and an `asset!` in main.rs needs it at compile time.
 # Cargo's git-derived file list would drop it and the published crate would not
-# build; `include` overrides that. Design notes, the spec, and the throwaway
-# HTML prototypes stay out as repo furniture.
+# build; `include` overrides that. Design notes and the spec stay out as repo
+# furniture.
 include = ["/src", "/assets", "/Cargo.toml", "/Cargo.lock", "/Dioxus.toml", "/clippy.toml", "/tailwind.css", "/README.md", "/LICENSE-MIT", "/LICENSE-APACHE"]
 
 [[bin]]

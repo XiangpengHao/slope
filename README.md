@@ -13,7 +13,7 @@ The name is "slop" with an e: the gradient you walk between altitudes.
 
 ## Altitudes
 
-One plate, three altitudes, joined by the `dependencies · code · data` line in
+One plate, three altitudes, joined by the `dependencies · code · surface` line in
 every cartouche:
 
 | Route | Altitude | What it draws |

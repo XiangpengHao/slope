@@ -12,7 +12,6 @@ use crate::views::atlas::{Chart, DrawnCap};
 use crate::views::chrome::{Legend, SearchBox, TitleBlock};
 use crate::views::codemap::CodeState;
 use crate::views::codemap::map::CodeCamera;
-use crate::views::navigator::NavState;
 use crate::views::surface::map::SurfaceCamera;
 use crate::views::survey::SurveyShell;
 
@@ -191,7 +190,6 @@ pub fn AtlasShell() -> Element {
     use_context_provider(CodeState::new);
     use_context_provider(CodeCamera::new);
     use_context_provider(SurfaceCamera::new);
-    use_context_provider(NavState::new);
 
     // The back/forward keys live on the shell, not the views: they must
     // survive every route change, and they never need a channel back.
@@ -214,8 +212,6 @@ pub fn AtlasShell() -> Element {
             | Route::SurfaceOverview {}
             | Route::SurfaceFocus { .. }
             | Route::SurfaceModFocus { .. }
-            | Route::NavigatorAgenda {}
-            | Route::NavigatorFocus { .. }
     );
     let step: Option<TrailStep> = match &route {
         Route::Overview {} => Some(None),
