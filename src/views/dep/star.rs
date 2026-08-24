@@ -29,43 +29,45 @@ pub(super) struct StarData {
     pub(crate) versioned: bool,
 }
 
-/// Star radius from magnitude (how many crates depend on this one).
-pub(super) fn star_radius(dependents: u32) -> f64 {
-    (4.0 + (dependents as f64).sqrt() * 1.3).min(11.0)
-}
-
 /// Room the mark needs beyond its core circle: the focal ring's ticks reach
 /// farthest (r + 9.5), changed flare rays reach r + 6.5.
 const MARK_OVERHANG: f64 = 11.0;
 
-/// The square node box for one crate's star, from its magnitude. Constant
-/// per crate so selection never moves a star.
-pub(super) fn star_box(info: &CrateInfo) -> f64 {
-    2.0 * (star_radius(info.dependents) + MARK_OVERHANG)
-}
+impl CrateInfo {
+    /// Star radius from magnitude (how many crates depend on this one).
+    pub(super) fn star_radius(&self) -> f64 {
+        (4.0 + (self.dependents as f64).sqrt() * 1.3).min(11.0)
+    }
 
-/// The state a star announces, in words — never color alone, and in the words
-/// the tools themselves use.
-fn state_words(info: &CrateInfo) -> Option<String> {
-    if info.ghost {
-        return Some("removed".into());
+    /// The square node box for this crate's star, from its magnitude.
+    /// Constant per crate so selection never moves a star.
+    pub(super) fn star_box(&self) -> f64 {
+        2.0 * (self.star_radius() + MARK_OVERHANG)
     }
-    if info.changed {
-        let files = info.changed_files;
-        return Some(if files == 1 {
-            "1 file changed".into()
-        } else {
-            format!("{files} files changed")
-        });
+
+    /// The state a star announces, in words — never color alone, and in the
+    /// words the tools themselves use.
+    fn state_words(&self) -> Option<String> {
+        if self.ghost {
+            return Some("removed".into());
+        }
+        if self.changed {
+            let files = self.changed_files;
+            return Some(if files == 1 {
+                "1 file changed".into()
+            } else {
+                format!("{files} files changed")
+            });
+        }
+        if let Some(dist) = self.affected_dist {
+            return Some(if dist == 1 {
+                "1 hop downstream".into()
+            } else {
+                format!("{dist} hops downstream")
+            });
+        }
+        None
     }
-    if let Some(dist) = info.affected_dist {
-        return Some(if dist == 1 {
-            "1 hop downstream".into()
-        } else {
-            format!("{dist} hops downstream")
-        });
-    }
-    None
 }
 
 /// The engraved star mark for one crate, reused by the chart nodes and every
@@ -89,9 +91,7 @@ pub(super) fn StarMark(
     } else {
         3.5
     };
-    let r = star_radius(info.dependents)
-        .min(box_px / 2.0 - overhang)
-        .max(2.5);
+    let r = info.star_radius().min(box_px / 2.0 - overhang).max(2.5);
     let c = box_px / 2.0;
     // The halo fades with distance from the change: nearer is stronger.
     let halo_opacity = affected
@@ -218,7 +218,7 @@ pub(super) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
         named,
         versioned,
     } = ctx.node.data.clone();
-    let box_px = star_box(&info);
+    let box_px = info.star_box();
 
     // Label side: outward from the center, so it points into open paper.
     // Sideways seats win except near dead vertical — side-by-side names
@@ -240,7 +240,8 @@ pub(super) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
         1 => "1 hop".to_string(),
         n => format!("{n} hops"),
     };
-    let state = state_words(&info)
+    let state = info
+        .state_words()
         .map(|w| format!(" · {w}"))
         .unwrap_or_default();
     // The hover words carry what the mark encodes — the size is fan-in, the

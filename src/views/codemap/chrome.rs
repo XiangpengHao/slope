@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, FileInfo, ItemKind, ItemMark, Vis};
+use crate::api::{CodeGraph, FileInfo, ItemMark};
 use crate::views::codemap::{RefDir, file_route, item_route, use_code};
 
 pub(crate) fn plural(n: usize, word: &str) -> String {
@@ -32,33 +32,6 @@ pub(crate) fn file_name(path: &str) -> &str {
 
 pub(super) fn dir_of(path: &str) -> &str {
     path.rsplit_once('/').map(|(d, _)| d).unwrap_or("")
-}
-
-/// An item's kind, as rust writes it. The keyword is the representation every
-/// rust reader already has; there is nothing to learn.
-pub(crate) fn kind_words(kind: ItemKind) -> &'static str {
-    match kind {
-        ItemKind::Fn => "fn",
-        ItemKind::Struct => "struct",
-        ItemKind::Enum => "enum",
-        ItemKind::Union => "union",
-        ItemKind::Trait => "trait",
-        ItemKind::TypeAlias => "type",
-        ItemKind::Const => "const",
-        ItemKind::Static => "static",
-        ItemKind::Macro => "macro",
-        ItemKind::Mod => "mod",
-        ItemKind::Impl => "impl",
-    }
-}
-
-/// `pub fn`, `struct`, `pub(crate) mod` — what rust writes in front of a name.
-/// A private item declares no visibility, so neither does its row.
-pub(crate) fn decl_words(vis: Vis, kind: ItemKind) -> String {
-    match vis.keyword() {
-        Some(vis) => format!("{vis} {}", kind_words(kind)),
-        None => kind_words(kind).to_string(),
-    }
 }
 
 /// Which rung of the ladder a cartouche stands on.
@@ -279,7 +252,7 @@ pub(super) fn CodeSearch(graph: CodeGraph) -> Element {
                                             }
                                         },
                                         SearchHit::Item(m, path) => rsx! {
-                                            span { class: "shrink-0 font-data text-[9.5px] text-ink-soft", "{kind_words(m.kind)}" }
+                                            span { class: "shrink-0 font-data text-[9.5px] text-ink-soft", "{m.kind.words()}" }
                                             span { class: "truncate font-data text-[11px] text-ink", "{m.name}" }
                                             span { class: "ml-auto shrink-0 truncate font-data text-[9px] text-ink-soft",
                                                 "{path}:{m.line}"

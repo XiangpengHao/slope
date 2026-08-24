@@ -13,7 +13,25 @@ use std::path::PathBuf;
 
 use cargo_metadata::{DependencyKind, MetadataCommand};
 
-use crate::api::{CrateInfo, DepEvent, DepKind, DepLink, WorkspaceGraph};
+use crate::api::{CrateInfo, DepEvent, DepKind, DepLink, HoldKind, WorkspaceGraph};
+
+impl HoldKind {
+    /// How loudly a wrapper speaks. An edge takes the strongest wrapper met
+    /// anywhere on the path: `Arc<Vec<&dyn Trait>>` shares, whatever else it
+    /// passed through on the way. The base-edition walk ranks the words it
+    /// reads by the same order, or the two editions would disagree about
+    /// which word an edge carries.
+    fn rank(self) -> u8 {
+        match self {
+            HoldKind::Owns => 0,
+            HoldKind::Borrows => 1,
+            HoldKind::Dyn => 2,
+            HoldKind::Shares => 3,
+            // Never met on a type walk: an impl block draws it, not a row.
+            HoldKind::Implements => 4,
+        }
+    }
+}
 
 /// Whether the survey charts test-only code. Off by default (2026-08-24,
 /// user): a reviewer reads the workspace the workspace ships, and a fixture
@@ -147,7 +165,7 @@ pub(crate) fn analyze() -> Result<WorkspaceGraph, String> {
         let Ok(rel) = pkg.manifest_path.as_std_path().strip_prefix(&root) else {
             continue;
         };
-        let Some(old) = vcs::file_at_base(&root, &diff, &rel.to_string_lossy()) else {
+        let Some(old) = diff.file_at_base(&root, &rel.to_string_lossy()) else {
             continue;
         };
         let Ok(new) = std::fs::read_to_string(pkg.manifest_path.as_std_path()) else {

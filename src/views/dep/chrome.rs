@@ -291,21 +291,26 @@ fn repeated_names<'a>(crates: impl Iterator<Item = &'a CrateInfo>) -> HashSet<St
     twice
 }
 
-/// Which cargo table an edge comes from, spelled the way `cargo tree` spells
-/// it. A normal dependency needs no tag: it is the default table.
-fn kind_words(kind: DepKind) -> Option<&'static str> {
-    match kind {
-        DepKind::Normal => None,
-        DepKind::Dev => Some("(dev)"),
-        DepKind::Build => Some("(build)"),
+impl DepKind {
+    /// Which cargo table an edge comes from, spelled the way `cargo tree`
+    /// spells it. A normal dependency needs no tag: it is the default table.
+    fn words(self) -> Option<&'static str> {
+        match self {
+            DepKind::Normal => None,
+            DepKind::Dev => Some("(dev)"),
+            DepKind::Build => Some("(build)"),
+        }
     }
 }
 
-fn event_words(event: &DepEvent) -> String {
-    match event {
-        DepEvent::Added => "added".into(),
-        DepEvent::Removed => "removed".into(),
-        DepEvent::Bumped(old, new) => format!("{old} → {new}"),
+impl DepEvent {
+    /// The manifest edit in a word, for a row in a panel list.
+    fn words(&self) -> String {
+        match self {
+            DepEvent::Added => "added".into(),
+            DepEvent::Removed => "removed".into(),
+            DepEvent::Bumped(old, new) => format!("{old} → {new}"),
+        }
     }
 }
 
@@ -329,12 +334,12 @@ fn CrateRow(
                 span { class: "text-ink-line", " v{info.version}" }
             }
         }
-        if let Some(k) = kind_words(kind) {
+        if let Some(k) = kind.words() {
             span { class: "shrink-0 font-data text-[9.5px] text-ink-soft", "{k}" }
         }
         if let Some(ev) = &event {
             span { class: "ml-auto shrink-0 font-data text-[9.5px] text-flare",
-                "{event_words(ev)}"
+                "{ev.words()}"
             }
         }
     };

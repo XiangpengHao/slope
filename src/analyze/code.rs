@@ -449,7 +449,7 @@ fn survey_attached(
                     // An impl block has no mark to land on; fall back to the
                     // file as a whole.
                     .filter(|item| item.kind != ItemKind::Impl)
-                    .map(item_label)
+                    .map(RawItem::label)
                     .unwrap_or_default();
                 out.push(RefSpan {
                     start,
@@ -536,7 +536,7 @@ fn survey_attached(
         })
         .collect();
     let efids: Vec<EditionedFileId> = raw.iter().map(|f| f.efid).collect();
-    let mut walk = data::walk(&sema, db, &efids, &holders, mark_at.len(), &data_mark);
+    let mut walk = data::DataWalk::walk(&sema, db, &efids, &holders, mark_at.len(), &data_mark);
 
     // ---- Assemble the wire model. -----------------------------------------
 
@@ -640,7 +640,7 @@ fn survey_attached(
             file: fi,
             local: li,
             name: item.name.clone(),
-            label: item_label(item),
+            label: item.label(),
             kind: item.kind,
             vis: item.vis,
             line: starts[fi as usize].line(item.range.start()),
@@ -802,7 +802,7 @@ fn survey_attached(
     };
     // The structural diff: per-declaration deltas, ghosts for what the base
     // had, and added/removed hold events, read syntactically from the base.
-    super::basediff::apply(dir, &diff, &mut graph, &sources, &details);
+    graph.apply_base_diff(dir, &diff, &sources, &details);
 
     Ok(CodeIndex {
         graph,
@@ -830,12 +830,14 @@ fn workspace_rel(vfs: &Vfs, fid: FileId, root: &std::path::Path) -> Option<Strin
     Some(rel)
 }
 
-/// `"Trail::note"` for items in a section, plain name otherwise.
-fn item_label(item: &RawItem) -> String {
-    if item.section.is_empty() {
-        item.name.clone()
-    } else {
-        format!("{}::{}", section_type(&item.section), item.name)
+impl RawItem {
+    /// `"Trail::note"` for items in a section, plain name otherwise.
+    fn label(&self) -> String {
+        if self.section.is_empty() {
+            self.name.clone()
+        } else {
+            format!("{}::{}", section_type(&self.section), self.name)
+        }
     }
 }
 
@@ -881,14 +883,16 @@ fn compact(text: impl ToString) -> String {
     out
 }
 
-/// Visibility as declared. `pub(crate)`, `pub(super)`, and `pub(in path)`
-/// stop at the crate boundary and must not read as `pub`; `pub(self)` is no
-/// wider than no `pub` at all.
-pub(super) fn vis_kind(vis: Option<ast::Visibility>) -> Vis {
-    match vis.map(|v| v.kind()) {
-        None | Some(VisibilityKind::PubSelf) => Vis::Private,
-        Some(VisibilityKind::Pub) => Vis::Pub,
-        Some(_) => Vis::Crate,
+impl From<Option<ast::Visibility>> for Vis {
+    /// Visibility as declared. `pub(crate)`, `pub(super)`, and `pub(in path)`
+    /// stop at the crate boundary and must not read as `pub`; `pub(self)` is
+    /// no wider than no `pub` at all.
+    fn from(vis: Option<ast::Visibility>) -> Self {
+        match vis.map(|v| v.kind()) {
+            None | Some(VisibilityKind::PubSelf) => Vis::Private,
+            Some(VisibilityKind::Pub) => Vis::Pub,
+            Some(_) => Vis::Crate,
+        }
     }
 }
 
@@ -940,7 +944,7 @@ impl ItemScope {
     }
 
     fn vis(&self, vis: Option<ast::Visibility>) -> Vis {
-        match vis_kind(vis) {
+        match Vis::from(vis) {
             Vis::Private => self.inherited.unwrap_or(Vis::Private),
             declared => declared,
         }

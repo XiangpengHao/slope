@@ -309,6 +309,27 @@ impl Placed {
         Point::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
     }
 
+    /// Which side of two boxes face each other, so a tie leaves and lands on
+    /// open paper instead of crossing its own territory. The data chart draws
+    /// its edges between measured boxes the same way, so this lives with the
+    /// box rather than being copied per chart.
+    pub(crate) fn tie_ends(self, other: Self) -> (Point, Point) {
+        let (ac, bc) = (self.center(), other.center());
+        if (ac.x - bc.x).abs() > (ac.y - bc.y).abs() {
+            let left = ac.x < bc.x;
+            (
+                Point::new(if left { self.x + self.w } else { self.x }, ac.y),
+                Point::new(if left { other.x } else { other.x + other.w }, bc.y),
+            )
+        } else {
+            let top = ac.y < bc.y;
+            (
+                Point::new(ac.x, if top { self.y + self.h } else { self.y }),
+                Point::new(bc.x, if top { other.y } else { other.y + other.h }),
+            )
+        }
+    }
+
     fn shifted(self, dx: f64, dy: f64) -> Self {
         Self {
             x: self.x + dx,

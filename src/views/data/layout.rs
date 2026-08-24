@@ -75,6 +75,59 @@ struct Packed {
 }
 
 impl Packed {
+    /// Seat a frame's children on a skyline and draw the frame around them.
+    /// The forest comes first — a frame's own types before the frames nested
+    /// in it — and the child frames last, so the reading order down a frame is
+    /// the same everywhere on the chart.
+    fn shelve(kids: Vec<(Kid, f64, f64)>, label_w: f64) -> Self {
+        let widest = kids.iter().map(|(_, w, _)| *w).fold(0.0, f64::max);
+        let area: f64 = kids.iter().map(|(_, w, h)| (w + GAP) * (h + GAP)).sum();
+        let target = widest.max((area * LANDSCAPE).sqrt());
+
+        let boxes: Vec<(f64, f64)> = kids.iter().map(|&(_, w, h)| (w, h)).collect();
+        let at = skyline(&boxes, target, GAP);
+        let mut out = Packed::default();
+        let (mut content_w, mut content_h) = (0.0f64, 0.0f64);
+        for ((kid, w, h), (x, y)) in kids.into_iter().zip(at) {
+            match kid {
+                Kid::Tree(packed) => {
+                    let inner = packed.shift(x, y);
+                    out.marks.extend(inner.marks);
+                    out.rows.extend(inner.rows);
+                }
+                Kid::Frame(id, packed) => {
+                    out.frames.push((id, Placed { x, y, w, h }));
+                    let inner = packed.shift(x, y);
+                    out.marks.extend(inner.marks);
+                    out.rows.extend(inner.rows);
+                    out.frames.extend(inner.frames);
+                }
+            }
+            content_w = content_w.max(x + w);
+            content_h = content_h.max(y + h);
+        }
+
+        // The frame around them, with room on the border for its own label.
+        let w = (content_w + PAD * 2.0)
+            .max(label_w + PAD * 2.0)
+            .max(MIN_FRAME_W);
+        let h = content_h + PAD * 2.0 + LABEL_H;
+        let inner = Packed {
+            marks: out.marks,
+            rows: out.rows,
+            frames: out.frames,
+            ..Default::default()
+        }
+        .shift(PAD, PAD + LABEL_H);
+        Packed {
+            w,
+            h,
+            marks: inner.marks,
+            rows: inner.rows,
+            frames: inner.frames,
+        }
+    }
+
     fn shift(self, dx: f64, dy: f64) -> Self {
         let at = |p: Placed| Placed {
             x: p.x + dx,
@@ -156,127 +209,83 @@ pub(super) fn skyline(boxes: &[(f64, f64)], target: f64, gap: f64) -> Vec<(f64, 
     out
 }
 
-/// Seat a frame's children on a skyline and draw the frame around them. The
-/// forest comes first — a frame's own types before the frames nested in it —
-/// and the child frames last, so the reading order down a frame is the same
-/// everywhere on the chart.
-fn shelve(kids: Vec<(Kid, f64, f64)>, label_w: f64) -> Packed {
-    let widest = kids.iter().map(|(_, w, _)| *w).fold(0.0, f64::max);
-    let area: f64 = kids.iter().map(|(_, w, h)| (w + GAP) * (h + GAP)).sum();
-    let target = widest.max((area * LANDSCAPE).sqrt());
-
-    let boxes: Vec<(f64, f64)> = kids.iter().map(|&(_, w, h)| (w, h)).collect();
-    let at = skyline(&boxes, target, GAP);
-    let mut out = Packed::default();
-    let (mut content_w, mut content_h) = (0.0f64, 0.0f64);
-    for ((kid, w, h), (x, y)) in kids.into_iter().zip(at) {
-        match kid {
-            Kid::Tree(packed) => {
-                let inner = packed.shift(x, y);
-                out.marks.extend(inner.marks);
-                out.rows.extend(inner.rows);
-            }
-            Kid::Frame(id, packed) => {
-                out.frames.push((id, Placed { x, y, w, h }));
-                let inner = packed.shift(x, y);
-                out.marks.extend(inner.marks);
-                out.rows.extend(inner.rows);
-                out.frames.extend(inner.frames);
-            }
+impl Sizes {
+    /// One seated box, as the drawing measured it. The fallbacks only matter to
+    /// a caller that forgot to measure something; the chart always measures
+    /// first.
+    fn box_of(&self, anchor: Anchor) -> (f64, f64) {
+        match anchor {
+            Anchor::Mark(id) => self.marks.get(&id).copied().unwrap_or((MIN_FRAME_W, 40.0)),
+            row => self.rows.get(&row).copied().unwrap_or((MIN_FRAME_W, 22.0)),
         }
-        content_w = content_w.max(x + w);
-        content_h = content_h.max(y + h);
-    }
-
-    // The frame around them, with room on the border for its own label.
-    let w = (content_w + PAD * 2.0)
-        .max(label_w + PAD * 2.0)
-        .max(MIN_FRAME_W);
-    let h = content_h + PAD * 2.0 + LABEL_H;
-    let inner = Packed {
-        marks: out.marks,
-        rows: out.rows,
-        frames: out.frames,
-        ..Default::default()
-    }
-    .shift(PAD, PAD + LABEL_H);
-    Packed {
-        w,
-        h,
-        marks: inner.marks,
-        rows: inner.rows,
-        frames: inner.frames,
     }
 }
 
-/// One seated box, as the drawing measured it. The fallbacks only matter to a
-/// caller that forgot to measure something; the chart always measures first.
-fn box_of(anchor: Anchor, sizes: &Sizes) -> (f64, f64) {
-    match anchor {
-        Anchor::Mark(id) => sizes.marks.get(&id).copied().unwrap_or((MIN_FRAME_W, 40.0)),
-        row => sizes.rows.get(&row).copied().unwrap_or((MIN_FRAME_W, 22.0)),
+impl Seat {
+    /// Tidy one tree of the frame's forest: the block itself, its children side
+    /// by side one layer below, and the parent centered over whichever span is
+    /// wider. The tree's box is that span — from here on it shelves like any
+    /// other block.
+    fn pack_tree(&self, sizes: &Sizes) -> Packed {
+        let seat = self;
+        let (own_w, own_h) = sizes.box_of(seat.anchor);
+        let kids: Vec<Packed> = seat.children.iter().map(|s| s.pack_tree(sizes)).collect();
+        let kids_w: f64 =
+            kids.iter().map(|k| k.w).sum::<f64>() + GAP * kids.len().saturating_sub(1) as f64;
+        let kids_h = kids.iter().map(|k| k.h).fold(0.0, f64::max);
+
+        let w = own_w.max(kids_w);
+        let h = if kids.is_empty() {
+            own_h
+        } else {
+            own_h + LAYER_GAP + kids_h
+        };
+        let mut out = Packed {
+            w,
+            h,
+            ..Default::default()
+        };
+        let at = Placed {
+            x: (w - own_w) / 2.0,
+            y: 0.0,
+            w: own_w,
+            h: own_h,
+        };
+        match seat.anchor {
+            Anchor::Mark(id) => out.marks.push((id, at)),
+            row => out.rows.push((row, at)),
+        }
+        let mut x = (w - kids_w) / 2.0;
+        for kid in kids {
+            let step = kid.w + GAP;
+            let placed = kid.shift(x, own_h + LAYER_GAP);
+            out.marks.extend(placed.marks);
+            out.rows.extend(placed.rows);
+            x += step;
+        }
+        out
     }
 }
 
-/// Tidy one tree of the frame's forest: the block itself, its children side by
-/// side one layer below, and the parent centered over whichever span is wider.
-/// The tree's box is that span — from here on it shelves like any other block.
-fn pack_tree(seat: &Seat, sizes: &Sizes) -> Packed {
-    let (own_w, own_h) = box_of(seat.anchor, sizes);
-    let kids: Vec<Packed> = seat.children.iter().map(|s| pack_tree(s, sizes)).collect();
-    let kids_w: f64 =
-        kids.iter().map(|k| k.w).sum::<f64>() + GAP * kids.len().saturating_sub(1) as f64;
-    let kids_h = kids.iter().map(|k| k.h).fold(0.0, f64::max);
-
-    let w = own_w.max(kids_w);
-    let h = if kids.is_empty() {
-        own_h
-    } else {
-        own_h + LAYER_GAP + kids_h
-    };
-    let mut out = Packed {
-        w,
-        h,
-        ..Default::default()
-    };
-    let at = Placed {
-        x: (w - own_w) / 2.0,
-        y: 0.0,
-        w: own_w,
-        h: own_h,
-    };
-    match seat.anchor {
-        Anchor::Mark(id) => out.marks.push((id, at)),
-        row => out.rows.push((row, at)),
+impl Frame {
+    /// One frame's children, measured and ready to seat.
+    fn kids_of(&self, frames: &[Frame], sizes: &Sizes) -> Vec<(Kid, f64, f64)> {
+        let mut kids: Vec<(Kid, f64, f64)> = Vec::new();
+        for seat in &self.forest {
+            let packed = seat.pack_tree(sizes);
+            let (w, h) = (packed.w, packed.h);
+            kids.push((Kid::Tree(packed), w, h));
+        }
+        for child in frames.iter().filter(|f| f.parent == Some(self.id)) {
+            let packed = Packed::shelve(
+                child.kids_of(frames, sizes),
+                sizes.labels.get(&child.id).copied().unwrap_or(0.0),
+            );
+            let (w, h) = (packed.w, packed.h);
+            kids.push((Kid::Frame(child.id, packed), w, h));
+        }
+        kids
     }
-    let mut x = (w - kids_w) / 2.0;
-    for kid in kids {
-        let step = kid.w + GAP;
-        let placed = kid.shift(x, own_h + LAYER_GAP);
-        out.marks.extend(placed.marks);
-        out.rows.extend(placed.rows);
-        x += step;
-    }
-    out
-}
-
-/// One frame's children, measured and ready to seat.
-fn kids_of(frame: &Frame, frames: &[Frame], sizes: &Sizes) -> Vec<(Kid, f64, f64)> {
-    let mut kids: Vec<(Kid, f64, f64)> = Vec::new();
-    for seat in &frame.forest {
-        let packed = pack_tree(seat, sizes);
-        let (w, h) = (packed.w, packed.h);
-        kids.push((Kid::Tree(packed), w, h));
-    }
-    for child in frames.iter().filter(|f| f.parent == Some(frame.id)) {
-        let packed = shelve(
-            kids_of(child, frames, sizes),
-            sizes.labels.get(&child.id).copied().unwrap_or(0.0),
-        );
-        let (w, h) = (packed.w, packed.h);
-        kids.push((Kid::Frame(child.id, packed), w, h));
-    }
-    kids
 }
 
 impl DataLayout {
@@ -287,8 +296,8 @@ impl DataLayout {
             .iter()
             .filter(|f| f.parent.is_none())
             .map(|frame| {
-                let packed = shelve(
-                    kids_of(frame, frames, sizes),
+                let packed = Packed::shelve(
+                    frame.kids_of(frames, sizes),
                     sizes.labels.get(&frame.id).copied().unwrap_or(0.0),
                 );
                 let (w, h) = (packed.w, packed.h);

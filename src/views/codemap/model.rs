@@ -142,26 +142,28 @@ const LANDMARK_BUDGET: usize = 210;
 /// Rows one file block engraves, however loud its items are.
 const BLOCK_CAP: usize = 7;
 
-/// How loudly an item asks to be named: item-level fan-in, the width of its
-/// door, and whether this epoch touched its file. Private items never ask —
-/// they are folded for good.
-///
-// TODO: `changed` is file-level. Item-level epoch ticks need the diff's hunks
-// against item line ranges; the survey does not read hunks yet.
-fn interest(mark: &ItemMark, changed: bool) -> u32 {
-    if mark.vis == Vis::Private {
-        return 0;
+impl ItemMark {
+    /// How loudly this item asks to be named: item-level fan-in, the width of
+    /// its door, and whether this epoch touched its file. Private items never
+    /// ask — they are folded for good.
+    ///
+    // TODO: `changed` is file-level. Item-level epoch ticks need the diff's
+    // hunks against item line ranges; the survey does not read hunks yet.
+    fn interest(&self, changed: bool) -> u32 {
+        if self.vis == Vis::Private {
+            return 0;
+        }
+        self.fan_in + self.vis.weight() + if changed { 2 } else { 0 }
     }
-    mark.fan_in + mark.vis.weight() + if changed { 2 } else { 0 }
-}
 
-/// The engraved weight of a landmark: three tiers by fan-in, so the eye reads
-/// magnitude before it reads names.
-pub(crate) fn tier(fan_in: u32) -> u8 {
-    match fan_in {
-        0..=2 => 3,
-        3..=9 => 2,
-        _ => 1,
+    /// The engraved weight of a landmark: three tiers by fan-in, so the eye
+    /// reads magnitude before it reads names.
+    pub(super) fn tier(&self) -> u8 {
+        match self.fan_in {
+            0..=2 => 3,
+            3..=9 => 2,
+            _ => 1,
+        }
     }
 }
 
@@ -226,7 +228,7 @@ impl Block {
             cands.sort_by_key(|&m| {
                 let mark = &graph.items[m as usize];
                 (
-                    std::cmp::Reverse(interest(mark, touched)),
+                    std::cmp::Reverse(mark.interest(touched)),
                     mark.line,
                     mark.name.clone(),
                 )
@@ -242,7 +244,7 @@ impl Block {
             .flat_map(|(file, rows, _)| {
                 let touched = changed.get(*file as usize).copied().unwrap_or(false);
                 rows.iter()
-                    .map(move |&m| interest(&graph.items[m as usize], touched))
+                    .map(move |&m| graph.items[m as usize].interest(touched))
             })
             .collect();
         weights.sort_unstable_by(|a, b| b.cmp(a));
@@ -254,7 +256,7 @@ impl Block {
             let mut rows: Vec<u32> = cands
                 .iter()
                 .enumerate()
-                .filter(|&(i, &m)| i == 0 || interest(&graph.items[m as usize], touched) > bar)
+                .filter(|&(i, &m)| i == 0 || graph.items[m as usize].interest(touched) > bar)
                 .map(|(_, &m)| m)
                 .collect();
             rows.sort_by_key(|&m| graph.items[m as usize].line);
@@ -285,42 +287,44 @@ pub(crate) struct Tie {
     pub(crate) count: u32,
 }
 
-/// Aggregate every item-level reference into ties between the territories
-/// currently on the paper. `territory` answers where a file is drawn right
-/// now — its own block, or the gate of the folded directory holding it.
-pub(crate) fn ties(
-    graph: &CodeGraph,
-    containment: &Containment,
-    territory: impl Fn(u32) -> Option<Territory>,
-) -> Vec<Tie> {
-    let side = |item: Option<u32>, file: u32| -> Option<Territory> {
-        // Containment governs: a method drawn under a type in another file
-        // ties from that type's territory, not from the impl's file.
-        let file = item.map(|m| containment.home(m)).unwrap_or(file);
-        territory(file)
-    };
-    let mut acc: HashMap<(Territory, Territory), u32> = HashMap::new();
-    for edge in &graph.item_edges {
-        let (Some(user), Some(def)) =
-            (side(edge.from, edge.from_file), side(edge.to, edge.to_file))
-        else {
-            continue;
+impl Containment {
+    /// Aggregate every item-level reference into ties between the territories
+    /// currently on the paper. `territory` answers where a file is drawn right
+    /// now — its own block, or the gate of the folded directory holding it.
+    pub(super) fn ties(
+        &self,
+        graph: &CodeGraph,
+        territory: impl Fn(u32) -> Option<Territory>,
+    ) -> Vec<Tie> {
+        let side = |item: Option<u32>, file: u32| -> Option<Territory> {
+            // Containment governs: a method drawn under a type in another file
+            // ties from that type's territory, not from the impl's file.
+            let file = item.map(|m| self.home(m)).unwrap_or(file);
+            territory(file)
         };
-        if user == def {
-            continue;
+        let mut acc: HashMap<(Territory, Territory), u32> = HashMap::new();
+        for edge in &graph.item_edges {
+            let (Some(user), Some(def)) =
+                (side(edge.from, edge.from_file), side(edge.to, edge.to_file))
+            else {
+                continue;
+            };
+            if user == def {
+                continue;
+            }
+            *acc.entry((def, user)).or_default() += edge.count;
         }
-        *acc.entry((def, user)).or_default() += edge.count;
+        let mut ties: Vec<Tie> = acc
+            .into_iter()
+            .map(|((def, user), count)| Tie { def, user, count })
+            .collect();
+        ties.sort_by(|a, b| {
+            (a.def, a.user)
+                .cmp(&(b.def, b.user))
+                .then(b.count.cmp(&a.count))
+        });
+        ties
     }
-    let mut ties: Vec<Tie> = acc
-        .into_iter()
-        .map(|((def, user), count)| Tie { def, user, count })
-        .collect();
-    ties.sort_by(|a, b| {
-        (a.def, a.user)
-            .cmp(&(b.def, b.user))
-            .then(b.count.cmp(&a.count))
-    });
-    ties
 }
 
 // ---------------------------------------------------------------------------
@@ -360,60 +364,63 @@ pub(crate) struct Group {
     pub(crate) rows: Vec<ColumnRow>,
 }
 
-/// Group one hop of the selection's references by container: heaviest group
-/// first, heaviest row first, private items lifted into one counted line.
-///
-/// `within` carries the references that never leave the selection's own file —
-/// the file detail knows those, the global edges do not — as already-resolved
-/// far-side marks. They are grouped by the same rules, so the plate owes its
-/// own neighbors the reading it gives the rest of the workspace.
-pub(crate) fn groups(
-    graph: &CodeGraph,
-    containment: &Containment,
-    center: Center,
-    dir: Dir,
-    within: impl Iterator<Item = (Option<u32>, u32)>,
-) -> Vec<Group> {
-    let holds = |item: Option<u32>, file: u32| -> bool {
-        match center {
-            Center::File(f) => item.map(|m| containment.home(m)).unwrap_or(file) == f,
-            Center::Item(c) => item.is_some_and(|m| containment.within(&graph.items, c, m)),
+impl Containment {
+    /// Group one hop of the selection's references by container: heaviest group
+    /// first, heaviest row first, private items lifted into one counted line.
+    ///
+    /// `within` carries the references that never leave the selection's own
+    /// file — the file detail knows those, the global edges do not — as
+    /// already-resolved far-side marks. They are grouped by the same rules, so
+    /// the plate owes its own neighbors the reading it gives the rest of the
+    /// workspace.
+    pub(super) fn groups(
+        &self,
+        graph: &CodeGraph,
+        center: Center,
+        dir: Dir,
+        within: impl Iterator<Item = (Option<u32>, u32)>,
+    ) -> Vec<Group> {
+        let holds = |item: Option<u32>, file: u32| -> bool {
+            match center {
+                Center::File(f) => item.map(|m| self.home(m)).unwrap_or(file) == f,
+                Center::Item(c) => item.is_some_and(|m| self.within(&graph.items, c, m)),
+            }
+        };
+        let mut acc: HashMap<(u32, Option<u32>), u32> = HashMap::new();
+        for edge in &graph.item_edges {
+            let (near, near_file, far, far_file) = match dir {
+                Dir::UsedBy => (edge.to, edge.to_file, edge.from, edge.from_file),
+                Dir::Uses => (edge.from, edge.from_file, edge.to, edge.to_file),
+            };
+            if !holds(near, near_file) {
+                continue;
+            }
+            let key = match far {
+                Some(m) => match self.lift(&graph.items, m) {
+                    Lifted::Item(m) => (self.home(m), Some(m)),
+                    Lifted::Private(file) => (file, None),
+                },
+                // A reference to a file as a whole: its module, not its items.
+                None => (far_file, None),
+            };
+            *acc.entry(key).or_default() += edge.count;
         }
-    };
-    let mut acc: HashMap<(u32, Option<u32>), u32> = HashMap::new();
-    for edge in &graph.item_edges {
-        let (near, near_file, far, far_file) = match dir {
-            Dir::UsedBy => (edge.to, edge.to_file, edge.from, edge.from_file),
-            Dir::Uses => (edge.from, edge.from_file, edge.to, edge.to_file),
+        let home = match center {
+            Center::File(f) => f,
+            Center::Item(c) => self.home(c),
         };
-        if !holds(near, near_file) {
-            continue;
+        for (mark, count) in within {
+            let key = match mark {
+                Some(m) => match self.lift(&graph.items, m) {
+                    Lifted::Item(m) => (self.home(m), Some(m)),
+                    Lifted::Private(f) => (f, None),
+                },
+                None => (home, None),
+            };
+            *acc.entry(key).or_default() += count;
         }
-        let key = match far {
-            Some(m) => match containment.lift(&graph.items, m) {
-                Lifted::Item(m) => (containment.home(m), Some(m)),
-                Lifted::Private(file) => (file, None),
-            },
-            // A reference to a file as a whole: its module, not its items.
-            None => (far_file, None),
-        };
-        *acc.entry(key).or_default() += edge.count;
+        Group::collect(graph, acc)
     }
-    let home = match center {
-        Center::File(f) => f,
-        Center::Item(c) => containment.home(c),
-    };
-    for (mark, count) in within {
-        let key = match mark {
-            Some(m) => match containment.lift(&graph.items, m) {
-                Lifted::Item(m) => (containment.home(m), Some(m)),
-                Lifted::Private(f) => (f, None),
-            },
-            None => (home, None),
-        };
-        *acc.entry(key).or_default() += count;
-    }
-    Group::collect(graph, acc)
 }
 
 impl Group {
@@ -560,7 +567,7 @@ mod tests {
         assert_eq!(c.lift(&g.items, 1), Lifted::Item(0));
         assert_eq!(c.lift(&g.items, 3), Lifted::Private(1));
 
-        let used = groups(&g, &c, Center::Item(0), Dir::UsedBy, std::iter::empty());
+        let used = c.groups(&g, Center::Item(0), Dir::UsedBy, std::iter::empty());
         assert_eq!(used.len(), 1);
         let group = &used[0];
         assert_eq!(group.file, 1);
@@ -577,7 +584,7 @@ mod tests {
         let c = Containment::build(&g);
         // The reference is written by `Plate::seat`; centered on `Plate`, it
         // is `Plate` reaching out.
-        let uses = groups(&g, &c, Center::Item(0), Dir::Uses, std::iter::empty());
+        let uses = c.groups(&g, Center::Item(0), Dir::Uses, std::iter::empty());
         assert_eq!(uses.len(), 1);
         assert_eq!(uses[0].total, 4);
         assert_eq!(uses[0].rows[0].mark, Some(2));
@@ -587,7 +594,7 @@ mod tests {
     fn ties_sum_between_territories() {
         let g = graph();
         let c = Containment::build(&g);
-        let ties = ties(&g, &c, |f| Some(Territory::File(f)));
+        let ties = c.ties(&g, |f| Some(Territory::File(f)));
         assert_eq!(ties.len(), 2);
         let into_plate = ties
             .iter()
@@ -603,7 +610,7 @@ mod tests {
         let c = Containment::build(&g);
         // Both files behind one gate: the coupling is internal and no tie is
         // left to draw.
-        let ties = ties(&g, &c, |_| Some(Territory::Dir(7)));
+        let ties = c.ties(&g, |_| Some(Territory::Dir(7)));
         assert!(ties.is_empty());
     }
 

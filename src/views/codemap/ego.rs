@@ -17,8 +17,8 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{CodeGraph, ItemKind, ItemMark, ItemSource, Tok, Vis, file_detail, item_source};
-use crate::views::codemap::chrome::{decl_words, dir_of, file_name, kind_words, plural};
-use crate::views::codemap::model::{self, Center, Containment, Dir, Group};
+use crate::views::codemap::chrome::{dir_of, file_name, plural};
+use crate::views::codemap::model::{Center, Containment, Dir, Group};
 use crate::views::codemap::{file_route, item_route, use_code};
 
 /// Rows a group shows before it defers to its own counted fold.
@@ -88,22 +88,24 @@ struct ImplRow {
     key: (u32, u32),
 }
 
-/// The class that inks one run of quoted source. Colour lives inside the code
-/// pane and says one thing only: what kind of token this is.
-fn tok_class(tok: Tok) -> &'static str {
-    match tok {
-        Tok::Kw => "tok-kw",
-        Tok::Comment => "tok-comment",
-        Tok::Doc => "tok-doc",
-        Tok::Str => "tok-str",
-        Tok::Num => "tok-num",
-        Tok::Lifetime => "tok-lifetime",
-        Tok::Attr => "tok-attr",
-        Tok::Type => "tok-type",
-        Tok::Fn => "tok-fn",
-        Tok::Macro => "tok-macro",
-        Tok::Punct => "tok-punct",
-        Tok::Ident | Tok::Space => "tok-ident",
+impl Tok {
+    /// The class that inks one run of quoted source. Colour lives inside the
+    /// code pane and says one thing only: what kind of token this is.
+    fn class(self) -> &'static str {
+        match self {
+            Tok::Kw => "tok-kw",
+            Tok::Comment => "tok-comment",
+            Tok::Doc => "tok-doc",
+            Tok::Str => "tok-str",
+            Tok::Num => "tok-num",
+            Tok::Lifetime => "tok-lifetime",
+            Tok::Attr => "tok-attr",
+            Tok::Type => "tok-type",
+            Tok::Fn => "tok-fn",
+            Tok::Macro => "tok-macro",
+            Tok::Punct => "tok-punct",
+            Tok::Ident | Tok::Space => "tok-ident",
+        }
     }
 }
 
@@ -136,7 +138,7 @@ impl GroupView {
                         title: format!(
                             "{} · {} · {}",
                             mark.label,
-                            kind_words(mark.kind),
+                            mark.kind.words(),
                             mark.vis.words()
                         ),
                         to: item_route(&file, &mark.label),
@@ -247,7 +249,7 @@ fn EgoColumn(groups: Vec<GroupView>, head: String, outgoing: bool) -> Element {
                                             class: "ego-row",
                                             to: row.to.clone(),
                                             title: "{row.title}",
-                                            span { class: "ego-row-kw", "{kind_words(row.kind)}" }
+                                            span { class: "ego-row-kw", "{row.kind.words()}" }
                                             span { class: "ego-row-name", "{row.name}" }
                                             span { class: "ego-row-count", "{row.count}" }
                                         }
@@ -315,7 +317,7 @@ fn CodePane(source: ItemSource) -> Element {
                                             rsx! {
                                                 a {
                                                     key: "{n}",
-                                                    class: "{tok_class(run.tok)} tok-link",
+                                                    class: "{run.tok.class()} tok-link",
                                                     href: route.to_string(),
                                                     title: "{title}",
                                                     onclick: {
@@ -331,7 +333,7 @@ fn CodePane(source: ItemSource) -> Element {
                                             }
                                         }
                                         None => rsx! {
-                                            span { key: "{n}", class: tok_class(run.tok), "{run.text}" }
+                                            span { key: "{n}", class: run.tok.class(), "{run.text}" }
                                         },
                                     }
                                 }
@@ -341,24 +343,6 @@ fn CodePane(source: ItemSource) -> Element {
                 }
             }
         }
-    }
-}
-
-/// Flip one row's in-place expansion, fetching its source on first open.
-fn toggle_expand(code: crate::views::codemap::CodeState, key: (u32, u32)) {
-    let mut expanded = code.expanded;
-    let mut set = expanded.peek().clone();
-    if !set.remove(&key) {
-        set.insert(key);
-    }
-    expanded.set(set);
-    if !code.sources.peek().contains_key(&key) {
-        spawn(async move {
-            if let Ok(source) = item_source(key.0, key.1).await {
-                let mut sources = code.sources;
-                sources.write().insert(key, source);
-            }
-        });
     }
 }
 
@@ -453,10 +437,10 @@ fn CenterPlate(
                                             // The item is a leaf — its focus would
                                             // quote code — so quote it here instead
                                             // of a page turn.
-                                            toggle_expand(code, key);
+                                            code.toggle_expand(key);
                                         }
                                     },
-                                    span { class: "ego-member-decl", "{decl_words(row.vis, row.kind)}" }
+                                    span { class: "ego-member-decl", "{row.kind.decl_words(row.vis)}" }
                                     span { class: "ego-member-name", "{row.name}" }
                                     if row.refs > 0 {
                                         span { class: "ego-member-refs",
@@ -492,10 +476,10 @@ fn CenterPlate(
                                         move |e: Event<MouseData>| {
                                             e.prevent_default();
                                             e.stop_propagation();
-                                            toggle_expand(code, key);
+                                            code.toggle_expand(key);
                                         }
                                     },
-                                    span { class: "ego-member-decl", "{decl_words(row.vis, row.kind)}" }
+                                    span { class: "ego-member-decl", "{row.kind.decl_words(row.vis)}" }
                                     span { class: "ego-member-name", "{row.name}" }
                                     span { class: "ego-member-line", "{row.locator}" }
                                 }
@@ -719,23 +703,11 @@ pub(super) fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element 
         (
             GroupView::columns(
                 &graph,
-                model::groups(
-                    &graph,
-                    &containment,
-                    center,
-                    Dir::UsedBy,
-                    within(Dir::UsedBy).into_iter(),
-                ),
+                containment.groups(&graph, center, Dir::UsedBy, within(Dir::UsedBy).into_iter()),
             ),
             GroupView::columns(
                 &graph,
-                model::groups(
-                    &graph,
-                    &containment,
-                    center,
-                    Dir::Uses,
-                    within(Dir::Uses).into_iter(),
-                ),
+                containment.groups(&graph, center, Dir::Uses, within(Dir::Uses).into_iter()),
             ),
         )
     };

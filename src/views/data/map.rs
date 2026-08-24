@@ -28,14 +28,12 @@ use dioxus_flow::prelude::{
 
 use crate::Route;
 use crate::api::{CodeGraph, HoldEvent, HoldKind, ItemKind};
-use crate::views::codemap::chrome::{decl_words, plural};
-use crate::views::codemap::map::{narrow_viewport, prefers_reduced_motion, tie_ends, window_size};
+use crate::views::codemap::chrome::plural;
+use crate::views::codemap::map::{narrow_viewport, prefers_reduced_motion, window_size};
 use crate::views::codemap::tree::{Placed, text_w};
 use crate::views::codemap::use_code;
 use crate::views::data::layout::{self, DataLayout, Sizes};
-use crate::views::data::model::{
-    Anchor, DataMark, DataModel, FieldRow, Held, Tier, brackets, upstream,
-};
+use crate::views::data::model::{Anchor, DataMark, DataModel, FieldRow, Held, Tier, upstream};
 use crate::views::data::{DataSel, mark_route, mod_route, use_data};
 
 // ---------------------------------------------------------------------------
@@ -82,11 +80,26 @@ fn tie_width(count: u32) -> f64 {
     (0.9 + (count as f64).ln() * 0.35).min(2.4)
 }
 
-fn hold_width(kind: HoldKind) -> f64 {
-    match kind {
-        HoldKind::Owns => 1.4,
-        HoldKind::Shares => 1.3,
-        HoldKind::Borrows | HoldKind::Dyn | HoldKind::Implements => 1.1,
+impl HoldKind {
+    /// Engraved width of a holds wire: the stronger the hold, the heavier
+    /// the line.
+    fn width(self) -> f64 {
+        match self {
+            HoldKind::Owns => 1.4,
+            HoldKind::Shares => 1.3,
+            HoldKind::Borrows | HoldKind::Dyn | HoldKind::Implements => 1.1,
+        }
+    }
+
+    /// The class the wire is inked with, one per kind of hold.
+    fn class(self) -> &'static str {
+        match self {
+            HoldKind::Owns => "is-owns",
+            HoldKind::Shares => "is-shares",
+            HoldKind::Borrows => "is-borrows",
+            HoldKind::Dyn => "is-dyn",
+            HoldKind::Implements => "is-impl",
+        }
     }
 }
 
@@ -380,34 +393,37 @@ impl DataKin {
 /// every block they were texture, not signal — 40 blocks saying `named by 1
 /// signature` — and they were never elided ink, only the sheet's facts said
 /// early. They live in the block's hover words and on the sheet.
-fn fold_words(mark: &DataMark) -> Vec<String> {
-    let mut folds = Vec::new();
-    if mark.held_by > 0 {
-        folds.push(format!("held by {}", plural(mark.held_by as usize, "type")));
+impl DataMark {
+    /// The counted words this block writes at its foot.
+    fn fold_words(&self) -> Vec<String> {
+        let mut folds = Vec::new();
+        if self.held_by > 0 {
+            folds.push(format!("held by {}", plural(self.held_by as usize, "type")));
+        }
+        folds
     }
-    folds
-}
 
-/// The undrawn-ink counts, for the block's hover words.
-fn count_words(mark: &DataMark) -> String {
-    let mut parts = Vec::new();
-    if mark.named_by > 0 {
-        parts.push(format!(
-            "named by {}",
-            plural(mark.named_by as usize, "signature")
-        ));
-    }
-    // Bodies, not references: the sheet lists them one row each, so the
-    // hover word counts the same things the rows do.
-    if !mark.used_by.is_empty() {
-        parts.push(match mark.used_by.len() {
-            1 => "used by 1 body".to_string(),
-            n => format!("used by {n} bodies"),
-        });
-    }
-    match parts.is_empty() {
-        true => String::new(),
-        false => format!(" · {}", parts.join(" · ")),
+    /// The undrawn-ink counts, for the block's hover words.
+    fn count_words(&self) -> String {
+        let mut parts = Vec::new();
+        if self.named_by > 0 {
+            parts.push(format!(
+                "named by {}",
+                plural(self.named_by as usize, "signature")
+            ));
+        }
+        // Bodies, not references: the sheet lists them one row each, so the
+        // hover word counts the same things the rows do.
+        if !self.used_by.is_empty() {
+            parts.push(match self.used_by.len() {
+                1 => "used by 1 body".to_string(),
+                n => format!("used by {n} bodies"),
+            });
+        }
+        match parts.is_empty() {
+            true => String::new(),
+            false => format!(" · {}", parts.join(" · ")),
+        }
     }
 }
 
@@ -438,11 +454,11 @@ impl MeasuredBlock {
     /// contains is wider than its own words — and the height is every line and
     /// every nested block it draws.
     fn measure(mark: &DataMark, kids: Vec<Self>) -> Self {
-        let decl = decl_words(mark.vis, mark.kind);
+        let decl = mark.kind.decl_words(mark.vis);
         let head = format!("{decl} {}", mark.name);
         let locator = mark.locator();
         let letter = mark.letter();
-        let folds = fold_words(mark);
+        let folds = mark.fold_words();
 
         // What the brackets have to enclose: a shape's rows, or — for a
         // static — the one line that declares its type.
@@ -452,7 +468,7 @@ impl MeasuredBlock {
             }
             _ => mark.fields.len() + mark.variants.len(),
         };
-        let (open, close) = brackets(mark.kind, body_rows);
+        let (open, close) = mark.kind.brackets(body_rows);
         let mut widest = text_w(&head, 10.5)
             + if letter.is_some() { 12.0 } else { 0.0 }
             + if open.is_empty() {
@@ -524,7 +540,7 @@ impl MeasuredBlock {
             kids_h,
             core_h,
             folds,
-            counts: count_words(mark),
+            counts: mark.count_words(),
             locator,
             path: mark.path.clone(),
             label: mark.label.clone(),
@@ -546,55 +562,52 @@ impl FoldView {
     }
 }
 
-fn node_key(anchor: Anchor) -> String {
-    match anchor {
-        Anchor::Mark(id) => format!("m{id}"),
-        Anchor::Mod(frame) => format!("f{frame}"),
+impl Anchor {
+    /// The flow node id one anchor is drawn under.
+    fn node_key(self) -> String {
+        match self {
+            Anchor::Mark(id) => format!("m{id}"),
+            Anchor::Mod(frame) => format!("f{frame}"),
+        }
     }
 }
 
-fn hold_class(kind: HoldKind) -> &'static str {
-    match kind {
-        HoldKind::Owns => "is-owns",
-        HoldKind::Shares => "is-shares",
-        HoldKind::Borrows => "is-borrows",
-        HoldKind::Dyn => "is-dyn",
-        HoldKind::Implements => "is-impl",
+impl MeasuredBlock {
+    /// This view and every view nested in it, each with its absolute rect: the
+    /// box the wires land on, parent and kid alike.
+    fn abs_rects(&self, x: f64, y: f64, out: &mut HashMap<Anchor, Placed>) {
+        out.insert(
+            Anchor::Mark(self.id),
+            Placed {
+                x,
+                y,
+                w: self.size.0,
+                h: self.size.1,
+            },
+        );
+        let band = y + self.core_h + KIDS_RULE + KIDS_PAD;
+        for (kid, (dx, dy)) in self.kids.iter().zip(&self.kid_at) {
+            kid.abs_rects(x + KID_X + dx, band + dy, out);
+        }
     }
-}
 
-/// A view and every view nested in it, each with its absolute rect: the box
-/// the wires land on, parent and kid alike.
-fn abs_rects(view: &MeasuredBlock, x: f64, y: f64, out: &mut HashMap<Anchor, Placed>) {
-    out.insert(
-        Anchor::Mark(view.id),
-        Placed {
-            x,
-            y,
-            w: view.size.0,
-            h: view.size.1,
-        },
-    );
-    let band = y + view.core_h + KIDS_RULE + KIDS_PAD;
-    for (kid, (dx, dy)) in view.kids.iter().zip(&view.kid_at) {
-        abs_rects(kid, x + KID_X + dx, band + dy, out);
+    /// Which frame this view and everything nested in it are drawn inside.
+    fn frames_of(&self, frame: u32, out: &mut HashMap<Anchor, u32>) {
+        out.insert(Anchor::Mark(self.id), frame);
+        for kid in &self.kids {
+            kid.frames_of(frame, out);
+        }
     }
-}
 
-fn frames_of(view: &MeasuredBlock, frame: u32, out: &mut HashMap<Anchor, u32>) {
-    out.insert(Anchor::Mark(view.id), frame);
-    for kid in &view.kids {
-        frames_of(kid, frame, out);
-    }
-}
-
-fn keys_of(view: &MeasuredBlock, out: &mut HashMap<(String, String), Anchor>) {
-    out.insert(
-        (view.path.clone(), view.label.clone()),
-        Anchor::Mark(view.id),
-    );
-    for kid in &view.kids {
-        keys_of(kid, out);
+    /// Every (file path, label) this view and its nested views answer to.
+    fn keys_of(&self, out: &mut HashMap<(String, String), Anchor>) {
+        out.insert(
+            (self.path.clone(), self.label.clone()),
+            Anchor::Mark(self.id),
+        );
+        for kid in &self.kids {
+            kid.keys_of(out);
+        }
     }
 }
 
@@ -663,10 +676,10 @@ impl From<&DataModel> for DataDrawing {
             let Some(at) = placed.marks.get(id) else {
                 continue;
             };
-            abs_rects(view, at.x, at.y, &mut rects);
-            keys_of(view, &mut locate);
+            view.abs_rects(at.x, at.y, &mut rects);
+            view.keys_of(&mut locate);
             if let Some(mark) = by_id.get(id) {
-                frames_of(view, mark.frame, &mut homes);
+                view.frames_of(mark.frame, &mut homes);
             }
         }
         for (anchor, at) in &placed.rows {
@@ -683,7 +696,7 @@ impl From<&DataModel> for DataDrawing {
             };
             nodes.push(
                 FlowNode::with_data(
-                    node_key(Anchor::Mark(*id)),
+                    Anchor::Mark(*id).node_key(),
                     view.name.clone(),
                     (at.x, at.y),
                     DataNodeData::Mark(Box::new(view.clone())),
@@ -700,7 +713,7 @@ impl From<&DataModel> for DataDrawing {
             };
             nodes.push(
                 FlowNode::with_data(
-                    node_key(*anchor),
+                    anchor.node_key(),
                     row.words.clone(),
                     (at.x, at.y),
                     DataNodeData::Fold(row.clone()),
@@ -741,7 +754,7 @@ impl From<&DataModel> for DataDrawing {
                     rects.get(&hold.held).copied()?,
                     rects.get(&hold.holder).copied()?,
                 );
-                let (from, to) = tie_ends(a, b);
+                let (from, to) = a.tie_ends(b);
                 let event_word = match hold.event {
                     Some(HoldEvent::Added) => Some("added"),
                     Some(HoldEvent::Removed) => Some("removed"),
@@ -759,9 +772,9 @@ impl From<&DataModel> for DataDrawing {
                     a: hold.held,
                     b: hold.holder,
                     label,
-                    width: hold_width(hold.kind),
+                    width: hold.kind.width(),
                     rest: hold.rest,
-                    class: hold_class(hold.kind),
+                    class: hold.kind.class(),
                     event: match hold.event {
                         Some(HoldEvent::Added) => "is-added",
                         Some(HoldEvent::Removed) => "is-removed",
@@ -781,7 +794,7 @@ impl From<&DataModel> for DataDrawing {
                     rects.get(&tie.def).copied()?,
                     rects.get(&tie.user).copied()?,
                 );
-                let (from, to) = tie_ends(a, b);
+                let (from, to) = a.tie_ends(b);
                 Some(WireView {
                     key: tie.key(),
                     from,
@@ -1366,30 +1379,34 @@ fn arrowhead(b: Point, ctrl: Point, size: f64) -> String {
     )
 }
 
-fn wire_classes(
-    w: &WireView,
-    is_ref: bool,
-    hot: Option<Anchor>,
-    kin: Option<&DataKin>,
-) -> Vec<&'static str> {
-    // A bundle exists only inside a module reading and is that reading's own
-    // ink: the solid family at the radius pressure, the dashed a step behind.
-    if w.bundle {
-        return vec![if is_ref { "is-near" } else { "is-kin" }];
+impl WireView {
+    /// Every class this wire wears in the reading it is drawn in.
+    fn classes(
+        &self,
+        is_ref: bool,
+        hot: Option<Anchor>,
+        kin: Option<&DataKin>,
+    ) -> Vec<&'static str> {
+        // A bundle exists only inside a module reading and is that reading's
+        // own ink: the solid family at the radius pressure, the dashed a step
+        // behind.
+        if self.bundle {
+            return vec![if is_ref { "is-near" } else { "is-kin" }];
+        }
+        let is_kin = kin.is_some_and(|k| !is_ref && k.wire_kin(self.a, self.b));
+        let is_near = kin.is_some_and(|k| is_ref && k.tie_near(self.a, self.b));
+        let worn = [
+            (!self.event.is_empty(), self.event),
+            (!self.rest, "is-folded"),
+            (hot.is_some_and(|h| h == self.a || h == self.b), "is-hot"),
+            (is_kin, "is-kin"),
+            (is_near, "is-near"),
+            (kin.is_some() && !is_kin && !is_near, "is-dim"),
+        ];
+        worn.into_iter()
+            .filter_map(|(on, class)| on.then_some(class))
+            .collect()
     }
-    let is_kin = kin.is_some_and(|k| !is_ref && k.wire_kin(w.a, w.b));
-    let is_near = kin.is_some_and(|k| is_ref && k.tie_near(w.a, w.b));
-    let worn = [
-        (!w.event.is_empty(), w.event),
-        (!w.rest, "is-folded"),
-        (hot.is_some_and(|h| h == w.a || h == w.b), "is-hot"),
-        (is_kin, "is-kin"),
-        (is_near, "is-near"),
-        (kin.is_some() && !is_kin && !is_near, "is-dim"),
-    ];
-    worn.into_iter()
-        .filter_map(|(on, class)| on.then_some(class))
-        .collect()
 }
 
 /// Both families as one engraved layer, the uses family first and lighter.
@@ -1408,7 +1425,9 @@ fn WireLayer(
             0.25 * w.from.x + 0.5 * ctrl.x + 0.25 * w.to.x,
             0.25 * w.from.y + 0.5 * ctrl.y + 0.25 * w.to.y,
         );
-        let classes = wire_classes(w, family.ends_with("data-ref"), hot, kin.as_ref()).join(" ");
+        let classes = w
+            .classes(family.ends_with("data-ref"), hot, kin.as_ref())
+            .join(" ");
         rsx! {
             g {
                 key: "{w.key}",
@@ -1761,8 +1780,8 @@ pub(super) fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
                     continue;
                 };
                 let (from, to) = match inbound {
-                    true => tie_ends(far_rect, chosen_rect),
-                    false => tie_ends(chosen_rect, far_rect),
+                    true => far_rect.tie_ends(chosen_rect),
+                    false => chosen_rect.tie_ends(far_rect),
                 };
                 // The dashed family counts references, as its labels do
                 // everywhere; the solid family counts its lines.
@@ -1930,7 +1949,7 @@ mod tests {
             vec![kid],
         );
         let mut rects = HashMap::new();
-        abs_rects(&parent, 100.0, 200.0, &mut rects);
+        parent.abs_rects(100.0, 200.0, &mut rects);
         let p = rects[&Anchor::Mark(0)];
         let k = rects[&Anchor::Mark(1)];
         assert!(k.x >= p.x && k.y >= p.y);
