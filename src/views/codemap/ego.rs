@@ -549,7 +549,7 @@ document.addEventListener('keydown', window.__slopeKeys);
 
 /// The focus plate. `item` is empty for a whole-file focus.
 #[component]
-pub(crate) fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
+pub(super) fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
     let code = use_code();
     let nav = use_navigator();
 

@@ -12,7 +12,7 @@ use crate::views::dep::use_dep;
 
 /// Payload carried by chart nodes: one crate's star on the rings.
 #[derive(Clone, PartialEq)]
-pub(crate) struct StarData {
+pub(super) struct StarData {
     pub(crate) info: CrateInfo,
     /// Dependency distance from the chart's center.
     pub(crate) ring: u32,
@@ -30,7 +30,7 @@ pub(crate) struct StarData {
 }
 
 /// Star radius from magnitude (how many crates depend on this one).
-pub(crate) fn star_radius(dependents: u32) -> f64 {
+pub(super) fn star_radius(dependents: u32) -> f64 {
     (4.0 + (dependents as f64).sqrt() * 1.3).min(11.0)
 }
 
@@ -40,7 +40,7 @@ const MARK_OVERHANG: f64 = 11.0;
 
 /// The square node box for one crate's star, from its magnitude. Constant
 /// per crate so selection never moves a star.
-pub(crate) fn star_box(info: &CrateInfo) -> f64 {
+pub(super) fn star_box(info: &CrateInfo) -> f64 {
     2.0 * (star_radius(info.dependents) + MARK_OVERHANG)
 }
 
@@ -71,7 +71,7 @@ fn state_words(info: &CrateInfo) -> Option<String> {
 /// The engraved star mark for one crate, reused by the chart nodes and the
 /// legend so the key and the chart can never drift apart.
 #[component]
-pub(crate) fn StarMark(
+pub(super) fn StarMark(
     info: CrateInfo,
     focal: bool,
     #[props(default = 32.0)] box_px: f64,
@@ -207,7 +207,7 @@ pub(crate) fn StarMark(
 /// it and draws its edges; clicking the selected star steps back to the
 /// whole chart.
 #[component]
-pub(crate) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
+pub(super) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
     let StarData {
         info,
         ring,

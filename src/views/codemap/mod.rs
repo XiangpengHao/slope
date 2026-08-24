@@ -7,7 +7,7 @@
 //! the ambient map with a focus plate at item precision. Every focus is a URL.
 
 pub(crate) mod chrome;
-pub(crate) mod ego;
+pub(super) mod ego;
 pub(crate) mod map;
 pub(crate) mod model;
 pub(crate) mod tree;
@@ -25,7 +25,7 @@ use crate::views::survey::use_code_graph;
 
 /// What the route selects on the code map.
 #[derive(Clone, PartialEq, Debug, Default)]
-pub(crate) enum CodeSel {
+pub(super) enum CodeSel {
     #[default]
     None,
     Crate(String),
@@ -113,7 +113,7 @@ impl From<&Route> for CodeSel {
 }
 
 /// The route that selects a file on the map.
-pub(crate) fn file_route(path: &str) -> Route {
+pub(super) fn file_route(path: &str) -> Route {
     Route::CodeFile {
         path: path.split('/').map(str::to_string).collect(),
         item: String::new(),

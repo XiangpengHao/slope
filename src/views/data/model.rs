@@ -63,11 +63,11 @@ pub(crate) enum Anchor {
 /// The modules the reviewer folded by hand, each named the way a fold has to
 /// survive the next build: the crate, then the module path as rust nests it.
 /// A frame id is an index into one build and says nothing across two.
-pub(crate) type Folds = HashSet<Vec<String>>;
+pub(super) type Folds = HashSet<Vec<String>>;
 
 /// A module frame's name in a [`Folds`] set: the crate first, then the module
 /// path. The crate's own frame is the crate name alone.
-pub(crate) fn mod_key(krate: &str, module: &[String]) -> Vec<String> {
+fn mod_key(krate: &str, module: &[String]) -> Vec<String> {
     let mut key = vec![krate.to_string()];
     key.extend(module.iter().cloned());
     key
@@ -88,7 +88,7 @@ impl Anchor {
 /// under it because it owns them. A folded module's counted row is a seat of
 /// its own, with nothing under it — the fold is the whole reading.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct Seat {
+pub(super) struct Seat {
     pub(crate) anchor: Anchor,
     /// Seated one layer beneath, in the survey's order.
     pub(crate) children: Vec<Seat>,
@@ -96,7 +96,7 @@ pub(crate) struct Seat {
 
 impl Seat {
     /// A seat with nothing under it.
-    pub(crate) fn leaf(anchor: Anchor) -> Self {
+    pub(super) fn leaf(anchor: Anchor) -> Self {
         Self {
             anchor,
             children: Vec::new(),
@@ -110,7 +110,7 @@ impl Seat {
 /// code is written in rather than as one flat row of the crate's first
 /// segments.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct Frame {
+pub(super) struct Frame {
     pub(crate) id: u32,
     pub(crate) krate: String,
     /// The module path, segment by segment, as rust names it: `["views",
@@ -173,7 +173,7 @@ impl Frame {
 /// One quoted row's own diff state, in the diff's own idiom: an added row
 /// wears `+`, a dropped one is quoted from the base and struck.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum RowState {
+pub(super) enum RowState {
     #[default]
     Same,
     Added,
@@ -204,7 +204,7 @@ impl RowState {
 /// and — where this chart draws that type's own block — where that block
 /// stands, so the run can be its own link.
 #[derive(Clone, PartialEq, Debug, Default)]
-pub(crate) struct Held {
+pub(super) struct Held {
     /// The held type's name — the one run of the declaration drawn in full ink,
     /// so `Vec<FileDetail>` reads as the wrapper it is around the type it
     /// holds. Empty where the row reaches nothing this workspace declares.
@@ -233,7 +233,7 @@ impl Held {
 /// One quoted row of a block: a field or a variant, as the source writes it.
 /// Nothing here is reconstructed.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct FieldRow {
+pub(super) struct FieldRow {
     pub(crate) name: String,
     pub(crate) decl: String,
     /// What the row declares for itself, drawn in front of its name. A field
@@ -254,7 +254,7 @@ pub(crate) struct FieldRow {
 /// nothing at all around a declaration with no rows to bracket — a unit
 /// struct, a static with no type the survey could read. The closer is a line
 /// of its own, which is what makes a long block's end findable.
-pub(crate) fn brackets(kind: ItemKind, rows: usize) -> (&'static str, &'static str) {
+pub(super) fn brackets(kind: ItemKind, rows: usize) -> (&'static str, &'static str) {
     match kind {
         _ if rows == 0 => ("", ""),
         ItemKind::Struct | ItemKind::Union | ItemKind::Enum => ("{", "}"),
@@ -288,7 +288,7 @@ impl FieldRow {
 /// drawn — but the walk ends there: a row is a count, not a type with holders
 /// of its own. So does a function: nothing holds one, so nothing is upstream
 /// of it.
-pub(crate) fn upstream(pairs: &[(Anchor, Anchor)], from: Anchor) -> HashSet<Anchor> {
+pub(super) fn upstream(pairs: &[(Anchor, Anchor)], from: Anchor) -> HashSet<Anchor> {
     let mut seen: HashSet<Anchor> = HashSet::new();
     let mut queue: Vec<Anchor> = vec![from];
     while let Some(at) = queue.pop() {
@@ -338,7 +338,7 @@ fn source_rest(path: &str) -> &str {
 ///
 /// A leaf file's own module is not a frame: the file altitude is two rungs
 /// above, and a frame per file would draw the directory tree twice.
-pub(crate) fn module_path(path: &str) -> Vec<&str> {
+fn module_path(path: &str) -> Vec<&str> {
     let rest = source_rest(path);
     let mut dirs: Vec<&str> = rest.split('/').collect();
     let file = dirs.pop().unwrap_or_default();
@@ -353,7 +353,7 @@ pub(crate) fn module_path(path: &str) -> Vec<&str> {
 
 /// Where a drawn mark stands in the holding order — the chart's one verdict.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Tier {
+pub(super) enum Tier {
     /// Top-level data: a static, or a type no other type keeps in a field
     /// (`Owns` or `Shares`). State code reaches directly, where every chain
     /// of holding begins.
@@ -368,7 +368,7 @@ pub(crate) enum Tier {
 
 /// Why a held type stands instead of nesting.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Stand {
+pub(super) enum Stand {
     /// A shared handle holds it (`Arc`, `Rc`, a signal): sharing has no
     /// single container, so every holder keeps a drawn line.
     Shared,
@@ -388,7 +388,7 @@ pub(crate) enum Stand {
 /// and a link to its code (2026-08-23, user); only the paper keeps them to a
 /// count.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct Unseen {
+pub(super) struct Unseen {
     /// Its [`ItemMark`] id: the row's words, and where the link lands.
     pub(crate) item: u32,
     /// References across this pair, summed.
@@ -397,7 +397,7 @@ pub(crate) struct Unseen {
 
 /// One shape or static with a block on the paper.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct DataMark {
+pub(super) struct DataMark {
     pub(crate) id: u32,
     pub(crate) frame: u32,
     pub(crate) kind: ItemKind,
@@ -441,13 +441,13 @@ pub(crate) struct DataMark {
 }
 
 impl DataMark {
-    pub(crate) fn is_static(&self) -> bool {
+    pub(super) fn is_static(&self) -> bool {
         self.kind == ItemKind::Static
     }
 
     /// A root wears the gate's 2.5px ink left edge — the static's own mark,
     /// widened to every block a chain of holding begins at.
-    pub(crate) fn is_root(&self) -> bool {
+    pub(super) fn is_root(&self) -> bool {
         matches!(self.tier, Tier::Root)
     }
 
@@ -461,7 +461,7 @@ impl DataMark {
     }
 
     /// The letter the mark wears, in git's own alphabet.
-    pub(crate) fn letter(&self) -> Option<&'static str> {
+    pub(super) fn letter(&self) -> Option<&'static str> {
         if self.ghost {
             return Some("D");
         }
@@ -539,7 +539,7 @@ pub(crate) struct Naming {
 
 /// What the cartouche and the legend state about the survey.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct DataFacts {
+pub(super) struct DataFacts {
     pub(crate) structs: usize,
     pub(crate) enums: usize,
     pub(crate) unions: usize,
@@ -553,7 +553,7 @@ pub(crate) struct DataFacts {
 
 /// Everything one build of the data chart reads out of the survey.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct DataModel {
+pub(super) struct DataModel {
     pub(crate) frames: Vec<Frame>,
     /// Drawn marks, in the survey's (file, source) order.
     pub(crate) marks: Vec<DataMark>,

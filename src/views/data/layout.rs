@@ -39,7 +39,7 @@ const MIN_FRAME_W: f64 = 160.0;
 /// What the layout must be told about what it seats. Measuring belongs with the
 /// drawing — the layout only places what it is handed.
 #[derive(Clone, PartialEq, Debug, Default)]
-pub(crate) struct Sizes {
+pub(super) struct Sizes {
     /// Every drawn mark's block, by mark id.
     pub(crate) marks: HashMap<u32, (f64, f64)>,
     /// Every counted fold row, by the anchor it carries.
@@ -50,7 +50,7 @@ pub(crate) struct Sizes {
 
 /// The whole chart, placed and centered on the flow origin.
 #[derive(Clone, PartialEq, Debug, Default)]
-pub(crate) struct DataLayout {
+pub(super) struct DataLayout {
     pub(crate) marks: HashMap<u32, Placed>,
     pub(crate) rows: HashMap<Anchor, Placed>,
     /// Outermost first, so a nested tint lays over its parent's.
@@ -98,7 +98,7 @@ impl Packed {
 /// towered over its neighbors, and every wasted unit lowers the fit zoom the
 /// whole chart is read at. Deterministic: the boxes arrive in reading order
 /// and are seated in it, positions and all.
-pub(crate) fn skyline(boxes: &[(f64, f64)], target: f64, gap: f64) -> Vec<(f64, f64)> {
+pub(super) fn skyline(boxes: &[(f64, f64)], target: f64, gap: f64) -> Vec<(f64, f64)> {
     const EPS: f64 = 1e-6;
     let width = boxes.iter().map(|b| b.0).fold(target, f64::max) + gap;
     // The line as segments of (x, w, top), always tiling [0, width].

@@ -4,7 +4,7 @@
 use crate::api::{DepEvent, DepKind};
 use std::collections::HashMap;
 
-pub(crate) struct ManifestEvent {
+pub(super) struct ManifestEvent {
     /// Dependency name as declared (the table key).
     pub(crate) name: String,
     pub(crate) kind: DepKind,
