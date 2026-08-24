@@ -221,9 +221,10 @@ struct WireView {
     event: &'static str,
 }
 
-/// Everything one build of the chart draws.
+/// One drawing of the surface chart: the blocks, frames and wires a single
+/// build puts on the paper, plus what the camera and the diff read back.
 #[derive(Clone, PartialEq)]
-struct Built {
+struct SurfaceDrawing {
     nodes: Vec<FlowNode<SurfaceNodeData>>,
     frames: Vec<FrameView>,
     holds: Vec<WireView>,
@@ -572,7 +573,7 @@ fn hold_class(kind: HoldKind) -> &'static str {
 }
 
 /// Measure everything, place it, and gather what the chart draws.
-fn build_chart(model: &SurfaceModel) -> Built {
+fn build_chart(model: &SurfaceModel) -> SurfaceDrawing {
     let mut sizes = Sizes::default();
     let mut views: HashMap<u32, MarkView> = HashMap::new();
     for mark in &model.marks {
@@ -756,7 +757,7 @@ fn build_chart(model: &SurfaceModel) -> Built {
             .map(|f| Rect::new(f.at.x, f.at.y, f.at.w, f.at.h))
     });
 
-    Built {
+    SurfaceDrawing {
         nodes,
         frames,
         holds,

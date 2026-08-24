@@ -195,9 +195,11 @@ struct WireView {
     bundle: bool,
 }
 
-/// Everything one build of the chart draws.
+/// One drawing of the data chart: the blocks, frames and wires a single
+/// build puts on the paper, plus the indexes a reading walks — pairs, homes,
+/// rects, locators.
 #[derive(Clone, PartialEq)]
-struct Built {
+struct DataDrawing {
     nodes: Vec<FlowNode<DataNodeData>>,
     frames: Vec<FrameView>,
     holds: Vec<WireView>,
@@ -576,7 +578,7 @@ fn keys_of(view: &DataView, out: &mut HashMap<(String, String), Anchor>) {
     }
 }
 
-fn build_chart(model: &DataModel) -> Built {
+fn build_chart(model: &DataModel) -> DataDrawing {
     let by_id: HashMap<u32, &DataMark> = model.marks.iter().map(|m| (m.id, m)).collect();
     // Post-order: a block is measured around its kids, so the kids go first.
     fn measured(id: u32, by_id: &HashMap<u32, &DataMark>) -> Option<DataView> {
@@ -780,7 +782,7 @@ fn build_chart(model: &DataModel) -> Built {
             .map(|f| Rect::new(f.at.x, f.at.y, f.at.w, f.at.h))
     });
 
-    Built {
+    DataDrawing {
         nodes,
         frames,
         holds,

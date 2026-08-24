@@ -178,9 +178,10 @@ fn block_size(name: &str, rows: &[Row], fold: Option<&str>) -> (f64, f64, f64) {
     (w, h, fold_h)
 }
 
-/// Everything one build of the map draws.
+/// One drawing of the code map: the blocks, districts and ties a single
+/// build puts on the paper, plus what the camera needs to frame them.
 #[derive(Clone, PartialEq)]
-struct Built {
+struct CodeDrawing {
     nodes: Vec<FlowNode<CodeNodeData>>,
     districts: Vec<DistrictView>,
     ties: Vec<TieView>,
@@ -228,7 +229,7 @@ fn build_map(
     sel: &CodeSel,
     workspace: &str,
     ref_dir: RefDir,
-) -> Built {
+) -> CodeDrawing {
     // Visible files: everything whose directory chain is open. A file behind
     // a gate keeps its references — they gather onto the gate.
     let visible: Vec<u32> = graph
@@ -584,7 +585,7 @@ fn build_map(
         }),
     };
 
-    Built {
+    CodeDrawing {
         nodes,
         districts,
         ties,

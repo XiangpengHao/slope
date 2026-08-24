@@ -104,9 +104,11 @@ fn prefers_reduced_motion() -> bool {
     false
 }
 
-/// Everything one selection draws, derived from the graph and the layout.
+/// One drawing of the crate atlas: everything a single selection puts on
+/// the paper, derived from the graph and the layout. Built once per reading
+/// and read back by the camera, the keys, and every layer.
 #[derive(Clone, PartialEq)]
-struct Built {
+struct AtlasDrawing {
     stars: Vec<FlowNode<StarData>>,
     lines: Vec<FlowEdge>,
     /// Ids of the selection and its direct neighbors, for framing.
@@ -158,7 +160,7 @@ fn build_chart(
     dir: DirFilter,
     focused: bool,
     ring: Option<u32>,
-) -> Built {
+) -> AtlasDrawing {
     let sel: HashSet<&str> = sel_names.iter().map(String::as_str).collect();
     let sel_ids: HashSet<&str> = graph
         .crates
@@ -324,7 +326,7 @@ fn build_chart(
         .collect();
     stars.sort_by(|a, b| a.id.cmp(&b.id));
 
-    Built {
+    AtlasDrawing {
         stars,
         lines,
         hood,
@@ -582,17 +584,17 @@ fn frame_chart(
 
 /// The bounds the camera should frame: a focused view frames the selection's
 /// neighborhood; the overview frames every ring.
-fn frame_target(built: &Built) -> (Option<Rect>, Option<Point>) {
-    let focal_center = built
+fn frame_target(drawing: &AtlasDrawing) -> (Option<Rect>, Option<Point>) {
+    let focal_center = drawing
         .stars
         .iter()
         .filter(|n| n.data.focal)
         .min_by_key(|n| n.data.ring)
         .map(|n| n.rect().center());
-    let rects: Vec<Rect> = built
+    let rects: Vec<Rect> = drawing
         .stars
         .iter()
-        .filter(|n| !built.focused || built.hood.contains(&n.id))
+        .filter(|n| !drawing.focused || drawing.hood.contains(&n.id))
         .map(|n| n.rect())
         .collect();
     (Rect::bounds(rects), focal_center)
