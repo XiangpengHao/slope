@@ -335,10 +335,11 @@ impl DeclRow {
 
 /// One method of a type, quoted from its own source. Methods are never marks
 /// — a method belongs to its type the way a field does — and no chart draws
-/// them as rows any more: what they are still needed for is attribution. A
-/// reference resolved to a method is filed under its type, a method naming a
-/// type is a naming rather than a holding, and the structural diff compares
-/// these rows to tell a rewritten API from a rewritten shape.
+/// them as rows: what they are needed for is attribution, and the data
+/// sheet's own list of what the selected type offers. A reference resolved to
+/// a method is filed under its type, a method naming a type is a naming
+/// rather than a holding, and the structural diff compares these rows to tell
+/// a rewritten API from a rewritten shape.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct MethodRow {
     /// The method's own name, which is what its edges and its callers file
@@ -352,6 +353,11 @@ pub(crate) struct MethodRow {
     /// method itself can be filed under this row rather than blurred into
     /// its type.
     pub(crate) mark: u32,
+    /// The impl block that writes it, as the survey headers one: `impl Vis`
+    /// for an inherent method, `impl Clone for Vis` for a trait's, `trait
+    /// Held` for a trait's own clause. What separates a type's own API from
+    /// the contracts it promises, without asking the file for its sections.
+    pub(crate) section: String,
 }
 
 /// One landmark the map may engrave: an item, seated in the containment tree

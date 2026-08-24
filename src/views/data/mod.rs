@@ -12,9 +12,11 @@
 //! Two inks run between the blocks, and only two: solid holding lines with the
 //! wrapper's word for what nesting cannot say — sharing, borrowing,
 //! cross-module ownership, second holders — and dashed counted uses edges
-//! where one type's impls lean on another. Methods are not rows here: a block
-//! is state only, and what a type promises is read on its definition plate,
-//! one rung up.
+//! where one type's impls lean on another. Methods are not rows on the paper:
+//! a block is state only. The selection sheet is a list rather than a
+//! drawing, so it does say what the selected type offers — the contracts it
+//! promises, and every method written for it anywhere in the workspace, each
+//! a link to where it is written.
 
 pub(crate) mod chrome;
 pub(crate) mod layout;

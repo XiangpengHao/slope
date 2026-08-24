@@ -506,7 +506,10 @@ fn survey_attached(
                 (ItemKind::Fn | ItemKind::TypeAlias | ItemKind::Const, Some(owner))
                     if charted_type(owner) =>
                 {
-                    Some(data::MethodOf { mark: id as u32 })
+                    Some(data::MethodOf {
+                        mark: id as u32,
+                        section: item.section.clone(),
+                    })
                 }
                 _ => None,
             };

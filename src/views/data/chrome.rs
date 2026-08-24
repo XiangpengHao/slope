@@ -140,6 +140,48 @@ fn RefToggle() -> Element {
     }
 }
 
+impl Delta {
+    /// The letter a declaration wears, in git's own alphabet. A mark's own
+    /// letter climbs through [`DataMark::letter`]; this is for the ends the
+    /// sheet quotes from the survey directly — a trait it promises, a method
+    /// written for it.
+    fn letter(self) -> Option<&'static str> {
+        match self {
+            Delta::Added => Some("A"),
+            Delta::Changed => Some("M"),
+            Delta::Same => None,
+        }
+    }
+}
+
+impl HoldEvent {
+    /// The relation's diff event in its own word, for the right of a row.
+    fn word(self) -> &'static str {
+        match self {
+            HoldEvent::Added => "added",
+            HoldEvent::Removed => "removed",
+        }
+    }
+}
+
+/// What an impl header promises, and for what: `impl Clone for Vis` reads
+/// `("Clone", "Vis")`. An inherent `impl Vis` promises no contract, and so
+/// answers `None` — which is exactly how the sheet tells a type's own methods
+/// from the ones a trait asked for.
+fn header_promise(header: &str) -> Option<(&str, &str)> {
+    let (promise, for_ty) = header.strip_prefix("impl ")?.rsplit_once(" for ")?;
+    Some((promise.trim(), for_ty.trim()))
+}
+
+/// The bare name a trait path ends in, generic arguments dropped:
+/// `fmt::Display` is `Display`, `From<&str>` is `From`. The survey resolved
+/// its impl edges properly; this is what a written header is matched to one
+/// on, the same way the structural diff matches names.
+fn bare_trait(promise: &str) -> &str {
+    let base = promise.split('<').next().unwrap_or(promise);
+    base.rsplit("::").next().unwrap_or(base).trim()
+}
+
 impl HoldKind {
     /// How a row says this hold: the survey's own words for the type it went
     /// through when it has any, the kind's plain word otherwise.
@@ -170,6 +212,10 @@ struct HoldRow {
     pub(crate) word: String,
     /// The relation's own diff event, in its word.
     pub(crate) event: Option<&'static str>,
+    /// What the row cannot fit and a reader still wants: a method's signature
+    /// as written. The row's hover words, never its ink — 256 pixels of mono
+    /// is a name, not a signature.
+    pub(crate) hint: Option<String>,
 }
 
 /// One chunked list of relation rows: the first eight, then a typographic
@@ -187,6 +233,7 @@ fn HoldList(rows: Vec<HoldRow>) -> Element {
                         Link {
                             class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] hover:bg-ink/5",
                             to,
+                            title: row.hint.clone(),
                             if !row.decl.is_empty() {
                                 span { class: "shrink-0 text-ink-soft", "{row.decl}" }
                             }
@@ -206,7 +253,12 @@ fn HoldList(rows: Vec<HoldRow>) -> Element {
                             }
                         }
                     } else {
-                        span { class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] text-ink-soft",
+                        span {
+                            class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] text-ink-soft",
+                            title: row.hint.clone(),
+                            if !row.decl.is_empty() {
+                                span { class: "shrink-0", "{row.decl}" }
+                            }
                             span { class: "min-w-0 flex-1 truncate", "{row.name}" }
                             span { class: "max-w-[45%] shrink-0 truncate text-right text-[9px]",
                                 "{row.word}"
@@ -240,11 +292,7 @@ impl DataModel {
         holds
             .into_iter()
             .map(|(anchor, kind, via, event)| {
-                let event = match event {
-                    Some(HoldEvent::Added) => Some("added"),
-                    Some(HoldEvent::Removed) => Some("removed"),
-                    None => None,
-                };
+                let event = event.map(HoldEvent::word);
                 match anchor {
                     Anchor::Mark(id) => {
                         let mark = by_id.get(id);
@@ -255,6 +303,7 @@ impl DataModel {
                             letter: mark.and_then(|m| m.letter()),
                             word: kind.word(via),
                             event,
+                            hint: None,
                         }
                     }
                     Anchor::Mod(frame) => {
@@ -272,6 +321,7 @@ impl DataModel {
                             letter: None,
                             word: kind.word(via),
                             event,
+                            hint: None,
                         }
                     }
                 }
@@ -307,6 +357,7 @@ impl DataModel {
                         letter: far.letter(),
                         word,
                         event: None,
+                        hint: None,
                     },
                 ))
             })
@@ -360,6 +411,159 @@ impl DataMark {
     }
 }
 
+/// What the selected type offers, and neither ink on this paper draws: the
+/// contracts it promises, and the methods written for it. A block is state
+/// only — the sheet is a list, so both are rows with links (2026-08-24, user).
+struct Offers {
+    /// One row per hand-written trait impl, wherever in the workspace it is
+    /// written. A derive is not here: it stands in the type's own source.
+    promises: Vec<HoldRow>,
+    /// One row per method the survey read for the type, its own first, then
+    /// the ones a contract asked for, under the promise they answer.
+    methods: Vec<HoldRow>,
+}
+
+impl DataMark {
+    /// Read both lists off the survey. Nothing is reconstructed: a promise is
+    /// an impl header as written, a method is a signature as written, and a
+    /// row links to the definition the survey engraved for it.
+    fn offers(&self, graph: &CodeGraph) -> Offers {
+        let mut promises: Vec<HoldRow> = Vec::new();
+        let mut methods: Vec<HoldRow> = Vec::new();
+        let trait_row =
+            |t: &ItemMark, event: Option<HoldEvent>, name: String, word: String| HoldRow {
+                to: graph
+                    .files
+                    .get(t.file as usize)
+                    .map(|f| item_route(&f.path, &t.label)),
+                decl: t.kind.decl_words(t.vis),
+                name,
+                letter: t.delta.letter(),
+                word,
+                event: event.map(HoldEvent::word),
+                hint: None,
+            };
+        if let Some(item) = graph.items.get(self.id as usize) {
+            // Which promises the workspace declares itself: those the survey
+            // resolved to a trait mark, so those rows link to the contract and
+            // carry the impl's own diff event. A foreign trait is a name.
+            let ours: Vec<(&ItemMark, Option<HoldEvent>)> = graph
+                .implements
+                .iter()
+                .filter(|e| e.ty == self.id)
+                .filter_map(|e| Some((graph.items.get(e.trait_mark as usize)?, e.event)))
+                .collect();
+            let mut quoted: std::collections::HashSet<u32> = std::collections::HashSet::new();
+            for header in &item.impls {
+                let Some((promise, for_ty)) = header_promise(header) else {
+                    continue;
+                };
+                let known = ours
+                    .iter()
+                    .find(|(t, _)| bare_trait(&t.name) == bare_trait(promise));
+                if let Some((t, _)) = known {
+                    quoted.insert(t.id);
+                }
+                // The header's self type, but only where it is not simply this
+                // mark: `impl Held for Frame<'a>` says which edition of the type
+                // promises, and `impl Held for Frame` would only say the name the
+                // sheet's own title says.
+                let word = match for_ty == self.name {
+                    true => String::new(),
+                    false => format!("for {for_ty}"),
+                };
+                match known {
+                    Some((t, event)) => {
+                        promises.push(trait_row(t, *event, promise.to_string(), word))
+                    }
+                    None => promises.push(HoldRow {
+                        to: None,
+                        decl: "trait".to_string(),
+                        name: promise.to_string(),
+                        letter: None,
+                        word,
+                        event: None,
+                        hint: None,
+                    }),
+                }
+            }
+            // A contract the base promised and the working copy dropped: its impl
+            // block is gone, so no header quotes it and the removed edge is the
+            // whole row.
+            for (t, event) in ours
+                .iter()
+                .filter(|(t, event)| *event == Some(HoldEvent::Removed) && !quoted.contains(&t.id))
+            {
+                promises.push(trait_row(t, *event, t.name.clone(), String::new()));
+            }
+
+            // The methods: the type's own first, then the ones a contract asked
+            // for, gathered under the promise they answer. The row states the
+            // keyword and the name; the signature is its hover words, because 256
+            // pixels of mono is a name and not a signature.
+            let added: std::collections::HashSet<u32> =
+                item.methods_added.iter().copied().collect();
+            let mut rows: Vec<(&str, usize)> = item
+                .method_rows
+                .iter()
+                .enumerate()
+                .map(|(at, row)| {
+                    (
+                        header_promise(&row.section).map_or("", |(promise, _)| promise),
+                        at,
+                    )
+                })
+                .collect();
+            rows.sort_by_key(|&(promise, at)| (!promise.is_empty(), promise, at));
+            methods.extend(rows.into_iter().map(|(promise, at)| {
+                let row = &item.method_rows[at];
+                let own = graph.items.get(row.mark as usize);
+                HoldRow {
+                    to: own.and_then(|m| {
+                        graph
+                            .files
+                            .get(m.file as usize)
+                            .map(|f| item_route(&f.path, &m.label))
+                    }),
+                    decl: own.map_or_else(String::new, |m| m.kind.decl_words(m.vis)),
+                    name: row.name.clone(),
+                    letter: added.contains(&(at as u32)).then_some("A"),
+                    word: promise.to_string(),
+                    event: None,
+                    hint: Some(row.sig.clone()),
+                }
+            }));
+            // What the base wrote for it and this copy does not, quoted from the
+            // base edition the way a dropped field is.
+            methods.extend(item.methods_removed.iter().map(|(_, name, sig)| HoldRow {
+                to: None,
+                decl: "fn".to_string(),
+                name: name.clone(),
+                letter: None,
+                word: String::new(),
+                event: Some(HoldEvent::Removed.word()),
+                hint: Some(sig.clone()),
+            }));
+        } else if let Some(ghost) = (self.id as usize)
+            .checked_sub(graph.items.len())
+            .and_then(|at| graph.ghosts.get(at))
+        {
+            // A removed type's API left with it: the base wrote these, and the
+            // base edition is all there is of them.
+            methods.extend(ghost.method_rows.iter().map(|(name, sig)| HoldRow {
+                to: None,
+                decl: "fn".to_string(),
+                name: name.clone(),
+                letter: None,
+                word: String::new(),
+                event: None,
+                hint: Some(sig.clone()),
+            }));
+        }
+        Offers { promises, methods }
+    }
+}
+
 /// One selected datum's sheet: its tier, who holds it, which contracts name
 /// it, what it holds, and who uses it — with the counted residue said out
 /// loud, because `named by 12 signatures` is ink this chart refuses to draw
@@ -410,6 +614,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
             letter: h.letter(),
             word: "owns · nested".to_string(),
             event: None,
+            hint: None,
         });
     }
     held_by.extend(
@@ -435,6 +640,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
             letter: k.letter(),
             word: "owns · nested".to_string(),
             event: None,
+            hint: None,
         })
         .collect();
     holds.extend(
@@ -462,11 +668,8 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
             name: item.name.clone(),
             letter: None,
             word: "names it".to_string(),
-            event: match event {
-                Some(HoldEvent::Added) => Some("added"),
-                Some(HoldEvent::Removed) => Some("removed"),
-                None => None,
-            },
+            event: event.map(HoldEvent::word),
+            hint: None,
         })
     };
     let contracts: Vec<HoldRow> = model
@@ -488,6 +691,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
                 letter: far.letter(),
                 word: "its API names it".to_string(),
                 event: None,
+                hint: None,
             })
         })
         .collect();
@@ -509,6 +713,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
                 letter: None,
                 word: plural(end.count as usize, "reference"),
                 event: None,
+                hint: None,
             },
         ))
     };
@@ -540,6 +745,8 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
             .chain(mark.unseen_uses.iter().filter_map(unseen_row))
             .collect(),
     );
+
+    let Offers { promises, methods } = mark.offers(&graph);
 
     // The selection's own diff rows, exactly as the block draws them.
     let change_rows: Vec<(&'static str, String, bool)> = mark
@@ -600,6 +807,9 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
         ),
     };
 
+    // One rule opens what the type offers, so the pair reads as one section
+    // however few of it there is to say.
+    let promised = !promises.is_empty();
     let tier = mark.tier_line();
     // The four-way truth on a quiet datum: the verdict a reviewer deletes on.
     let quiet = mark.is_root()
@@ -698,6 +908,23 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
                     }
                 } else {
                     HoldList { rows: holds }
+                }
+                if !promises.is_empty() {
+                    h3 {
+                        class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
+                        title: "the trait impls written for it by hand, wherever in the workspace they are written; a derive stands in the type's own source and is not one of these",
+                        "Implements ({promises.len()})"
+                    }
+                    HoldList { rows: promises }
+                }
+                if !methods.is_empty() {
+                    h3 {
+                        class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
+                        class: if !promised { "border-t border-ink-line pt-3" },
+                        title: "every method written for it anywhere in the workspace, its own first, then the ones a contract asked for; each row's hover words are its signature as written",
+                        "Methods ({methods.len()})"
+                    }
+                    HoldList { rows: methods }
                 }
                 if !mark.ghost {
                     h3 { class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
@@ -852,5 +1079,145 @@ pub(super) fn DataSearch(graph: CodeGraph) -> Element {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{bare_trait, header_promise};
+    use crate::api::{GhostMark, HoldEvent, ImplEdge, ItemKind, MethodRow, Vis};
+    use crate::views::data::model::tests::{build, by_name, graph, mark};
+
+    #[test]
+    fn an_impl_header_says_what_it_promises_and_for_what() {
+        assert_eq!(header_promise("impl Clone for Vis"), Some(("Clone", "Vis")));
+        assert_eq!(
+            header_promise("impl From<Option<ast::Visibility>> for Vis"),
+            Some(("From<Option<ast::Visibility>>", "Vis"))
+        );
+        // The self type is what the header ends in, whatever `for` stands
+        // inside the trait's own arguments.
+        assert_eq!(
+            header_promise("impl Held for Frame<'a>"),
+            Some(("Held", "Frame<'a>"))
+        );
+        // An inherent impl promises nothing, and a trait's own header is not
+        // an impl at all: both are a type's own API.
+        assert_eq!(header_promise("impl DataModel"), None);
+        assert_eq!(header_promise("trait Held"), None);
+    }
+
+    #[test]
+    fn a_promise_matches_a_trait_mark_on_its_bare_name() {
+        assert_eq!(bare_trait("Clone"), "Clone");
+        assert_eq!(bare_trait("fmt::Display"), "Display");
+        assert_eq!(bare_trait("From<&str>"), "From");
+        assert_eq!(bare_trait("crate::api::Held<'a>"), "Held");
+        // A mark's own name carries its inline-module path; the survey's
+        // structural diff bares it the same way.
+        assert_eq!(bare_trait("tests::Held"), "Held");
+    }
+
+    #[test]
+    fn a_type_lists_the_contracts_it_promises_and_the_methods_written_for_it() {
+        let mut wire = mark(0, 0, "Wire", ItemKind::Struct);
+        // Two promises as their headers write them: one the workspace declares
+        // itself, one from outside it.
+        wire.impls = vec![
+            "impl Clone for Wire".to_string(),
+            "impl Held for Wire".to_string(),
+        ];
+        wire.method_rows = vec![
+            MethodRow {
+                name: "note".to_string(),
+                sig: "pub(crate) fn note(&self) -> String".to_string(),
+                mark: 2,
+                section: "impl Wire".to_string(),
+            },
+            MethodRow {
+                name: "clone".to_string(),
+                sig: "fn clone(&self) -> Self".to_string(),
+                mark: 3,
+                section: "impl Clone for Wire".to_string(),
+            },
+        ];
+        wire.methods_added = vec![0];
+        wire.methods_removed = vec![(2, "gone".to_string(), "fn gone(&self)".to_string())];
+        let mut note = mark(2, 0, "Wire::note", ItemKind::Fn);
+        note.vis = Vis::Crate;
+        note.parent = Some(0);
+        let mut clone = mark(3, 0, "Wire::clone", ItemKind::Fn);
+        clone.parent = Some(0);
+        let mut g = graph(
+            vec![wire, mark(1, 0, "Held", ItemKind::Trait), note, clone],
+            Vec::new(),
+        );
+        g.implements = vec![ImplEdge {
+            trait_mark: 1,
+            ty: 0,
+            event: Some(HoldEvent::Added),
+        }];
+        let model = build(&g);
+        let offers = by_name(&model, "Wire").offers(&g);
+
+        // The promises, in the order the headers stand. A foreign trait has no
+        // mark, so its row is a name; the workspace's own is a link, and this
+        // epoch's promise takes the flare.
+        let names: Vec<&str> = offers.promises.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["Clone", "Held"]);
+        assert!(offers.promises[0].to.is_none());
+        assert_eq!(offers.promises[0].event, None);
+        assert!(offers.promises[1].to.is_some());
+        assert_eq!(offers.promises[1].decl, "trait");
+        assert_eq!(offers.promises[1].event, Some("added"));
+        // The self type is not restated where it is simply this mark.
+        assert!(offers.promises.iter().all(|r| r.word.is_empty()));
+
+        // Its own method first, then the one a contract asked for under the
+        // promise it answers, then what the base wrote and this copy dropped.
+        let rows: Vec<(&str, &str)> = offers
+            .methods
+            .iter()
+            .map(|r| (r.name.as_str(), r.word.as_str()))
+            .collect();
+        assert_eq!(rows, [("note", ""), ("clone", "Clone"), ("gone", "")]);
+        assert_eq!(offers.methods[0].decl, "pub(crate) fn");
+        assert_eq!(offers.methods[0].letter, Some("A"));
+        assert_eq!(
+            offers.methods[0].hint.as_deref(),
+            Some("pub(crate) fn note(&self) -> String")
+        );
+        assert!(offers.methods[0].to.is_some());
+        assert_eq!(offers.methods[2].event, Some("removed"));
+        assert!(offers.methods[2].to.is_none());
+    }
+
+    #[test]
+    fn a_ghosts_api_left_with_it_and_the_sheet_quotes_the_base() {
+        let mut g = graph(vec![mark(0, 0, "Wire", ItemKind::Struct)], Vec::new());
+        g.ghosts = vec![GhostMark {
+            id: 1,
+            path: "src/api.rs".to_string(),
+            krate: "slope".to_string(),
+            name: "Nut".to_string(),
+            kind: ItemKind::Struct,
+            vis: Vis::Crate,
+            line: 12,
+            field_rows: Vec::new(),
+            variants: Vec::new(),
+            ty: String::new(),
+            method_rows: vec![("tighten".to_string(), "fn tighten(&mut self)".to_string())],
+        }];
+        let model = build(&g);
+        let offers = by_name(&model, "Nut").offers(&g);
+        assert!(offers.promises.is_empty());
+        assert_eq!(offers.methods.len(), 1);
+        assert_eq!(offers.methods[0].name, "tighten");
+        // Nothing to open: the definition left the working copy.
+        assert!(offers.methods[0].to.is_none());
+        assert_eq!(
+            offers.methods[0].hint.as_deref(),
+            Some("fn tighten(&mut self)")
+        );
     }
 }

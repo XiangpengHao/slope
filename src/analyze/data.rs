@@ -59,6 +59,11 @@ pub(super) struct Holder {
 pub(super) struct MethodOf {
     /// The method's own mark.
     pub(crate) mark: u32,
+    /// The impl block it is written under, as the survey headers one — `impl
+    /// Vis`, `impl Clone for Vis`, `trait Held`. The one fact a method's own
+    /// source cannot state, and what tells a type's own API from a contract it
+    /// promises.
+    pub(crate) section: String,
 }
 
 /// What the walk found. Everything but `holds` is indexed by mark id, so the
@@ -326,6 +331,7 @@ impl DataWalk {
                             name,
                             sig,
                             mark: method.mark,
+                            section: method.section.clone(),
                         });
                     }
                     ItemKind::Fn => {
@@ -393,6 +399,7 @@ impl DataWalk {
                                 name,
                                 sig,
                                 mark: method.mark,
+                                section: method.section.clone(),
                             });
                             continue;
                         }
