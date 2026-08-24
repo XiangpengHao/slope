@@ -55,7 +55,9 @@ const BAND_TOP: f64 = 5.0;
 /// The counted folds: the rule above them, then one line each.
 const FOLDS_TOP: f64 = 6.0;
 const FOLD_H: f64 = 12.0;
-const LOC_H: f64 = 14.0;
+/// Small-type slack: at 9px the browser rounds each glyph up, so a fold line
+/// measured with the font's exact 0.6em advance clips its last characters.
+const META_SLACK: f64 = 1.08;
 const MARK_MIN_W: f64 = 152.0;
 const MARK_MAX_W: f64 = 300.0;
 /// A counted fold row standing in for what a frame does not draw.
@@ -125,6 +127,10 @@ struct MarkView {
     /// The counted lines at the foot: the fan-in the chart folds to words.
     /// Nothing the block quotes is ever counted there.
     folds: Vec<String>,
+    /// `path:line`, for the block's hover words. It is off the resting paper
+    /// (2026-08-21): stamped under 200 blocks at 8.5px it was texture, and it
+    /// only said again where the block already stands — inside its module's
+    /// frame — while the sheet quotes it in full the moment a block is picked.
     locator: String,
     path: String,
     label: String,
@@ -452,7 +458,6 @@ fn measure(mark: &SurfaceMark) -> MarkView {
     let folds = fold_words(mark);
 
     let mut widest = text_w(&head, 10.5) + if letter.is_some() { 12.0 } else { 0.0 };
-    widest = widest.max(text_w(&locator, 8.5));
     // A long row clips at the block's own maximum rather than stretching it
     // past the paper's patience. A marked row carries its `+`/`−` in front.
     let wrapping = MARK_MAX_W - PAD_X;
@@ -463,6 +468,11 @@ fn measure(mark: &SurfaceMark) -> MarkView {
             11.0
         }
     };
+    for fold in &folds {
+        // Browsers round each glyph up at this size; measured with the font's
+        // exact advance the last characters clip. Carry slack.
+        widest = widest.max(text_w(fold, 9.0) * META_SLACK);
+    }
     for row in &mark.fields {
         widest = widest.max(
             (text_w(&format!("{}: {}", row.name, row.decl), 10.0) + marker_w(row)).min(wrapping),
@@ -503,7 +513,6 @@ fn measure(mark: &SurfaceMark) -> MarkView {
         + mark.variants.len() as f64 * ROW_H
         + band
         + fold_block
-        + LOC_H
         + PAD_BOTTOM;
 
     MarkView {
@@ -544,7 +553,6 @@ fn node_key(anchor: Anchor) -> String {
     match anchor {
         Anchor::Mark(id) => format!("m{id}"),
         Anchor::Private(frame) => format!("p{frame}"),
-        Anchor::More(frame) => format!("x{frame}"),
         Anchor::Mod(frame) => format!("f{frame}"),
     }
 }
@@ -605,19 +613,6 @@ fn build_chart(model: &SurfaceModel) -> Built {
                 plural(frame.private as usize, model.doors.fold_word())
             );
             let row = measure_row(anchor, words, model.doors.fold_title().to_string());
-            sizes.rows.insert(anchor, row.size);
-            rows.insert(anchor, row);
-        }
-        if frame.more > 0 {
-            let anchor = Anchor::More(frame.id);
-            let words = format!("+ {}", plural(frame.more as usize, "more item"));
-            let row = measure_row(
-                anchor,
-                words,
-                "the quietest contracts in this module, folded to fit the chart's budget; \
-                 every edge that touches one lands here"
-                    .to_string(),
-            );
             sizes.rows.insert(anchor, row.size);
             rows.insert(anchor, row);
         }
@@ -851,8 +846,8 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
     };
     let title = if selected {
         format!(
-            "{} {} — selected · click again to deselect",
-            view.decl, view.name
+            "{} {} — {} · selected · click again to deselect",
+            view.decl, view.name, view.locator
         )
     } else {
         format!("{} {} — {} · select it", view.decl, view.name, view.locator)
@@ -981,7 +976,6 @@ fn MarkPlate(view: MarkView, selected: bool) -> Element {
                     }
                 }
             }
-            p { class: "dm-loc", "{view.locator}" }
         }
     }
 }

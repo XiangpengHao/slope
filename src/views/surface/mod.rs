@@ -133,6 +133,10 @@ pub fn SurfaceShell(graph: CodeGraph, workspace: String, diff_line: String) -> E
         .facts(graph.unresolved)
     }));
 
+    // The walk's limits first, then the references' — this chart draws both
+    // inks, and the interface line is the one it is about.
+    let limits: Vec<String> = [graph.walk_notes.clone(), graph.notes.clone()].concat();
+
     rsx! {
         SurfaceChart { graph, sel }
         Outlet::<Route> {}
@@ -142,7 +146,11 @@ pub fn SurfaceShell(graph: CodeGraph, workspace: String, diff_line: String) -> E
                 workspace: workspace.clone(),
                 diff_line: diff_line.clone(),
             }
-            SurfaceLegend { facts: facts(), start_open: true }
+            SurfaceLegend {
+                facts: facts(),
+                notes: limits.clone(),
+                start_open: true,
+            }
         }
         // Narrow viewports are not a designed composition, only a serviceable
         // one: the chrome stacks and the chart keeps the rest of the paper.
@@ -150,7 +158,7 @@ pub fn SurfaceShell(graph: CodeGraph, workspace: String, diff_line: String) -> E
             SurfaceCartouche { facts: facts(), workspace, diff_line }
         }
         div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
-            SurfaceLegend { facts: facts(), start_open: false }
+            SurfaceLegend { facts: facts(), notes: limits, start_open: false }
         }
     }
 }

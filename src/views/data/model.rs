@@ -220,14 +220,6 @@ pub struct DataFacts {
     pub enums: usize,
     pub unions: usize,
     pub statics: usize,
-    pub roots: usize,
-    pub nested: usize,
-    pub standing: usize,
-    pub ties: usize,
-    /// How many of them rest on the paper under the current reading; the
-    /// rest ink in on hover and selection. The cartouche states both, so a
-    /// count never claims ink the resting chart is not showing.
-    pub ties_rest: usize,
     pub added: usize,
     pub removed: usize,
     pub changed: usize,
@@ -251,7 +243,6 @@ pub struct DataModel {
     pub naming: Vec<Naming>,
     pub multi_crate: bool,
     // ---- Facts for the cartouche. ----
-    pub ties_rest: usize,
     pub structs: usize,
     pub enums: usize,
     pub unions: usize,
@@ -273,11 +264,6 @@ impl DataModel {
             enums: self.enums,
             unions: self.unions,
             statics: self.statics,
-            roots: self.roots,
-            nested: self.nested,
-            standing: self.standing,
-            ties: self.ties.len(),
-            ties_rest: self.ties_rest,
             added: self.added,
             removed: self.removed,
             changed: self.changed,
@@ -389,11 +375,8 @@ impl DataModel {
 
         // ---- Frames: one per crate, then the module tree inside it. ---------
         let framed_key = |key: FrameKey| -> FrameKey { fold_key(&key).unwrap_or(key) };
-        let data_ghosts: Vec<&GhostMark> = graph
-            .ghosts
-            .iter()
-            .filter(|g| data_kind(g.kind))
-            .collect();
+        let data_ghosts: Vec<&GhostMark> =
+            graph.ghosts.iter().filter(|g| data_kind(g.kind)).collect();
         let mut keys: Vec<FrameKey> = drawn
             .iter()
             .filter_map(|&m| key_of(m).cloned())
@@ -423,7 +406,6 @@ impl DataModel {
                 parent: None,
                 marks: Vec::new(),
                 private: 0,
-                more: 0,
                 folded: folds.contains(&mod_key(krate, &[])),
                 packed: 0,
                 forest: Vec::new(),
@@ -445,7 +427,6 @@ impl DataModel {
                 parent,
                 marks: Vec::new(),
                 private: 0,
-                more: 0,
                 folded: folds.contains(&mod_key(&key.0, &key.1)),
                 packed: 0,
                 forest: Vec::new(),
@@ -482,7 +463,8 @@ impl DataModel {
                 anchor_of[ghost.id as usize] = Some(Anchor::Mark(ghost.id));
             }
         }
-        let drawn_mark = |id: u32| matches!(anchor_of.get(id as usize), Some(Some(Anchor::Mark(_))));
+        let drawn_mark =
+            |id: u32| matches!(anchor_of.get(id as usize), Some(Some(Anchor::Mark(_))));
 
         // ---- Reading the holds: structure to one side, naming to the other. -
         // A structural hold is a field of a shape or a static reaching a type:
@@ -667,8 +649,7 @@ impl DataModel {
                 fields,
                 // A vocabulary mark's structural fan-in rests folded, its
                 // count on its own foot; diff ink never folds.
-                rest: event.is_some()
-                    || !matches!(held, Anchor::Mark(id) if vocab.contains(&id)),
+                rest: event.is_some() || !matches!(held, Anchor::Mark(id) if vocab.contains(&id)),
                 event,
             })
             .collect();
@@ -721,7 +702,10 @@ impl DataModel {
                     m,
                 )
             });
-            frame.forest = top.into_iter().map(|m| Seat::leaf(Anchor::Mark(m))).collect();
+            frame.forest = top
+                .into_iter()
+                .map(|m| Seat::leaf(Anchor::Mark(m)))
+                .collect();
         }
 
         // ---- The marks themselves, rows quoted and diff-woven. ---------------
@@ -1035,8 +1019,6 @@ impl DataModel {
             mark.used_by = unseen_in.get(&mark.id).copied().unwrap_or(0);
             mark.unseen_uses = unseen_out.get(&mark.id).copied().unwrap_or(0);
         }
-        let ties_rest = ties.iter().filter(|t| t.rest).count();
-
         // ---- Facts. -----------------------------------------------------------
         let current = |m: &&DataMark| !m.ghost;
         let structs = marks
@@ -1090,7 +1072,6 @@ impl DataModel {
             ties,
             naming,
             multi_crate,
-            ties_rest,
             structs,
             enums,
             unions,
@@ -1174,6 +1155,7 @@ mod tests {
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
+            walk_notes: Vec::new(),
         }
     }
 
@@ -1236,7 +1218,10 @@ mod tests {
             vec![edge],
         );
         let model = build(&g);
-        assert_eq!(by_name(&model, "Config").tier, Tier::Standing(Stand::Shared));
+        assert_eq!(
+            by_name(&model, "Config").tier,
+            Tier::Standing(Stand::Shared)
+        );
         assert_eq!(model.holds.len(), 1);
         assert_eq!(model.holds[0].via, "Arc");
     }

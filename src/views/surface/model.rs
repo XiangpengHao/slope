@@ -49,9 +49,6 @@ use crate::api::{CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, Ite
 use crate::views::codemap::model::Containment;
 use crate::views::codemap::{Doors, RefDir};
 
-/// Marks the first paint budgets for. Past it, each frame folds its quietest
-/// types into a counted row rather than drawing a wall of blocks.
-pub const MARK_BUDGET: usize = 200;
 /// Incoming holds edges a type draws before folding them to a count on its own
 /// mark. A type four other types reach is a hub, and its fan-in drawn in full
 /// is a star burst nobody can read.
@@ -69,7 +66,7 @@ pub const TIE_LABELS: usize = 12;
 const TIES_PER_MARK: usize = 2;
 
 /// Where an edge can land: a drawn mark, or one of a frame's counted fold rows.
-/// Privacy folds a type for good and the budget folds the quietest ones; either
+/// Privacy folds a type for good and a reader can fold a whole module; either
 /// way the edge lands on the row that counts it instead of being cut.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 pub enum Anchor {
@@ -77,8 +74,6 @@ pub enum Anchor {
     Mark(u32),
     /// A frame's `+ n private items` row.
     Private(u32),
-    /// A frame's `+ n more items` row, where the budget folded the quietest.
-    More(u32),
     /// A whole module, folded by hand: the frame's own row, standing for every
     /// contract inside it and inside the modules nested in it.
     Mod(u32),
@@ -103,7 +98,7 @@ impl Anchor {
     pub fn frame(self) -> Option<u32> {
         match self {
             Anchor::Mark(_) => None,
-            Anchor::Private(frame) | Anchor::More(frame) | Anchor::Mod(frame) => Some(frame),
+            Anchor::Private(frame) | Anchor::Mod(frame) => Some(frame),
         }
     }
 }
@@ -150,8 +145,6 @@ pub struct Frame {
     pub marks: Vec<u32>,
     /// Private types, never drawn, counted here.
     pub private: u32,
-    /// Types the budget folded away, counted here.
-    pub more: u32,
     /// The reviewer folded this module by hand: it draws its border, its label
     /// and one row, and nothing inside it is on the paper. The modules nested
     /// in it earn no frame of their own — a fold is one boundary, not a stack
@@ -479,9 +472,6 @@ pub struct SurfaceFacts {
     pub traits: usize,
     pub consts: usize,
     pub aliases: usize,
-    pub methods: usize,
-    pub uses: usize,
-    pub roots: usize,
     pub added: usize,
     pub removed: usize,
     pub changed: usize,
@@ -500,9 +490,6 @@ impl SurfaceModel {
             traits: self.traits,
             consts: self.consts,
             aliases: self.aliases,
-            methods: self.methods,
-            uses: self.uses,
-            roots: self.roots,
             added: self.added,
             removed: self.removed,
             changed: self.changed,
@@ -614,13 +601,6 @@ fn frame_key(krate: &str, path: &str) -> FrameKey {
     )
 }
 
-/// How loudly a type asks for a block of its own: how many holding edges touch
-/// it, how much of the workspace names it, and whether this epoch touched its
-/// file. Only used once the chart is over budget.
-fn interest(mark: &ItemMark, degree: u32, changed: bool) -> u32 {
-    degree + mark.fan_in + if changed { 2 } else { 0 }
-}
-
 /// How many marks a seat carries, itself included. A frame reads biggest tree
 /// first, so the state with the most shape under it opens the frame.
 fn subtree_size(anchor: Anchor, seated: &HashMap<Anchor, Vec<u32>>) -> usize {
@@ -662,9 +642,6 @@ fn would_cycle(child: u32, candidate: Anchor, parents: &HashMap<u32, Anchor>) ->
 
 impl SurfaceModel {
     pub fn build(graph: &CodeGraph, ref_dir: RefDir, doors: Doors, folds: &Folds) -> Self {
-        let changed_file: Vec<bool> = graph.files.iter().map(|f| f.changed).collect();
-        let file_changed = |file: u32| changed_file.get(file as usize).copied().unwrap_or(false);
-
         // Ghosts share the marks' id space, continuing after `items`.
         let ghost_of = |id: u32| -> Option<&GhostMark> {
             (id as usize)
@@ -759,35 +736,11 @@ impl SurfaceModel {
             }
         }
 
-        // Over budget, the quietest types fold to their frame's counted row.
-        // Statics never fold: eleven of them are the whole session's state.
-        // Neither does anything the diff touched — the diff is what the
-        // reviewer came for.
-        let mut folded: HashSet<u32> = HashSet::new();
-        if drawn.len() > MARK_BUDGET {
-            let mut ranked: Vec<u32> = drawn
-                .iter()
-                .copied()
-                .filter(|&m| {
-                    graph.items[m as usize].kind != ItemKind::Static
-                        && graph.items[m as usize].delta == Delta::Same
-                })
-                .collect();
-            ranked.sort_by_key(|&m| {
-                let mark = &graph.items[m as usize];
-                (
-                    std::cmp::Reverse(interest(mark, degree[m as usize], file_changed(mark.file))),
-                    mark.file,
-                    mark.line,
-                )
-            });
-            let statics = drawn.len() - ranked.len();
-            folded = ranked
-                .into_iter()
-                .skip(MARK_BUDGET.saturating_sub(statics))
-                .collect();
-            drawn.retain(|m| !folded.contains(m));
-        }
+        // Nothing folds by count here. A global budget fold hid marks by a
+        // number nobody set, reflowed the chart when the threshold moved, and
+        // left a row a URL could still point at; the folds that remain are the
+        // ones a reader asks for — the visibility door, and a module folded by
+        // hand (user decision, 2026-08-21).
 
         // ---- Frames: one per crate, then the module tree inside it. ---------
         // A folded module earns its own frame and its nested modules earn
@@ -796,7 +749,6 @@ impl SurfaceModel {
         let framed_key = |key: FrameKey| -> FrameKey { fold_key(&key).unwrap_or(key) };
         let mut keys: Vec<FrameKey> = drawn
             .iter()
-            .chain(folded.iter())
             .chain(private.iter())
             .filter_map(|&m| key_of(m).cloned())
             .chain(packed.iter().filter_map(|&m| key_of(m).and_then(fold_key)))
@@ -830,7 +782,6 @@ impl SurfaceModel {
                 parent: None,
                 marks: Vec::new(),
                 private: 0,
-                more: 0,
                 folded: folds.contains(&mod_key(krate, &[])),
                 packed: 0,
                 forest: Vec::new(),
@@ -853,7 +804,6 @@ impl SurfaceModel {
                 parent,
                 marks: Vec::new(),
                 private: 0,
-                more: 0,
                 folded: folds.contains(&mod_key(&key.0, &key.1)),
                 packed: 0,
                 forest: Vec::new(),
@@ -903,14 +853,6 @@ impl SurfaceModel {
             if let Some(frame) = frame_of(m) {
                 frames[frame as usize].private += 1;
                 anchor_of[m as usize] = Some(Anchor::Private(frame));
-            }
-        }
-        let mut folded_sorted: Vec<u32> = folded.iter().copied().collect();
-        folded_sorted.sort_unstable();
-        for m in folded_sorted {
-            if let Some(frame) = frame_of(m) {
-                frames[frame as usize].more += 1;
-                anchor_of[m as usize] = Some(Anchor::More(frame));
             }
         }
 
@@ -1117,12 +1059,10 @@ impl SurfaceModel {
                     Anchor::Mark(holder) => frame_of(holder) == Some(home),
                     // A frame's private fold row is the drawn stand-in for its
                     // private code, so it can seat what only private code
-                    // owns. The `+ n more items` row cannot: it stands for
-                    // types the budget took away, not for a place in the
-                    // module's shape. Neither can a folded module's row, which
-                    // stands in another frame entirely.
+                    // owns. A folded module's row cannot: it stands in another
+                    // frame entirely.
                     Anchor::Private(frame) => frame == home,
-                    Anchor::More(_) | Anchor::Mod(_) => false,
+                    Anchor::Mod(_) => false,
                 };
                 if !same_frame {
                     continue;
@@ -1277,9 +1217,6 @@ impl SurfaceModel {
             forest.extend(band.into_iter().map(|m| Seat::leaf(Anchor::Mark(m))));
             if frame.private > 0 {
                 forest.push(seat_of(Anchor::Private(frame.id), &seated));
-            }
-            if frame.more > 0 {
-                forest.push(seat_of(Anchor::More(frame.id), &seated));
             }
             frame.forest = forest;
         }
@@ -1851,6 +1788,7 @@ mod tests {
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
+            walk_notes: Vec::new(),
         }
     }
 
@@ -2053,6 +1991,7 @@ mod tests {
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
+            walk_notes: Vec::new(),
         }
     }
 
@@ -2280,6 +2219,7 @@ mod tests {
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
+            walk_notes: Vec::new(),
         }
     }
 
@@ -2439,6 +2379,7 @@ mod tests {
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
+            walk_notes: Vec::new(),
         };
         let model = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate, &Folds::new());
         let api = frame_named(&model, "api");
@@ -2556,6 +2497,7 @@ mod tests {
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
+            walk_notes: Vec::new(),
         }
     }
 
@@ -2720,9 +2662,11 @@ mod tests {
     }
 
     #[test]
-    fn the_budget_folds_contracts_and_never_statics() {
+    fn no_count_ever_folds_a_contract_away() {
+        // The chart draws every contract that clears the door, however many
+        // there are: what folds is what a reader folded, never a number.
         let mut items = vec![mark(0, 0, "CACHE", ItemKind::Static, Vis::Private)];
-        for id in 1..=(MARK_BUDGET as u32 + 1) {
+        for id in 1..=301u32 {
             items.push(func(id, 0, &format!("f{id}"), Vis::Pub, &[], ""));
         }
         let graph = CodeGraph {
@@ -2736,15 +2680,12 @@ mod tests {
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
+            walk_notes: Vec::new(),
         };
         let model = SurfaceModel::build(&graph, RefDir::Uses, Doors::Crate, &Folds::new());
         let api = frame_named(&model, "api");
-        // The two quietest functions fold to the counted row; the static
-        // stands, because it is the one mark with nowhere else to be counted.
-        assert_eq!(api.marks.len(), MARK_BUDGET);
-        assert_eq!(api.more, 2);
+        assert_eq!(api.marks.len(), 302);
         assert!(model.marks.iter().any(|m| m.name == "CACHE"));
-        assert_eq!(roots(api).last(), Some(&Anchor::More(api.id)));
     }
 
     #[test]
@@ -2885,6 +2826,7 @@ mod tests {
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
+            walk_notes: Vec::new(),
         }
     }
 
@@ -3131,6 +3073,7 @@ mod tests {
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
+            walk_notes: Vec::new(),
         }
     }
 
@@ -3333,6 +3276,7 @@ mod tests {
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
+            walk_notes: Vec::new(),
         }
     }
 

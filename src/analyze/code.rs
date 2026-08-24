@@ -730,35 +730,24 @@ fn survey_attached(
         })
         .collect();
 
+    // Two lists, because a legend should state the limits of the ink its own
+    // chart draws: references are the code map's whole subject and the dashed
+    // ink at the two altitudes above it, while the holds walk is theirs alone.
+    // Said once here, in the survey's own words, so no legend paraphrases it.
     let mut notes = vec![
-        "references are resolved semantically by rust-analyzer; only \
-         references between workspace files are charted"
+        "rust-analyzer resolves every reference; only references between \
+         workspace files are charted"
             .to_string(),
-        "references produced by derive macros are not counted; a type's \
+        "a derive macro writes no reference the survey can count — a type's \
          derives stand in its own source, on its plate"
             .to_string(),
-        "a name written inside a string a macro rewrites — an rsx! text node's \
-         `\"{words(x)}\"` — is not counted: the expansion keeps no trail back \
-         into the literal, so the reference cannot be placed. a format \
-         string's own captures (`\"{LIMIT}\"`) are counted"
+        "a name inside a string a macro rewrites — an rsx! text node's \
+         `\"{words(x)}\"` — keeps no trail back into the literal, so it \
+         cannot be placed and is not counted; a format string's own captures \
+         (`\"{LIMIT}\"`) are"
             .to_string(),
-        "an `impl Trait for Type` counts as a reference from the type to the \
-         trait — the impl block itself holds no ground"
-            .to_string(),
-        "holds edges walk declared field types: `Arc`, `Rc`, `Weak` and the \
-         dioxus signals read as sharing, a reference as borrowing, `dyn \
-         Trait` as its trait; every other generic type — `Vec`, `Box`, \
-         `Mutex`, an unknown external — is transparent and the walk recurses \
-         into it"
-            .to_string(),
-        "a field whose walk reaches no workspace type is counted as a plain \
-         field, not drawn; generic parameters on the holder are holes and \
-         count the same way"
-            .to_string(),
-        "a free function's signature is walked the same way — its parameters \
-         and its return type draw holds edges. a method's signature stays \
-         with the type its impl names, and no function body is on the data \
-         chart"
+        "`impl Trait for Type` counts as a reference from the type to the \
+         trait; the impl block holds no ground of its own"
             .to_string(),
     ];
     if !proc_macros {
@@ -775,6 +764,25 @@ fn survey_attached(
         ));
     }
 
+    let walk_notes = vec![
+        "the walk reads declared types: `Arc`, `Rc`, `Weak` and the dioxus \
+         signals as sharing, a reference as borrowing, `dyn Trait` as its \
+         trait; every other generic — `Vec`, `Box`, `Mutex`, an unknown \
+         external — is transparent, and the walk recurses through it"
+            .to_string(),
+        "a type parameter, a trait bound and an `impl Trait` are holes: the \
+         row quotes them, the walk reads nothing through them. a field whose \
+         walk reaches no workspace type is a plain field, and draws no line"
+            .to_string(),
+        "a signature is walked like a field — parameters and return type \
+         both. a method's belongs to the type its impl names, and no function \
+         body is on either chart"
+            .to_string(),
+        "what a macro declares, the survey cannot read: a type's derived \
+         impls stand on its definition plate, and nothing here counts them"
+            .to_string(),
+    ];
+
     let mut graph = CodeGraph {
         files,
         refs,
@@ -786,6 +794,7 @@ fn survey_attached(
         ghosts: Vec::new(),
         unresolved,
         notes,
+        walk_notes,
     };
     // The structural diff: per-declaration deltas, ghosts for what the base
     // had, and added/removed hold events, read syntactically from the base.

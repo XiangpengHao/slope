@@ -24,9 +24,9 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::CodeGraph;
+use crate::views::codemap::use_code;
 use crate::views::data::chrome::{DataCartouche, DataLegend, DataSearch, DataSheet};
 use crate::views::data::map::DataChart;
-use crate::views::codemap::use_code;
 use crate::views::data::model::DataModel;
 use crate::views::surface::model::Folds;
 use crate::views::survey::use_code_graph;
@@ -134,6 +134,9 @@ pub fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Elem
     let facts = use_memo(use_reactive((&graph,), move |(graph,)| {
         DataModel::build(&graph, *code.ref_dir.peek(), &data.folds.read()).facts(graph.unresolved)
     }));
+    // The walk's limits first, then the references' — this chart draws both
+    // inks, and the holding line is the one it is about.
+    let limits: Vec<String> = [graph.walk_notes.clone(), graph.notes.clone()].concat();
 
     rsx! {
         DataChart { graph: graph.clone(), sel }
@@ -144,7 +147,7 @@ pub fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Elem
                 workspace: workspace.clone(),
                 diff_line: diff_line.clone(),
             }
-            DataLegend { facts: facts(), start_open: true }
+            DataLegend { facts: facts(), notes: limits.clone(), start_open: true }
         }
         // Narrow viewports are a serviceable fallback, not a composition.
         div { class: "pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-col gap-2 sm:hidden",
@@ -152,7 +155,7 @@ pub fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Elem
             DataSearch { graph: graph.clone() }
         }
         div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
-            DataLegend { facts: facts(), start_open: false }
+            DataLegend { facts: facts(), notes: limits, start_open: false }
         }
         // Search top-right, the choreography every altitude keeps. Wide, so
         // a hit's `src/analyze/manifest.rs:67` never squeezes the name.

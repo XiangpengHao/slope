@@ -197,6 +197,7 @@ pub fn CodeShell(graph: CodeGraph, workspace: String, diff_line: String) -> Elem
     // A file or item focus replaces the map with its own plate; the map's
     // cartouche and legend are map furniture and go with it.
     let focused = matches!(sel, CodeSel::File(_, _));
+    let changed = graph.files.iter().any(|f| f.changed);
 
     rsx! {
         if !focused {
@@ -216,7 +217,11 @@ pub fn CodeShell(graph: CodeGraph, workspace: String, diff_line: String) -> Elem
                 }
                 // Directly under the cartouche: one stack, not a plate at each
                 // end of 480px of empty paper.
-                CodeLegend { graph: graph.clone(), start_open: true }
+                CodeLegend {
+                    notes: graph.notes.clone(),
+                    changed,
+                    start_open: true,
+                }
             }
             // Phone: everything stacks under the cartouche.
             div { class: "pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-col gap-2 sm:hidden",
@@ -228,7 +233,11 @@ pub fn CodeShell(graph: CodeGraph, workspace: String, diff_line: String) -> Elem
                 CodeSearch { graph: graph.clone() }
             }
             div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
-                CodeLegend { graph: graph.clone(), start_open: false }
+                CodeLegend {
+                notes: graph.notes.clone(),
+                changed,
+                start_open: false,
+            }
             }
         }
         // Wider than the dependency chart's search: an item hit carries

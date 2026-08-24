@@ -84,7 +84,7 @@ the chosen door, rows included. Default `pub(crate)`.
 - **Statics are roots.** A `static` is drawn at every door (2.5px ink left
   edge, the gate's own mark): it is state no type holds. A const and an alias
   are the same one line *without* the ink edge — ordinary contracts that fold
-  by the door and by the budget, and never roots.
+  by the door, and never roots.
 - **A contract's plate is a different plate.** A function's block stands on a
   wash of ink (11% over paper) under a 2.5px ink rule across its top — the
   gate mark the static wears down its left, turned to face the paper. State is
@@ -119,7 +119,7 @@ the chosen door, rows included. Default `pub(crate)`.
   module off the paper and leaves one counted row (`+ 21 items`) inside
   the boundary that stood there. Everything inside folds with it, however deep
   the nesting: the modules nested in it earn no frame of their own, their
-  private items and their budget-folded ones join the same count, and every
+  private items join the same count, and every
   holds edge that touched a contract inside lands on the row, exactly as the
   visibility and budget folds already land. Folding the module above a folded
   one swallows it; unfolding the outer one hands the inner fold back. A fold is
@@ -194,7 +194,7 @@ file a call was written in says nothing about whether one contract leans on
 another. On this workspace that is 670 more pairs beside 1035 cross-file ones.
 
 What cannot land is counted, never cut: `unseen_users` / `unseen_uses` on the
-mark it did reach — references from marks the door or the budget folded, or
+mark it did reach — references from marks the door folded, or
 from items with no mark of their own. The sheet says the count, so a quiet
 contract reads as quiet rather than dead.
 
@@ -278,12 +278,13 @@ Extends `CodeGraph` (src/api.rs):
   lighter with the count, thinned by the references toggle (two per mark at
   rest, folded ones ink in on hover and for as long as either end is
   selected, heaviest dozen labeled).
-- **Budget**: the first paint aims to stay under `MARK_BUDGET` (200) drawn
-  contracts. Past it, each frame folds its quietest into `+ n more`; statics
-  and diff-touched marks never fold. Ghosts are drawn on top of the budget — a
-  removed type is diff ink. A module the reviewer folded by hand is read
-  first, so what it holds never stands in the budget's way, and folding one
-  can hand `+ n more` contracts back to the frames still on the paper.
+- **No budget fold** (2026-08-21). Every contract that clears the door is
+  drawn, however many there are. The old `MARK_BUDGET` (200) folded each
+  frame's quietest into a `+ n more` row: it hid marks by a number nobody set,
+  reflowed the whole chart when the threshold moved, invented a row that
+  attracted edges, and left contracts a URL could still point at. What folds
+  here is what a reader asks for — the visibility door, and a module folded by
+  hand.
 - Layout is a pure function of (marks, edges, measured sizes): blocks are
   measured before placement, trees are tidied one layer per ownership depth,
   trees shelve toward a landscape frame, frames pack toward a landscape sheet.
@@ -310,11 +311,17 @@ Extends `CodeGraph` (src/api.rs):
   `a root`; a mark only signatures name enters through them; a mark only
   bodies reach says so; and a mark nothing reaches at all says exactly that —
   the verdict a reviewer deletes code on.
-- Legend: the two inks with drawn samples, the contract plate and the trait
-  block, the static's edge and the one-liners, the two name colors, the whole
-  quotation rule and the fan-in fold, the diff's key, then the honesty notes
-  (the wrapper table, holes, what stays off the chart, macros, unresolved
-  names).
+- Legend (cut to a key 2026-08-21, distill — about eleven hundred words to
+  ~230): a key strip first (interface, implements, uses, each sample beside
+  the one word it names; then the static's edge and the signature plate), one
+  paragraph of grammar per family, the quotation rule and the counted folds
+  (`held by 6 · named by 2`, `+ 5 private items`), the diff's key *only while
+  the diff has something to say*, the gestures on a two-column grid — and the
+  survey's own limits behind a nested `what the survey cannot read` fold,
+  printed from `walk_notes` + `notes` in the survey's words rather than
+  paraphrased in six paragraphs of prose. What else came off: the references
+  and visibility toggle paragraphs (they restated six button titles), and the
+  clause announcing that no row waits behind a count.
 - Routes: `/surface`, `/surface/mark/:..path?item=`, and
   `/surface/mod/:..module`. Escape deselects; `f` refits; `←`/`→` retrace
   history. The camera survives the round trip — a selection never moves it, and
@@ -323,7 +330,7 @@ Extends `CodeGraph` (src/api.rs):
 ## Honesty notes the chart states out loud
 
 - A reference whose other end has no block — folded by the door or the
-  budget, or an item with no mark (a const inside an impl, a macro) — is
+  door, or an item with no mark (a const inside an impl, a macro) — is
   counted on the mark it reaches, not drawn.
 - A macro declares surface this chart cannot read: what `macro_rules!` or a
   derive writes is not surveyed as rows. A type's derives stand on its
@@ -348,7 +355,7 @@ Extends `CodeGraph` (src/api.rs):
   the last word.
 - A function's or const's declared type changing draws no `removed` edge,
   only the `M`.
-- `ItemMark::fan_in` stays cross-file only, and the budget's `interest` ranks
+- `ItemMark::fan_in` stays cross-file only, and the sheet's rows rank
   on it; same-file references could sharpen that ranking now that they are
   surveyed.
 - Lifecycle on the selection sheet (born / mutated / read / consumed) — the

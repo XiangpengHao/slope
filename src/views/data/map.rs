@@ -87,7 +87,9 @@ fn hold_width(kind: HoldKind) -> f64 {
 /// Lines a text needs at `px` in `usable` width, with the browser's own
 /// wrapping given some slack.
 fn wrapped(text: &str, px: f64, usable: f64) -> f64 {
-    (text_w(text, px) * WRAP_SLACK / usable.max(1.0)).ceil().max(1.0)
+    (text_w(text, px) * WRAP_SLACK / usable.max(1.0))
+        .ceil()
+        .max(1.0)
 }
 
 /// One block, measured, with the blocks it contains measured inside it.
@@ -455,11 +457,7 @@ fn measure(mark: &DataMark, kids: Vec<DataView>) -> DataView {
     let core_w = (widest + PAD_X).clamp(MARK_MIN_W, MARK_MAX_W);
 
     let (kid_at, kids_w, kids_h) = shelve_kids(&kids);
-    let w = core_w.max(if kids.is_empty() {
-        0.0
-    } else {
-        kids_w + PAD_X
-    });
+    let w = core_w.max(if kids.is_empty() { 0.0 } else { kids_w + PAD_X });
     let usable = w - PAD_X;
 
     let ty_lines = if mark.ty.is_empty() {
@@ -525,7 +523,6 @@ fn node_key(anchor: Anchor) -> String {
     match anchor {
         Anchor::Mark(id) => format!("m{id}"),
         Anchor::Private(frame) => format!("p{frame}"),
-        Anchor::More(frame) => format!("x{frame}"),
         Anchor::Mod(frame) => format!("f{frame}"),
     }
 }
@@ -1149,8 +1146,7 @@ fn NameLayer(frames: Vec<FrameView>, kin: Option<KinD>) -> Element {
     // engrave over its children's territory and read as theirs. Under a
     // reading the names recede with their frames — an engraved name at full
     // pressure would say the opposite of what the receded boundary says.
-    let parents: std::collections::HashSet<u32> =
-        frames.iter().filter_map(|f| f.parent).collect();
+    let parents: std::collections::HashSet<u32> = frames.iter().filter_map(|f| f.parent).collect();
     let class = |id: u32| kin.as_ref().map_or("", |k| k.frame_class(id));
     rsx! {
         svg {
@@ -1619,7 +1615,10 @@ pub fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
                 // everywhere; the solid family counts its lines.
                 let count = if dashed { weight } else { lines };
                 kept.push(WireView {
-                    key: format!("bundle-{}-{frame}-{inbound}", if dashed { "t" } else { "h" }),
+                    key: format!(
+                        "bundle-{}-{frame}-{inbound}",
+                        if dashed { "t" } else { "h" }
+                    ),
                     from,
                     to,
                     a: Anchor::Mod(frame),
@@ -1627,7 +1626,11 @@ pub fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
                     label: Some(count.to_string()),
                     width: if dashed { tie_width(count) } else { 1.6 },
                     rest: true,
-                    class: if dashed { "is-ref is-bundle" } else { "is-owns is-bundle" },
+                    class: if dashed {
+                        "is-ref is-bundle"
+                    } else {
+                        "is-owns is-bundle"
+                    },
                     event: "",
                     weight: count,
                     bundle: true,
@@ -1750,7 +1753,10 @@ mod tests {
     #[test]
     fn a_block_grows_to_hold_the_blocks_nested_in_it() {
         let kid = measure(&mark(1, "Nut", vec![("size", "u32", "")], vec![]), vec![]);
-        let alone = measure(&mark(0, "Wire", vec![("nuts", "Vec<Nut>", "Nut")], vec![]), vec![]);
+        let alone = measure(
+            &mark(0, "Wire", vec![("nuts", "Vec<Nut>", "Nut")], vec![]),
+            vec![],
+        );
         let parent = measure(
             &mark(0, "Wire", vec![("nuts", "Vec<Nut>", "Nut")], vec![1]),
             vec![kid.clone()],
@@ -1778,7 +1784,12 @@ mod tests {
     #[test]
     fn kids_shelve_without_overlap() {
         let kids: Vec<DataView> = (1..=5u32)
-            .map(|id| measure(&mark(id, &format!("K{id}"), vec![("a", "u32", "")], vec![]), vec![]))
+            .map(|id| {
+                measure(
+                    &mark(id, &format!("K{id}"), vec![("a", "u32", "")], vec![]),
+                    vec![],
+                )
+            })
             .collect();
         let (at, w, h) = shelve_kids(&kids);
         assert!(w > 0.0 && h > 0.0);

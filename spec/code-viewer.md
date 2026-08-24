@@ -295,7 +295,12 @@ mode: **Operate**.
   the whole file). A run is `SrcRun { text, tok, link }`; nothing is split —
   a name token lexes as exactly one run.
 - Honesty: unresolved names are counted and written on the legend, never
-  guessed. Derive-macro output is not counted; a type's derives stand in its
+  guessed. `CodeGraph` carries two lists, so a legend states the limits of the
+  ink its own chart draws (2026-08-21, distill): `notes` is about references —
+  the code map's whole subject, and the dashed ink at the two altitudes above
+  it — and `walk_notes` is about the holds walk, which is theirs alone. Both
+  print in the survey's own words behind each legend's `what the survey cannot
+  read` fold; no legend paraphrases them in prose. Derive-macro output is not counted; a type's derives stand in its
   own source, on its plate. One reference the survey cannot place, and says so
   on the legend: a name written inside a string a macro rewrites — an `rsx!`
   text node's `"{words(x)}"` — has no name token on the tree, and the expansion

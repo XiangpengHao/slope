@@ -502,8 +502,15 @@ pub struct CodeGraph {
     /// Names the survey could not resolve (type-inference limits). They are
     /// not on the chart; the words on the plate must say so.
     pub unresolved: u32,
-    /// Fidelity notes, in plain words, for the legend.
+    /// What the survey could not read about **references**, in plain words —
+    /// the code map's limits, and the limits of the dashed ink at every
+    /// altitude that draws it.
     pub notes: Vec<String>,
+    /// What the survey could not read about the **holds walk**, in plain words
+    /// — the surface and data charts' limits. Kept apart from `notes` so a
+    /// legend states the limits of the ink it actually draws, and so no legend
+    /// has to paraphrase the survey in prose of its own.
+    pub walk_notes: Vec<String>,
 }
 
 /// One item inside a file.

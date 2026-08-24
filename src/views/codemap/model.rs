@@ -540,6 +540,7 @@ mod tests {
             ghosts: Vec::new(),
             unresolved: 0,
             notes: Vec::new(),
+            walk_notes: Vec::new(),
         }
     }
 

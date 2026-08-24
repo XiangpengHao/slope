@@ -12,10 +12,16 @@ use crate::views::codemap::{RefDir, file_route, item_route, use_code};
 
 pub(crate) fn plural(n: usize, word: &str) -> String {
     if n == 1 {
-        format!("{n} {word}")
-    } else {
-        format!("{n} {word}s")
+        return format!("{n} {word}");
     }
+    // English, not `+ "s"`: `alias` takes `es`, and the cartouche was printing
+    // `2 aliass`. Only the endings rust's own vocabulary actually hands us.
+    let suffix = match word.chars().last() {
+        Some('s') | Some('x') | Some('z') => "es",
+        Some('h') if word.ends_with("ch") || word.ends_with("sh") => "es",
+        _ => "s",
+    };
+    format!("{n} {word}{suffix}")
 }
 
 pub(crate) fn file_name(path: &str) -> &str {
@@ -315,84 +321,113 @@ fn TieSample(#[props(default = 1.3)] width: f64) -> Element {
     }
 }
 
-/// One row of the legend's "using this map" section.
+/// One row of a legend's gesture section: the gesture in tracked caps, what it
+/// does beside it. Shared by all three chart legends — one shape for the whole
+/// ladder, so a reader who learned one legend has learned the others.
+///
+/// It renders two cells, not a row, so the caller can seat them in [`Gestures`]'
+/// grid: at 224px of plate every gesture used to set its own label column, and
+/// the effects came out ragged.
 #[component]
-fn UsageRow(gesture: &'static str, effect: &'static str) -> Element {
+pub(crate) fn UsageRow(gesture: &'static str, effect: &'static str) -> Element {
     rsx! {
-        div { class: "flex items-baseline gap-2",
-            span { class: "shrink-0 font-data text-[9.5px] tracking-[0.1em] uppercase text-ink",
-                "{gesture}"
-            }
-            span { class: "text-ink-soft", "{effect}" }
+        span { class: "font-data text-[9.5px] tracking-[0.1em] uppercase text-ink", "{gesture}" }
+        span { class: "text-ink-soft", "{effect}" }
+    }
+}
+
+/// The gesture rows, on one grid so every label sets in the same column and
+/// every effect starts at the same rule.
+#[component]
+pub(crate) fn Gestures(children: Element) -> Element {
+    rsx! {
+        div { class: "grid grid-cols-[auto_1fr] items-baseline gap-x-2 gap-y-1 border-t border-ink-line pt-2.5",
+            {children}
         }
     }
 }
 
-/// The key: every mark the map can draw that the map cannot state for itself,
-/// plus the survey's own honesty notes. What the drawing already says — a block
-/// is a file, a frame is its directory, a row is written as rust — is not
-/// repeated here in prose.
+/// The key: every mark the map draws that the map cannot state for itself, the
+/// gestures, and the survey's own limits behind a fold.
+///
+/// It explains no control that carries its own label and tooltip (2026-08-21,
+/// distill): the references toggle had a paragraph here restating its three
+/// button titles word for word. It repeats nothing the drawing already says — a
+/// block is a file, a frame is its directory, a row is written as rust. And it
+/// paraphrases no note: the survey's limits print in the survey's own words,
+/// and only the ones about references, this altitude's whole subject.
+///
+/// The plate takes the column's remainder rather than a hand-set height: the
+/// key is short enough to stand open, and the cartouche above it grows and
+/// shrinks with the diff.
 #[component]
-pub fn CodeLegend(graph: CodeGraph, #[props(default = true)] start_open: bool) -> Element {
+pub fn CodeLegend(
+    notes: Vec<String>,
+    /// Whether the diff touched anything, so the `M` key is drawn only where
+    /// there is an `M` on the paper.
+    changed: bool,
+    #[props(default = true)] start_open: bool,
+) -> Element {
     rsx! {
         details {
-            class: "plate fold pointer-events-auto w-full open:pb-3 sm:w-64",
+            class: "plate fold legend-plate pointer-events-auto flex min-h-0 w-full flex-col open:pb-3 sm:w-64",
             open: start_open,
             summary { class: "cursor-pointer select-none px-4 py-2 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
                 "Reading this map"
             }
-            // The key first — the marks that need naming — then the gestures,
-            // then the survey's own honesty notes.
-            div { class: "legend-scroll space-y-2.5 px-4 font-data text-[10px] leading-snug text-ink max-h-[42dvh] sm:max-h-[calc(100dvh_-_260px)]",
+            div { class: "legend-scroll min-h-0 flex-1 space-y-2.5 px-4 font-data text-[10px] leading-snug text-ink max-h-[42dvh] sm:max-h-none",
                 div { class: "space-y-1.5",
                     div { class: "flex items-center gap-2",
                         TieSample { width: 1.9 }
-                        span { "n — references between two files, summed" }
+                        span { "n references, summed" }
                     }
                     p { class: "text-ink-soft",
                         "the arrow rests on the user — the way change travels."
                     }
-                    p { class: "text-ink-soft",
-                        "the references toggle sets the reading: "
-                        span { class: "text-ink", "uses" }
-                        " and "
-                        span { class: "text-ink", "used by" }
-                        " draw each block\u{2019}s two heaviest ties, "
-                        span { class: "text-ink", "both" }
-                        " draws every one. hover a block for all of its ties."
-                    }
-                    p { class: "text-ink-soft",
-                        "fold a directory and the references into everything inside it gather onto its gate, which counts what it holds."
-                    }
-                }
-                div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
                     p {
                         span { class: "font-medium", "+ 4 pub · 5 private" }
                         span { class: "text-ink-soft",
-                            " — a block\u{2019}s last line counts what it holds back: pub items too quiet for this altitude, and every private one."
+                            " — what a block holds back. a folded directory\u{2019}s gate counts the same way, and every reference into what it holds lands on it."
                         }
                     }
-                    p { class: "text-ink-soft",
-                        "private items are never drawn, but their references to other files still count — which is why a block can be tied to a module none of its named items mention."
-                    }
-                    p {
-                        span { class: "text-flare", "M" }
-                        span { class: "text-ink-soft", " — changed since the diff base" }
+                    // Only where there is a diff: a key for a mark the map is
+                    // not drawing is dead weight (2026-08-21, distill).
+                    if changed {
+                        p {
+                            span { class: "text-flare", "M" }
+                            span { class: "text-ink-soft", " — changed since the diff base" }
+                        }
                     }
                 }
-                div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
-                    // Only what clicking around does not already teach: a file
-                    // and an item announce their own focus the first time the
-                    // reader clicks one.
-                    UsageRow { gesture: "click a directory", effect: "fold it to a counted gate; click the gate to open" }
-                    UsageRow { gesture: "hover a block", effect: "all of its ties, at full ink, with their counts" }
-                    UsageRow { gesture: "/ · f", effect: "find a file or item · refit the map" }
-                    UsageRow { gesture: "← · → · esc", effect: "back · forward · step back up" }
+                Gestures {
+                    UsageRow { gesture: "click", effect: "a directory folds to a counted gate" }
+                    UsageRow { gesture: "hover", effect: "every tie of one block, with its count" }
+                    UsageRow { gesture: "/ · f", effect: "find a file or item · refit" }
+                    UsageRow { gesture: "← · → · esc", effect: "back · forward · step up" }
                 }
-                div { class: "space-y-1 border-t border-ink-line pt-2.5 text-ink-soft",
-                    for note in graph.notes.iter() {
-                        p { "{note}" }
-                    }
+                SurveyLimits { notes }
+            }
+        }
+    }
+}
+
+/// The survey\u{2019}s own limits, folded. They are read once, to trust the chart —
+/// not consulted while reading it — so they rest behind one line instead of
+/// spending a third of the plate at every altitude. Every altitude\u{2019}s legend
+/// closes with this, and the words are the survey\u{2019}s, never a paraphrase.
+#[component]
+pub(crate) fn SurveyLimits(notes: Vec<String>) -> Element {
+    if notes.is_empty() {
+        return rsx! {};
+    }
+    rsx! {
+        details { class: "fold border-t border-ink-line pt-2.5",
+            summary { class: "cursor-pointer select-none font-data text-[9.5px] tracking-[0.1em] uppercase text-ink",
+                "what the survey cannot read"
+            }
+            div { class: "mt-1.5 space-y-1 text-ink-soft",
+                for (i , note) in notes.iter().enumerate() {
+                    p { key: "{i}", "{note}" }
                 }
             }
         }

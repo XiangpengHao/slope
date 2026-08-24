@@ -5,7 +5,9 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{CodeGraph, Delta, HoldEvent, HoldKind, ItemMark};
-use crate::views::codemap::chrome::{Altitude, AltitudeSwitch, decl_words, kind_words, plural};
+use crate::views::codemap::chrome::{
+    Altitude, AltitudeSwitch, Gestures, SurveyLimits, UsageRow, decl_words, kind_words, plural,
+};
 use crate::views::codemap::{item_route, use_code};
 use crate::views::data::model::{DataFacts, DataMark, DataModel, Stand, Tier};
 use crate::views::data::{mark_route, mod_route, use_data};
@@ -40,8 +42,14 @@ fn diff_words(facts: &DataFacts) -> String {
     parts.join(" · ")
 }
 
-/// The chart's title block: what state the workspace keeps, how it tiers,
-/// and the reading control for its body dependence. No doors toggle: state
+/// The chart's title block: the census of what state the workspace keeps, the
+/// altitude ladder, the diff, and the reading control for body dependence.
+///
+/// It states no tier counts and no edge counts (2026-08-21, distill): `55
+/// roots · 63 nested · 16 standing` and `209 body dependences · 127 at rest`
+/// were the model's own bookkeeping in four invented words, and no reviewer
+/// decides anything on them. The tier is what the paper draws and the legend
+/// teaches; the edges are what the chart shows. No doors toggle either: state
 /// does not fold at a door, so every datum is drawn whatever its `pub`.
 #[component]
 pub fn DataCartouche(facts: DataFacts, workspace: String, diff_line: String) -> Element {
@@ -64,18 +72,6 @@ pub fn DataCartouche(facts: DataFacts, workspace: String, diff_line: String) -> 
                     "{workspace}"
                 }
                 p { class: "mt-1 font-data text-[10.5px] text-ink-soft", "{kinds}" }
-                p {
-                    class: "mt-0.5 font-data text-[10.5px] text-ink-soft",
-                    title: "roots: statics, and types no other type holds — the ink left edge. nested: drawn inside the block of their heaviest owner. standing: held, but drawn beside their holders — shared handles, cross-module owners, rings, and widely held vocabulary.",
-                    "{plural(facts.roots, \"root\")} · {facts.nested} nested · {facts.standing} standing"
-                }
-                p { class: "mt-0.5 font-data text-[10.5px] text-ink-soft",
-                    if facts.ties_rest < facts.ties {
-                        "{plural(facts.ties, \"body dependence\")} · {facts.ties_rest} at rest"
-                    } else {
-                        "{plural(facts.ties, \"body dependence\")} drawn"
-                    }
-                }
                 div { class: "mt-2 space-y-1 border-t border-ink-line pt-2 font-data text-[10.5px] leading-relaxed text-ink",
                     AltitudeSwitch { at: Altitude::Data }
                     p { class: "text-ink-soft", "{diff_line}" }
@@ -136,7 +132,7 @@ fn hold_rows(
                         event,
                     }
                 }
-                Anchor::Private(frame) | Anchor::More(frame) | Anchor::Mod(frame) => {
+                Anchor::Private(frame) | Anchor::Mod(frame) => {
                     // Only a folded module leaves a counted row on this
                     // chart; the row can be selected, so it is a link.
                     let frame = &model.frames[*frame as usize];
@@ -192,22 +188,17 @@ fn uses_rows(model: &DataModel, rows: Vec<UsesRow<'_>>) -> Vec<HoldRow> {
 }
 
 /// The tier, said out loud — the one sentence this altitude exists for.
-fn tier_line(model: &DataModel, mark: &DataMark) -> String {
+fn tier_line(mark: &DataMark) -> String {
     if mark.ghost {
         return "removed since the base — whoever held it, the removed edges say.".to_string();
     }
     match mark.tier {
         Tier::Root if mark.is_static() => "a root — state no type holds.".to_string(),
         Tier::Root => "top-level data: no type holds it — a root.".to_string(),
-        Tier::Nested(holder) => {
-            let name = model
-                .marks
-                .iter()
-                .find(|m| m.id == holder)
-                .map(|m| m.name.clone())
-                .unwrap_or_default();
-            format!("secondary data: state of {name}, drawn inside its block.")
-        }
+        // The holder is the first row of the section right below this line;
+        // naming it twice in six words was the sheet saying the same thing to
+        // itself (2026-08-21, distill).
+        Tier::Nested(_) => "secondary data — drawn inside its holder's block.".to_string(),
         Tier::Standing(Stand::Shared) => {
             "secondary data, shared: a handle holds it, and sharing has no single container, \
              so it stands beside its holders with every line drawn."
@@ -439,7 +430,7 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
         ),
     };
 
-    let tier = tier_line(&model, mark);
+    let tier = tier_line(mark);
     // The four-way truth on a quiet datum: the verdict a reviewer deletes on.
     let quiet = mark.is_root()
         && !mark.is_static()
@@ -745,22 +736,35 @@ fn WireSample(
     }
 }
 
-/// The key: the tier's two moves, the two inks, and the walk's own honesty
-/// notes. What the drawing already says is not repeated.
+/// The key: the tier's two moves, the two inks, the kind colors, the diff, the
+/// gestures — and the survey's own limits behind a fold.
+///
+/// Cut from about six hundred words to a key (2026-08-21, distill). What came
+/// off: the paragraph explaining the references toggle, which restated its
+/// three button titles; the sentences the sheet says the moment a block is
+/// picked; the walk's method, which the survey now states in its own words
+/// behind the fold at the foot; and every clause that announced the absence of
+/// a fold. What stays is what the drawing draws and cannot say — and the marks
+/// stand as a key strip, sample beside word, because at 224px of plate a
+/// sentence per mark cost five lines each and ran the plate off the page.
 #[component]
-pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -> Element {
+pub fn DataLegend(
+    facts: DataFacts,
+    notes: Vec<String>,
+    #[props(default = true)] start_open: bool,
+) -> Element {
     rsx! {
         details {
-            class: "plate fold pointer-events-auto w-full open:pb-3 sm:w-64",
+            class: "plate fold legend-plate pointer-events-auto flex min-h-0 w-full flex-col open:pb-3 sm:w-64",
             open: start_open,
             summary { class: "cursor-pointer select-none px-4 py-2 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
                 "Reading this chart"
             }
-            div { class: "legend-scroll space-y-2.5 px-4 font-data text-[10px] leading-snug text-ink max-h-[42dvh] sm:max-h-[calc(100dvh_-_300px)]",
-                div { class: "space-y-1.5",
-                    div { class: "flex items-start gap-2",
+            div { class: "legend-scroll min-h-0 flex-1 space-y-2.5 px-4 font-data text-[10px] leading-snug text-ink max-h-[42dvh] sm:max-h-none",
+                div { class: "space-y-1",
+                    div { class: "flex items-center gap-2",
                         svg {
-                            class: "mt-0.5 shrink-0",
+                            class: "shrink-0",
                             width: "46",
                             height: "14",
                             view_box: "0 0 46 14",
@@ -781,16 +785,11 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                                 fill: "var(--color-ink)",
                             }
                         }
-                        span {
-                            span { class: "text-ink", "top-level data" }
-                            span { class: "text-ink-soft",
-                                " — the ink left edge marks a root: a static, or a type no other type keeps in a field. state the code reaches directly, where every chain of holding begins."
-                            }
-                        }
+                        span { class: "text-ink", "top-level data" }
                     }
-                    div { class: "flex items-start gap-2",
+                    div { class: "flex items-center gap-2",
                         svg {
-                            class: "mt-0.5 shrink-0",
+                            class: "shrink-0",
                             width: "46",
                             height: "18",
                             view_box: "0 0 46 18",
@@ -819,126 +818,82 @@ pub fn DataLegend(facts: DataFacts, #[props(default = true)] start_open: bool) -
                                 stroke: "var(--color-ink-line)",
                             }
                         }
-                        span {
-                            span { class: "text-ink", "secondary data" }
-                            span { class: "text-ink-soft",
-                                " — drawn inside the block of the type that owns it hardest, under a hairline rule. the nesting is the ownership: no line restates it, and the bold run in a field row above is the block below."
-                            }
-                        }
+                        span { class: "text-ink", "secondary data" }
                     }
-                    p { class: "text-ink-soft",
-                        "a held type the chart cannot seat under one holder stands at module level with its lines drawn: shared state (a handle has no single container), state owned from another module, a ring of mutual owners, and a type so widely held its fan-in folds to "
-                        span { class: "text-ink", "held by n types" }
-                        span { class: "text-ink-soft", " — hover or select inks the lines back in." }
+                    p { class: "pt-1 text-ink-soft",
+                        "the ink edge is a root: a static, or a type nothing keeps in a field. everything else nests inside its heaviest owner — the nesting is the ownership, and no line restates it. a type that fits under no one holder stands at module level with its lines drawn: shared handles, cross-module owners, rings, widely held vocabulary."
                     }
                 }
-                div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
-                    p { class: "text-ink-soft",
-                        "two inks, and only two. the arrowhead rests on the dependent: a change at the tail travels along the arrow."
-                    }
-                    div { class: "flex items-start gap-2",
+                div { class: "space-y-1 border-t border-ink-line pt-2.5",
+                    div { class: "flex items-center gap-2",
                         WireSample { dash: "data-hold is-shares", width: 1.3, label: "Arc" }
-                        span {
-                            span { class: "text-ink", "holding" }
-                            span { class: "text-ink-soft",
-                                " — solid, with the wrapper's own word: "
-                            }
-                            span { class: "text-ink", "Arc" }
-                            span { class: "text-ink-soft", ", " }
-                            span { class: "text-ink", "&" }
-                            span { class: "text-ink-soft",
-                                ", and no word is plain ownership. only what the nesting cannot say is a line; a borrow is a view, not a hold, so a type only borrowed is still a root."
-                            }
-                        }
+                        span { class: "text-ink", "holding" }
                     }
-                    div { class: "flex items-start gap-2",
+                    div { class: "flex items-center gap-2",
                         WireSample { dash: "is-ref", width: 1.6, label: "4" }
-                        span {
-                            span { class: "text-ink", "uses" }
-                            span { class: "text-ink-soft",
-                                " — dashed: one type's impls lean on another, summed and counted. each block rests its heaviest two; the rest ink in on hover and stay while either end is selected."
-                            }
-                        }
+                        span { class: "text-ink", "uses" }
+                    }
+                    p { class: "pt-1 text-ink-soft",
+                        "the arrow rests on the dependent. a word on a solid line is the wrapper; no word is plain ownership, and a borrow is a view — a type only borrowed is still a root. each block rests its two heaviest dashed lines, and hover inks in the rest."
                     }
                 }
-                div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
+                div { class: "space-y-1 border-t border-ink-line pt-2.5",
                     p {
                         span { class: "dm-nm", "Struct" }
-                        span { class: "text-ink-soft", " is type-teal, " }
+                        span { class: "text-ink-soft", " · " }
                         span { class: "dm-nm is-sum", "Enum" }
                         span { class: "text-ink-soft",
-                            " the palette's purple — a second reading of the keyword in front of the name. rows are quoted as written and colored by token class; the bold run names the workspace type the row reaches."
+                            " — the kind, said again in color. the bold run in a row is the type it reaches."
                         }
                     }
                     p { class: "text-ink-soft",
-                        "no methods. a block is state only — fields, variants, a static's declared type. what a type promises is the surface chart's ink, one rung up, and "
-                        span { class: "text-ink", "open its definition →" }
-                        span { class: "text-ink-soft", " stays the one quotation surface." }
-                    }
-                    p { class: "text-ink-soft",
-                        "every datum is drawn whatever its visibility: state does not fold at a door. "
+                        "no methods, and no doors: a block is state only, drawn whatever its "
                         span { class: "text-ink", "pub" }
-                        span { class: "text-ink-soft",
-                            " on a header is the whole visibility story, in rust's own word."
+                        span { class: "text-ink-soft", "." }
+                    }
+                }
+                // The diff's key only where there is a diff: a key for marks
+                // the chart is not drawing is the same dead weight as a count
+                // for nothing hidden (2026-08-21, distill).
+                if !diff_words(&facts).is_empty() {
+                    div { class: "border-t border-ink-line pt-2.5",
+                        p { class: "text-ink-soft",
+                            span { class: "text-flare", "A" }
+                            " added · "
+                            span { class: "text-flare", "M" }
+                            " changed · "
+                            span { class: "text-flare", "D" }
+                            " removed, a dashed ghost quoting the base. "
+                            span { class: "text-flare", "+" }
+                            " and "
+                            span { class: "text-flare", "−" }
+                            " mark a row. while the diff speaks, untouched blocks rest lighter."
                         }
                     }
                 }
-                div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
-                    p { class: "text-flare", "the diff's key" }
-                    p { class: "text-ink-soft",
-                        span { class: "text-flare", "A" }
-                        " added · "
-                        span { class: "text-flare", "M" }
-                        " declaration changed · "
-                        span { class: "text-flare", "D" }
-                        " removed, quoted from the base as a dashed ghost. an added row wears "
-                        span { class: "text-flare", "+" }
-                        ", a dropped one is struck where it stood. an added or removed holding takes flare with its word on the line. while the diff has anything to say, untouched blocks rest lighter; hover restores."
-                    }
-                }
-                div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
-                    p { class: "text-ink-soft",
-                        "below reading zoom the chart holds its far edition: each block draws its name and kind alone, roots keep their edge at constant width, and module names engrave across their frames. descend — or select — and the rows return."
-                    }
-                    p { class: "text-ink-soft",
-                        "a selected boundary bundles its crossing lines: one line per far module with its count on it. hover a block inside for that block's own lines."
-                    }
-                    p { class: "text-ink-soft",
-                        span { class: "text-ink", "f" }
-                        " refits · "
-                        span { class: "text-ink", "esc" }
-                        " deselects · "
-                        span { class: "text-ink", "/" }
-                        " finds a datum · "
-                        span { class: "text-ink", "←" }
-                        " "
-                        span { class: "text-ink", "→" }
-                        " retrace the trail. selecting a mark the glass cannot show glides the camera to it; nothing else ever moves it."
-                    }
+                Gestures {
+                    UsageRow { gesture: "click", effect: "select a block; its sheet opens" }
+                    UsageRow { gesture: "−", effect: "fold a module to one counted row" }
+                    UsageRow { gesture: "hover", effect: "every line of one block" }
+                    UsageRow { gesture: "/ · f", effect: "find a datum · refit" }
+                    UsageRow { gesture: "← · → · esc", effect: "back · forward · deselect" }
                 }
                 div { class: "space-y-1 border-t border-ink-line pt-2.5 text-ink-soft",
                     p {
-                        "what has no block here is counted, never cut: a block's hover words say "
+                        "below reading zoom each block draws its name alone; descend, or select, and the rows return. a selected boundary bundles its crossing lines, one per far module."
+                    }
+                    p {
+                        "nothing is cut, only counted: a block\u{2019}s hover words say "
                         span { class: "text-ink", "named by n signatures · used by n bodies" }
-                        " — every free fn, const, alias and method row whose declared surface names the type, and every reference from code with no mark of its own — and the sheet lists both as rows. the one count on a block's foot is "
-                        span { class: "text-ink", "held by n types" }
-                        ", the fan-in the chart folded."
-                    }
-                    p {
-                        "a "
+                        ", and the sheet lists both. a "
                         span { class: "text-ink", "dyn Trait" }
-                        " field names a contract, and contracts live one rung up: the row quotes it, and no line is drawn."
-                    }
-                    p {
-                        "type parameters, trait bounds and impl Trait are holes: the row quotes them, the walk reads nothing through them. what a macro declares, the survey cannot read."
+                        " field names a contract one rung up, so no line is drawn."
                     }
                     if facts.unresolved > 0 {
                         p { "{plural(facts.unresolved as usize, \"name\")} the survey could not resolve." }
                     }
-                    p {
-                        "a folded module is one counted row; its state is off the paper and its holding lines land on the row. the border's − / + folds and unfolds; the line itself selects the module."
-                    }
                 }
+                SurveyLimits { notes }
             }
         }
     }

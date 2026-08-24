@@ -354,7 +354,6 @@ mod tests {
             parent,
             marks: marks.to_vec(),
             private: 0,
-            more: 0,
             folded: false,
             packed: 0,
             forest: marks.iter().map(|&m| Seat::leaf(Anchor::Mark(m))).collect(),

@@ -6,7 +6,9 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{CodeGraph, Delta, HoldEvent, HoldKind};
-use crate::views::codemap::chrome::{Altitude, AltitudeSwitch, decl_words, plural};
+use crate::views::codemap::chrome::{
+    Altitude, AltitudeSwitch, Gestures, SurveyLimits, UsageRow, decl_words, plural,
+};
 use crate::views::codemap::{Doors, RefDir, item_route, use_code};
 use crate::views::surface::model::{Anchor, RowState, SurfaceFacts, SurfaceModel, upstream};
 use crate::views::surface::{mark_route, mod_route};
@@ -59,10 +61,7 @@ pub fn SurfaceCartouche(facts: SurfaceFacts, workspace: String, diff_line: Strin
                     "{plural(facts.structs, \"struct\")} · {plural(facts.enums, \"enum\")} · {plural(facts.traits, \"trait\")}"
                 }
                 p { class: "mt-0.5 font-data text-[10.5px] text-ink-soft",
-                    "{plural(facts.fns, \"fn\")} · {plural(facts.consts, \"const\")} · {plural(facts.aliases, \"alias\")} · {facts.roots} roots"
-                }
-                p { class: "mt-0.5 font-data text-[10.5px] text-ink-soft",
-                    "{plural(facts.methods, \"method row\")} · {plural(facts.uses, \"body dependence\")} drawn"
+                    "{plural(facts.fns, \"fn\")} · {plural(facts.consts, \"const\")} · {plural(facts.aliases, \"alias\")}"
                 }
                 div { class: "mt-2 space-y-1 border-t border-ink-line pt-2 font-data text-[10.5px] leading-relaxed text-ink",
                     AltitudeSwitch { at: Altitude::Surface }
@@ -222,16 +221,13 @@ fn hold_rows(
                         event,
                     }
                 }
-                Anchor::Private(frame) | Anchor::More(frame) | Anchor::Mod(frame) => {
+                Anchor::Private(frame) | Anchor::Mod(frame) => {
                     let frame = &model.frames[*frame as usize];
                     let count = match anchor {
                         Anchor::Private(_) => format!(
                             "+ {}",
                             plural(frame.private as usize, model.doors.fold_word())
                         ),
-                        Anchor::More(_) => {
-                            format!("+ {}", plural(frame.more as usize, "more item"))
-                        }
                         // A module the reviewer folded: the row counts the
                         // whole boundary, and the boundary can be selected,
                         // so this row is a link where the other two are not.
@@ -780,69 +776,56 @@ fn WireSample(
     }
 }
 
-/// The key: every mark and line the chart can draw that it cannot state for
-/// itself, then the walk's own honesty notes. What the drawing already says —
-/// a block is a type, the frame around it is its module — is not repeated here.
+/// The key: the two inks, the marks a block can be, the kind colors, the counted
+/// folds, the diff, the gestures — and the survey's own limits behind a fold.
+///
+/// Cut from about eleven hundred words to a key (2026-08-21, distill). What came
+/// off: the two paragraphs explaining the references and visibility toggles,
+/// which restated their six button titles word for word; the clause announcing
+/// that no row waits behind a count, which describes a fold that does not exist;
+/// the sentences the sheet says the moment a mark is picked; and six paragraphs
+/// paraphrasing the walk, which the survey now states in its own words behind
+/// the fold at the foot.
+///
+/// What is left is shaped as a key, not as prose: sample beside word, then one
+/// paragraph carrying the grammar for the whole family. At 224px of plate a
+/// clause per line ran five lines deep, and four of them pushed the plate off
+/// the page — the legend's budget is lines, not words.
 #[component]
-pub fn SurfaceLegend(facts: SurfaceFacts, #[props(default = true)] start_open: bool) -> Element {
+pub fn SurfaceLegend(
+    facts: SurfaceFacts,
+    notes: Vec<String>,
+    #[props(default = true)] start_open: bool,
+) -> Element {
     rsx! {
         details {
-            class: "plate fold pointer-events-auto w-full open:pb-3 sm:w-64",
+            class: "plate fold legend-plate pointer-events-auto flex min-h-0 w-full flex-col open:pb-3 sm:w-64",
             open: start_open,
             summary { class: "cursor-pointer select-none px-4 py-2 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
                 "Reading this chart"
             }
-            div { class: "legend-scroll space-y-2.5 px-4 font-data text-[10px] leading-snug text-ink max-h-[42dvh] sm:max-h-[calc(100dvh_-_300px)]",
-                div { class: "space-y-1.5",
-                    p { class: "text-ink-soft",
-                        "two inks, and only two. the arrowhead rests on the dependent in both: a change at the tail travels along the arrow."
-                    }
-                    div { class: "flex items-start gap-2",
+            div { class: "legend-scroll min-h-0 flex-1 space-y-2.5 px-4 font-data text-[10px] leading-snug text-ink max-h-[42dvh] sm:max-h-none",
+                div { class: "space-y-1",
+                    div { class: "flex items-center gap-2",
                         WireSample { dash: "data-hold is-owns" }
-                        span {
-                            span { class: "text-ink", "interface" }
-                            span { class: "text-ink-soft",
-                                " — solid: the dependent's own published surface names the other end. a field's type, a parameter, a return. it cannot change without changing what this block says it is."
-                            }
-                        }
+                        span { class: "text-ink", "interface" }
                     }
-                    div { class: "flex items-start gap-2",
-                        WireSample { dash: "data-hold is-shares", width: 1.3, label: "Arc" }
-                        span {
-                            span { class: "text-ink-soft", "the word on a solid line is the wrapper the walk met — " }
-                            span { class: "text-ink", "Arc" }
-                            span { class: "text-ink-soft", ", " }
-                            span { class: "text-ink", "&" }
-                            span { class: "text-ink-soft", ", " }
-                            span { class: "text-ink", "dyn" }
-                            span { class: "text-ink-soft",
-                                " — and no word at all is plain ownership. a block sits under the same-module block that owns it hardest; ownership from another module stays a drawn line."
-                            }
-                        }
-                    }
-                    div { class: "flex items-start gap-2",
+                    div { class: "flex items-center gap-2",
                         WireSample { dash: "data-hold is-impl", width: 1.2, label: "implements" }
-                        span {
-                            span { class: "text-ink", "implements" }
-                            span { class: "text-ink-soft",
-                                " — solid too, and the same direction: the contract is the tail, the type that promised it the head. an impl of a foreign trait has no second end on this chart and stays a line of text on the plate."
-                            }
-                        }
+                        span { class: "text-ink", "implements" }
                     }
-                    div { class: "flex items-start gap-2",
+                    div { class: "flex items-center gap-2",
                         WireSample { dash: "is-ref", width: 1.6, label: "4" }
-                        span {
-                            span { class: "text-ink", "uses" }
-                            span { class: "text-ink-soft",
-                                " — dashed: the dependent's body leans on the other end. a call, a name written inside a function, summed and counted on the line. a rewrite can take it back without changing what either block publishes, which is why it is the lighter ink."
-                            }
-                        }
+                        span { class: "text-ink", "uses" }
+                    }
+                    p { class: "pt-1 text-ink-soft",
+                        "two inks, and the arrow rests on the dependent. solid: this block\u{2019}s own surface names the far end. dashed: a body leans on it, counted. a word on a line is the wrapper; no word is plain ownership."
                     }
                 }
-                div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
-                    div { class: "flex items-start gap-2",
+                div { class: "space-y-1 border-t border-ink-line pt-2.5",
+                    div { class: "flex items-center gap-2",
                         svg {
-                            class: "mt-0.5 shrink-0",
+                            class: "shrink-0",
                             width: "46",
                             height: "14",
                             view_box: "0 0 46 14",
@@ -863,22 +846,11 @@ pub fn SurfaceLegend(facts: SurfaceFacts, #[props(default = true)] start_open: b
                                 fill: "var(--color-ink)",
                             }
                         }
-                        span {
-                            span { class: "text-ink", "static" }
-                            span { class: "text-ink-soft",
-                                " — a root: state no type holds, drawn whether or not it is pub, with its declared type quoted under its name. a "
-                            }
-                            span { class: "text-ink", "const" }
-                            span { class: "text-ink-soft", " and a " }
-                            span { class: "text-ink", "type" }
-                            span { class: "text-ink-soft",
-                                " alias are the same one line without the ink edge — contracts like any other, folded by the door and by the budget, and never roots. an alias points at what it stands in front of, with rust's own word on the line."
-                            }
-                        }
+                        span { class: "text-ink", "static" }
                     }
-                    div { class: "flex items-start gap-2",
+                    div { class: "flex items-center gap-2",
                         svg {
-                            class: "sig-sample mt-0.5 shrink-0",
+                            class: "sig-sample shrink-0",
                             width: "46",
                             height: "14",
                             view_box: "0 0 46 14",
@@ -898,203 +870,69 @@ pub fn SurfaceLegend(facts: SurfaceFacts, #[props(default = true)] start_open: b
                                 height: "2.5",
                             }
                         }
-                        span {
-                            span { class: "dm-nm is-fn", "pub fn" }
-                            span { class: "text-ink-soft",
-                                " — a free function: a washed plate under an ink rule, the static's gate mark turned to face the paper, so the contracts read apart from the state at any zoom. its parameters are quoted as rows and its return type under them, and the types its signature names draw the same holding lines a field does — so a type only functions reach is no longer a root nobody holds. a method is not here — it belongs to the type its impl names, and its calls climb to that type."
-                            }
-                        }
+                        span { class: "dm-nm is-fn", "pub fn" }
                     }
-                    p {
-                        span { class: "font-bold text-flare", "A" }
-                        span { class: "text-ink-soft", " added since the base · " }
-                        span { class: "font-bold text-flare", "M" }
-                        span { class: "text-ink-soft", " declaration changed · " }
-                        span { class: "font-bold text-flare", "D" }
-                        span { class: "text-ink-soft",
-                            " removed — a dashed ghost quoting the base edition. a diff-touched block wears the flare on its own frame."
-                        }
-                    }
-                    p {
-                        span { class: "font-bold text-flare", "+" }
-                        span { class: "text-ink-soft", " row added — field, variant or method · " }
-                        span { class: "font-bold text-flare", "−" }
-                        span { class: "text-ink-soft",
-                            " removed — struck, quoted from the base, seated where it stood."
-                        }
-                    }
-                    div { class: "flex items-start gap-2",
-                        WireSample { dash: "is-owns is-added", width: 1.4 }
-                        span {
-                            span { class: "text-ink", "added" }
-                            span { class: "text-ink-soft",
-                                " — a holding edge the base did not have, its word on the line."
-                            }
-                        }
-                    }
-                    div { class: "flex items-start gap-2",
-                        WireSample { dash: "is-owns is-removed" }
-                        span {
-                            span { class: "text-ink", "removed" }
-                            span { class: "text-ink-soft",
-                                " — a holding edge only the base had, re-drawn from its edition."
-                            }
-                        }
+                    p { class: "pt-1 text-ink-soft",
+                        "the ink edge is a root: state no type holds. a washed plate is a free function, parameters as rows. a "
+                        span { class: "text-ink", "const" }
+                        " or a "
+                        span { class: "text-ink", "type" }
+                        " alias is one line without the edge."
                     }
                     p { class: "text-ink-soft",
-                        "while the diff has anything to say, untouched marks rest at a lighter pressure; hovering restores them. a clean diff draws none of this."
+                        "a second band is the type\u{2019}s API; a trait is all band. a private method is no row."
                     }
-                    p {
-                        span { class: "dm-nm", "Wire" }
-                        span { class: "text-ink-soft", " · " }
-                        span { class: "dm-nm is-sum", "HoldKind" }
-                        span { class: "text-ink-soft",
-                            " — a product type\u{2019}s name, and a sum type\u{2019}s or a function\u{2019}s, take different colors. the keyword in front of each says the same thing in rust\u{2019}s own words."
-                        }
-                    }
+                }
+                div { class: "space-y-1 border-t border-ink-line pt-2.5",
                     p { class: "text-ink-soft",
-                        "a block quotes every row as written — fields, variants, signatures, method bands — colored by token class the way the definition plate colors its source. the bold run names the workspace mark that row reaches; a plain name comes from outside the workspace, has no mark of its own, and so has no line drawn to it."
+                        "rows are quoted as written; the bold run in one is the mark it reaches."
                     }
                     p {
-                        span { class: "dm-nm", "pub trait" }
+                        span { class: "font-medium", "held by 6 · named by 2" }
                         span { class: "text-ink-soft",
-                            " — a contract with nothing but clauses: its block is the band, one row per method signature, associated type and associated const it declares, default bodies left behind. what a row names it names, the way a type's own band does. a "
-                        }
-                        span { class: "text-ink", "dyn Trait" }
-                        span { class: "text-ink-soft",
-                            " row lands on the trait's block now; where the door folds the trait, it lands on the module's counted row like anything else folded."
-                        }
-                    }
-                    p {
-                        span { class: "text-ink", "a second band" }
-                        span { class: "text-ink-soft",
-                            " under a hairline is the type\u{2019}s API: the methods that clear the same door its own block did, quoted as written. what a method\u{2019}s signature names is drawn like any other interface line — but it is the API naming a type, not the type keeping one, and the sheet says which. a private method is implementation, so it is no row; its body still reaches this block on the dashed ink."
-                        }
-                    }
-                    p {
-                        span { class: "text-ink", "every row, always" }
-                        span { class: "text-ink-soft",
-                            " — a block draws its whole declaration: every field, every variant, every method row of the band, every parameter of a signature. no row waits behind a count, so a block stands as tall as what it promises and a reader never has to open one to finish reading it."
-                        }
-                    }
-                    p {
-                        span { class: "font-medium", "held by 6 types" }
-                        span { class: "text-ink-soft", " · " }
-                        span { class: "font-medium", "named by 2 signatures" }
-                        span { class: "text-ink-soft",
-                            " — more than three marks reach this one, so its incoming edges rest folded; hover either end to ink them in, or select either end to keep them inked. the two counts stay apart because a signature names a type without holding it."
+                            " — a fan-in past three, folded; hover either end to ink it in."
                         }
                     }
                     p {
                         span { class: "font-medium", "+ 5 private items" }
                         span { class: "text-ink-soft",
-                            " — a contract below the visibility setting is never a mark, and every line touching one lands on its module's counted row. at "
-                        }
-                        span { class: "text-ink", "pub" }
-                        span { class: "text-ink-soft",
-                            " the row counts internal items instead, and its words say so."
-                        }
-                    }
-                    p { class: "text-ink-soft",
-                        "the visibility toggle is what this chart is: it draws the surface that crosses the door you set. "
-                        span { class: "text-ink", "pub" }
-                        " draws only what leaves the crate, "
-                        span { class: "text-ink", "pub(crate)" }
-                        " adds the crate-visible contracts, "
-                        span { class: "text-ink", "private" }
-                        " draws everything there is — and a block's own rows follow the same door, so a type's band gains and loses methods with it. a static stands at every setting: state no type holds has nowhere else to be counted."
-                    }
-                    p { class: "text-ink-soft",
-                        "the references toggle sets the reading: "
-                        span { class: "text-ink", "uses" }
-                        " and "
-                        span { class: "text-ink", "used by" }
-                        " rest each mark\u{2019}s two heaviest uses edges, "
-                        span { class: "text-ink", "both" }
-                        " rests every one. whichever the reading, the rest ink in on hover — and selecting a mark inks in every one of its uses edges at once, for as long as the selection stands, with the block at the far end of each kept readable to walk to."
-                    }
-                }
-                div { class: "space-y-1 border-t border-ink-line pt-2.5 text-ink-soft",
-                    p {
-                        "the walk reads declared types, wherever a row writes one. "
-                        span { class: "text-ink", "Arc" }
-                        ", "
-                        span { class: "text-ink", "Rc" }
-                        ", "
-                        span { class: "text-ink", "Weak" }
-                        " and the dioxus signals — "
-                        span { class: "text-ink", "Signal" }
-                        ", "
-                        span { class: "text-ink", "GlobalSignal" }
-                        ", "
-                        span { class: "text-ink", "ReadSignal" }
-                        ", "
-                        span { class: "text-ink", "Memo" }
-                        ", "
-                        span { class: "text-ink", "Resource" }
-                        " — read as sharing; a reference as borrowing; "
-                        span { class: "text-ink", "dyn Trait" }
-                        " as its trait. every other generic type — Vec, Box, Option, HashMap, Mutex, an unknown external — is transparent, and the walk recurses into it."
-                    }
-                    p {
-                        "every reference the survey resolved is drawn dashed, written inside one file or across two, macro-borne ones included — a name in another file\u{2019}s "
-                        span { class: "text-ink", "rsx!" }
-                        " resolves and counts. each end climbs to the block that draws it, so a method\u{2019}s call is its type\u{2019}s."
-                    }
-                    p {
-                        "what stays off: a reference whose other end has no block — folded behind the visibility setting or the chart\u{2019}s budget, or an item this chart gives no mark yet (a const, an alias, a macro). those are counted on the mark they do reach, and the sheet says the count, so a quiet contract reads as quiet rather than dead."
-                    }
-                    p {
-                        "a macro declares surface this chart cannot read: what "
-                        span { class: "text-ink", "macro_rules!" }
-                        " or a derive writes is not surveyed as rows, so a type's derived impls stand on its definition plate, one altitude up, and nothing here counts them."
-                    }
-                    p {
-                        "type parameters are holes: their fields quote as written, and the walk reads nothing through them. so is an "
-                        span { class: "text-ink", "impl Trait" }
-                        " in a signature — an anonymous parameter is still a parameter — and so is a trait bound."
-                    }
-                    p {
-                        "the structural diff reads the base edition of each changed file syntactically: declarations match by kind and name, and a removed relation\u{2019}s target is matched by name — never type-resolved."
-                    }
-
-                    if facts.unresolved > 0 {
-                        p {
-                            "{facts.unresolved} names could not be resolved (type-inference limits) and are not on the chart."
+                            " — below the door; every line touching one lands here."
                         }
                     }
                 }
-                div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
-                    UsageRow {
-                        gesture: "click a type",
-                        effect: "select it: everything a shape change could reach keeps its ink, every body it leans on or that leans on it inks in a step behind — dashed lines and far blocks both — the rest recedes, and its sheet opens. the block itself was already quoted whole. its definition is one step further, on the sheet.",
+                // The diff's key only where there is a diff. A key for marks
+                // the chart is not drawing is the same dead weight as a count
+                // for nothing hidden, and it is six lines of a plate the
+                // reader is short of (2026-08-21, distill).
+                if !diff_words(&facts).is_empty() {
+                    div { class: "border-t border-ink-line pt-2.5",
+                        p { class: "text-ink-soft",
+                            span { class: "font-bold text-flare", "A" }
+                            " added · "
+                            span { class: "font-bold text-flare", "M" }
+                            " changed · "
+                            span { class: "font-bold text-flare", "D" }
+                            " removed — a ghost quoting the base. "
+                            span { class: "font-bold text-flare", "+" }
+                            " "
+                            span { class: "font-bold text-flare", "−" }
+                            " mark a row; a touched block wears the flare. untouched marks rest lighter."
+                        }
                     }
-                    UsageRow {
-                        gesture: "click a module\u{2019}s border",
-                        effect: "select the module: every contract inside the boundary keeps its ink, everything one hop across it reads a step behind, and the other modules recede with their frames. the border\u{2019}s label does the same.",
-                    }
-                    UsageRow {
-                        gesture: "− on a border · + on the row",
-                        effect: "fold the module to one counted row, and unfold it again. a fold is a re-layout: the chart is drawn again around what is left, the nested modules fold with it, and every edge that touched a contract inside lands on the row.",
-                    }
-                    UsageRow { gesture: "esc · bare paper", effect: "deselect" }
-                    UsageRow { gesture: "hover a type", effect: "all of its edges, at full ink" }
-                    UsageRow { gesture: "f · ← · →", effect: "refit the chart · back · forward" }
                 }
+                Gestures {
+                    UsageRow { gesture: "click", effect: "select a mark, or a module\u{2019}s border" }
+                    UsageRow { gesture: "−", effect: "fold a module to one counted row" }
+                    UsageRow { gesture: "hover", effect: "every edge of one mark" }
+                    UsageRow { gesture: "f · esc · ← →", effect: "refit · deselect · retrace" }
+                }
+                if facts.unresolved > 0 {
+                    p { class: "border-t border-ink-line pt-2.5 text-ink-soft",
+                        "{plural(facts.unresolved as usize, \"name\")} the survey could not resolve, and so not on the chart."
+                    }
+                }
+                SurveyLimits { notes }
             }
-        }
-    }
-}
-
-/// One row of the legend's gesture section.
-#[component]
-fn UsageRow(gesture: &'static str, effect: &'static str) -> Element {
-    rsx! {
-        div { class: "flex items-baseline gap-2",
-            span { class: "shrink-0 font-data text-[9.5px] tracking-[0.1em] uppercase text-ink",
-                "{gesture}"
-            }
-            span { class: "text-ink-soft", "{effect}" }
         }
     }
 }

@@ -121,25 +121,31 @@ own legibility floor. The fixes, all user-directed:
 ## Chrome
 
 - Cartouche: workspace name; `n structs · n enums · n statics` (unions when
-  present); `n roots · n nested · n standing` (hover defines the tiers);
-  `n body dependences · n at rest` — the resting count stated so the total
-  never claims hidden ink; the four-rung ladder; the diff line, flare
-  counts, insight line. One toggle: `references`. No visibility toggle —
-  the legend states why.
+  present); the four-rung ladder; the diff line, flare counts, insight line.
+  One toggle: `references`. No visibility toggle — the legend states why.
+  The tier counts and the edge counts came off (2026-08-21, distill): four
+  invented terms defined only in legend prose, and no decision rides on
+  them. The tier is what the paper draws; the legend teaches the word.
 - Sheet (mark selection): header, locator, **the tier in one sentence**
-  ("top-level data: no type holds it — a root." / "secondary data: state of
-  Wire, drawn inside its block." / the standing reasons), the diff's rows,
+  ("top-level data: no type holds it — a root." / "secondary data — drawn
+  inside its holder's block." / the standing reasons — the nested line does
+  not name the holder, which is the first row of the section right below
+  it), the diff's rows,
   then kept strictly apart: `Held by` (nesting first, then drawn relations),
   `In the contract of` (each namer a link to its definition plate), `In the
   API of`, the reach line ("a shape change here reaches 4 more types
   upstream, and 9 signatures name what it reaches."), `Holds`, `Used by` /
   `Uses` with the undrawn-residue lines, and `open its definition →` — the
   code plate stays the only quotation surface.
-- Legend: the root's left edge and the nested sample drawn with the chart's
-  own classes, the standing reasons, the two inks, the kind colors, the
-  no-methods and no-doors statements, the diff key, then honesty notes
-  (naming/body counts, `dyn Trait` has no block here, type-parameter holes,
-  macros, unresolved names, folds).
+- Legend (cut to a key 2026-08-21, distill — about six hundred words to
+  ~170): a key strip first (the root's left edge and the nested sample, drawn
+  with the chart's own classes; then the two inks), one paragraph of grammar
+  per family, the kind colors, the no-methods/no-doors line, the diff key
+  *only while the diff has something to say*, the gestures on a two-column
+  grid, the far-edition and counted-residue lines — and the survey's own
+  limits behind a nested `what the survey cannot read` fold, printed from
+  `walk_notes` + `notes` in the survey's words rather than paraphrased. The
+  references-toggle paragraph came off: it restated the three button titles.
 
 ## Implementation notes
 
