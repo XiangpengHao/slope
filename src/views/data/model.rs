@@ -645,7 +645,7 @@ fn contained(id: u32, kids: &HashMap<u32, Vec<u32>>) -> usize {
 }
 
 impl DataModel {
-    pub(crate) fn build(graph: &CodeGraph, ref_dir: RefDir, folds: &Folds) -> Self {
+    pub(in crate::views::data) fn build(graph: &CodeGraph, ref_dir: RefDir, folds: &Folds) -> Self {
         // Ghosts share the marks' id space, continuing after `items`.
         let ghost_of = |id: u32| -> Option<&GhostMark> {
             (id as usize)
@@ -1460,7 +1460,9 @@ impl DataModel {
 }
 
 #[cfg(test)]
-mod tests {
+/// The survey builders the data altitude's tests share: `/data`'s model and
+/// its sheet both read one `CodeGraph`, so both build theirs the same way.
+pub(in crate::views::data) mod tests {
     use super::*;
 
     /// The frame a file's marks land in is the directory chain under the
@@ -1487,7 +1489,7 @@ mod tests {
     }
     use crate::api::{DeclRow, FileInfo, HoldEdge, MarkRef, Vis};
 
-    fn file(id: u32, path: &str) -> FileInfo {
+    pub(in crate::views::data) fn file(id: u32, path: &str) -> FileInfo {
         FileInfo {
             id,
             path: path.to_string(),
@@ -1499,7 +1501,7 @@ mod tests {
         }
     }
 
-    fn mark(id: u32, file: u32, name: &str, kind: ItemKind) -> ItemMark {
+    pub(in crate::views::data) fn mark(id: u32, file: u32, name: &str, kind: ItemKind) -> ItemMark {
         ItemMark {
             id,
             file,
@@ -1538,7 +1540,7 @@ mod tests {
         }
     }
 
-    fn graph(items: Vec<ItemMark>, holds: Vec<HoldEdge>) -> CodeGraph {
+    pub(in crate::views::data) fn graph(items: Vec<ItemMark>, holds: Vec<HoldEdge>) -> CodeGraph {
         CodeGraph {
             files: vec![file(0, "src/api.rs"), file(1, "src/views/dep/map.rs")],
             refs: Vec::new(),
@@ -1554,11 +1556,11 @@ mod tests {
         }
     }
 
-    fn build(graph: &CodeGraph) -> DataModel {
+    pub(crate) fn build(graph: &CodeGraph) -> DataModel {
         DataModel::build(graph, RefDir::default(), &Folds::new())
     }
 
-    fn by_name<'a>(model: &'a DataModel, name: &str) -> &'a DataMark {
+    pub(in crate::views::data) fn by_name<'a>(model: &'a DataModel, name: &str) -> &'a DataMark {
         model.marks.iter().find(|m| m.name == name).unwrap()
     }
 

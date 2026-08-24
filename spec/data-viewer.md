@@ -67,8 +67,9 @@ silently became load-bearing. Visitor mode: **Operate**.
 - **Blocks** wear the chart's block anatomy — keyword + visibility in
   keyword-blue, name at 700 (teal product type, purple sum type), the diff's
   letter, token-colored quoted rows with the bold run naming the workspace
-  type the row reaches. No method band; the locator lives in the hover words
-  and on the sheet. A static quotes its declared type under its name.
+  type the row reaches. No method band — methods and trait impls are the
+  sheet's rows, not the paper's; the locator lives in the hover words and on
+  the sheet. A static quotes its declared type under its name.
 - **The bold run is a link to the block it names** (2026-08-24, user): click
   `ItemKind` in `kind: ItemKind` and the chart selects `ItemKind`, gliding
   there only if the glass cannot already show it. It underlines under the
@@ -147,9 +148,26 @@ own legibility floor. The fixes, all user-directed:
   then kept strictly apart: `Held by` (nesting first, then drawn relations),
   `In the contract of` (each namer a link to its definition plate), `In the
   API of`, the reach line ("a shape change here reaches 4 more types
-  upstream, and 9 signatures name what it reaches."), `Holds`, `Used by` /
+  upstream, and 9 signatures name what it reaches."), `Holds`, what the type
+  itself offers as `Implements` / `Methods` (2026-08-24, user), `Used by` /
   `Uses` with the undrawn-residue lines, and `open its definition →` — the
   code plate stays the only place source is quoted whole.
+- **`Implements`** is one row per hand-written trait impl gathered from
+  anywhere in the workspace, quoting the trait as its header writes it
+  (`From<Option<ast::Visibility>>`), linking to the trait's definition when
+  the workspace declares it, wearing that trait's own `A`/`M` and this
+  epoch's `added` / `removed` on the promise. A derive is not one of these: it
+  stands in the type's own source, which the definition plate quotes whole. A
+  contract the base promised and the working copy dropped keeps its row, from
+  the removed impl edge alone.
+- **`Methods`** is one row per method the survey read for the type, wherever
+  its impl block is written: the keyword and visibility, the name, `A` where
+  the epoch added it, the contract it answers where a trait asked for it, and
+  `removed` rows quoted from the base for what the epoch dropped. The
+  signature as written is the row's hover words — the sheet column is a name's
+  width. The type's own methods read first, then the trait ones under their
+  promise; a ghost lists the API that left with it. Nothing here is on the
+  paper: a block is state only, and the sheet is a list.
 - No legend (retired 2026-08-24; it had already been cut from ~600 words
   to a key on 2026-08-21). The chart teaches itself: the tier is the
   paper's own nesting, a root's hover words say what its ink edge draws,
@@ -160,7 +178,14 @@ own legibility floor. The fixes, all user-directed:
 
 ## Implementation notes
 
-- `src/views/data/{model,layout,map,chrome,mod}.rs`. The model
+- `src/views/data/{model,layout,map,chrome,mod}.rs`. The sheet's
+  `Implements` reads `ItemMark::impls` (hand-written headers) against
+  `CodeGraph::implements` (the survey's resolved impl edges, workspace traits
+  only, carrying the diff event), matching a written header to a resolved edge
+  on the trait's bare name the way the structural diff does; its `Methods`
+  reads `ItemMark::method_rows`, whose `section` (the impl header the method is
+  written under, added 2026-08-24) is what tells a type's own API from a
+  contract's. The model
   (`DataModel::build`) classifies tiers off `CodeGraph::holds`
   (`from_method == false` and a data-kind holder = structural; everything
   else = naming), nests greedily by field weight with cycle checks, and owns
