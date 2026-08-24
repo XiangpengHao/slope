@@ -107,50 +107,52 @@ fn tok_class(tok: Tok) -> &'static str {
     }
 }
 
-/// Turn one hop of grouped references into rows the column can draw.
-fn column_views(graph: &CodeGraph, groups: Vec<Group>) -> Vec<GroupView> {
-    groups
-        .into_iter()
-        .map(|group| {
-            let path = graph
-                .files
-                .get(group.file as usize)
-                .map(|f| f.path.clone())
-                .unwrap_or_default();
-            let mut private = 0;
-            let mut rows = Vec::new();
-            for row in group.rows.iter() {
-                let Some(mark) = row.mark.and_then(|m| graph.items.get(m as usize)) else {
-                    private += row.count;
-                    continue;
-                };
-                let file = graph
+impl GroupView {
+    /// Turn one hop of grouped references into rows the column can draw.
+    fn columns(graph: &CodeGraph, groups: Vec<Group>) -> Vec<Self> {
+        groups
+            .into_iter()
+            .map(|group| {
+                let path = graph
                     .files
-                    .get(mark.file as usize)
+                    .get(group.file as usize)
                     .map(|f| f.path.clone())
                     .unwrap_or_default();
-                rows.push(RowView {
-                    kind: mark.kind,
-                    name: mark.name.clone(),
-                    title: format!(
-                        "{} · {} · {}",
-                        mark.label,
-                        kind_words(mark.kind),
-                        mark.vis.words()
-                    ),
-                    to: item_route(&file, &mark.label),
-                    count: row.count,
-                });
-            }
-            GroupView {
-                file: group.file,
-                path,
-                total: group.total,
-                rows,
-                private,
-            }
-        })
-        .collect()
+                let mut private = 0;
+                let mut rows = Vec::new();
+                for row in group.rows.iter() {
+                    let Some(mark) = row.mark.and_then(|m| graph.items.get(m as usize)) else {
+                        private += row.count;
+                        continue;
+                    };
+                    let file = graph
+                        .files
+                        .get(mark.file as usize)
+                        .map(|f| f.path.clone())
+                        .unwrap_or_default();
+                    rows.push(RowView {
+                        kind: mark.kind,
+                        name: mark.name.clone(),
+                        title: format!(
+                            "{} · {} · {}",
+                            mark.label,
+                            kind_words(mark.kind),
+                            mark.vis.words()
+                        ),
+                        to: item_route(&file, &mark.label),
+                        count: row.count,
+                    });
+                }
+                GroupView {
+                    file: group.file,
+                    path,
+                    total: group.total,
+                    rows,
+                    private,
+                }
+            })
+            .collect()
+    }
 }
 
 /// One breadcrumb: whole map ▸ directory ▸ file ▸ item.
@@ -547,7 +549,7 @@ document.addEventListener('keydown', window.__slopeKeys);
 
 /// The focus plate. `item` is empty for a whole-file focus.
 #[component]
-pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
+pub(crate) fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
     let code = use_code();
     let nav = use_navigator();
 
@@ -715,7 +717,7 @@ pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
     let (used, uses) = {
         let containment = containment.read();
         (
-            column_views(
+            GroupView::columns(
                 &graph,
                 model::groups(
                     &graph,
@@ -725,7 +727,7 @@ pub fn EgoPlate(graph: CodeGraph, path: String, item: String) -> Element {
                     within(Dir::UsedBy).into_iter(),
                 ),
             ),
-            column_views(
+            GroupView::columns(
                 &graph,
                 model::groups(
                     &graph,

@@ -61,7 +61,7 @@ pub(crate) fn decl_words(vis: Vis, kind: ItemKind) -> String {
 
 /// Which rung of the ladder a cartouche stands on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Altitude {
+pub(crate) enum Altitude {
     /// `/` — crates on rings of hops.
     Deps,
     /// `/code` — files and items as nested territory.
@@ -75,7 +75,7 @@ pub enum Altitude {
 /// The altitude line: the ladder between the charts, and the only navigation
 /// between them. The current rung is engraved solid; the others are links.
 #[component]
-pub fn AltitudeSwitch(at: Altitude) -> Element {
+pub(crate) fn AltitudeSwitch(at: Altitude) -> Element {
     let rung = |label: &'static str, to: Route, mine: Altitude| {
         rsx! {
             if at == mine {
@@ -103,7 +103,7 @@ pub fn AltitudeSwitch(at: Altitude) -> Element {
 /// longer repeats them on every frame and every block — and the reading control
 /// for the map's ties, which acts on the whole plate and so belongs here.
 #[component]
-pub fn CodeCartouche(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
+pub(crate) fn CodeCartouche(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
     let files = graph.files.len();
     let crates: std::collections::HashSet<&str> =
         graph.files.iter().map(|f| f.krate.as_str()).collect();
@@ -142,7 +142,7 @@ pub fn CodeCartouche(graph: CodeGraph, workspace: String, diff_line: String) -> 
 /// reviewer is looking for a place in the code, and a file and an item are
 /// both places.
 #[derive(Clone, PartialEq)]
-enum Hit {
+enum SearchHit {
     File(FileInfo),
     /// The item, and the path of the file that defines it. Boxed because
     /// an `ItemMark` is 296 bytes against `FileInfo`'s 88, and every hit
@@ -155,7 +155,7 @@ enum Hit {
 type Rank = (bool, u8, std::cmp::Reverse<u32>, String);
 
 #[component]
-pub fn CodeSearch(graph: CodeGraph) -> Element {
+pub(crate) fn CodeSearch(graph: CodeGraph) -> Element {
     let mut query = use_signal(String::new);
     let mut active = use_signal(|| 0usize);
     let nav = use_navigator();
@@ -165,7 +165,7 @@ pub fn CodeSearch(graph: CodeGraph) -> Element {
         if q.is_empty() {
             return Vec::new();
         }
-        let mut hits: Vec<(Rank, Hit)> = Vec::new();
+        let mut hits: Vec<(Rank, SearchHit)> = Vec::new();
         for file in graph
             .files
             .iter()
@@ -179,7 +179,7 @@ pub fn CodeSearch(graph: CodeGraph) -> Element {
                     std::cmp::Reverse(file.refs_in_files),
                     file.path.clone(),
                 ),
-                Hit::File(file.clone()),
+                SearchHit::File(file.clone()),
             ));
         }
         for item in graph
@@ -199,7 +199,7 @@ pub fn CodeSearch(graph: CodeGraph) -> Element {
                     std::cmp::Reverse(item.fan_in),
                     item.label.clone(),
                 ),
-                Hit::Item(Box::new(item.clone()), path),
+                SearchHit::Item(Box::new(item.clone()), path),
             ));
         }
         hits.sort_by(|a, b| a.0.cmp(&b.0));
@@ -207,9 +207,9 @@ pub fn CodeSearch(graph: CodeGraph) -> Element {
         hits.into_iter().map(|(_, hit)| hit).collect()
     });
 
-    let route_of = |hit: &Hit| match hit {
-        Hit::File(f) => file_route(&f.path),
-        Hit::Item(m, path) => item_route(path, &m.label),
+    let route_of = |hit: &SearchHit| match hit {
+        SearchHit::File(f) => file_route(&f.path),
+        SearchHit::Item(m, path) => item_route(path, &m.label),
     };
 
     rsx! {
@@ -263,7 +263,7 @@ pub fn CodeSearch(graph: CodeGraph) -> Element {
                                     class: if i == active() { "flex w-full items-baseline gap-1.5 px-2.5 py-1 bg-ink/5" } else { "flex w-full items-baseline gap-1.5 px-2.5 py-1 hover:bg-ink/5" },
                                     onclick: move |_| query.set(String::new()),
                                     match &hit {
-                                        Hit::File(f) => rsx! {
+                                        SearchHit::File(f) => rsx! {
                                             span { class: "truncate font-data text-[11px] text-ink", "{file_name(&f.path)}" }
                                             if f.changed {
                                                 span { class: "shrink-0 font-data text-[9.5px] text-flare", "M" }
@@ -272,7 +272,7 @@ pub fn CodeSearch(graph: CodeGraph) -> Element {
                                                 "{dir_of(&f.path)}"
                                             }
                                         },
-                                        Hit::Item(m, path) => rsx! {
+                                        SearchHit::Item(m, path) => rsx! {
                                             span { class: "shrink-0 font-data text-[9.5px] text-ink-soft", "{kind_words(m.kind)}" }
                                             span { class: "truncate font-data text-[11px] text-ink", "{m.name}" }
                                             span { class: "ml-auto shrink-0 truncate font-data text-[9px] text-ink-soft",
@@ -361,7 +361,7 @@ pub(crate) fn Gestures(children: Element) -> Element {
 /// key is short enough to stand open, and the cartouche above it grows and
 /// shrinks with the diff.
 #[component]
-pub fn CodeLegend(
+pub(crate) fn CodeLegend(
     notes: Vec<String>,
     /// Whether the diff touched anything, so the `M` key is drawn only where
     /// there is an `M` on the paper.
@@ -511,7 +511,7 @@ fn RefDirToggle() -> Element {
 
 /// One crate's sheet: its files, and what crosses its boundary.
 #[component]
-pub fn CratePanel(graph: CodeGraph, name: String) -> Element {
+pub(crate) fn CratePanel(graph: CodeGraph, name: String) -> Element {
     let mut files: Vec<FileInfo> = graph
         .files
         .iter()

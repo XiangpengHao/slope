@@ -20,40 +20,40 @@ use dioxus_flow::prelude::Point;
 use crate::api::CodeGraph;
 
 /// The root directory's id: always first in [`FileTree::dirs`].
-pub const ROOT: u32 = 0;
+pub(crate) const ROOT: u32 = 0;
 
 /// One directory of the workspace.
 #[derive(Clone, PartialEq, Debug)]
-pub struct DirNode {
-    pub id: u32,
+pub(crate) struct DirNode {
+    pub(crate) id: u32,
     /// Last path segment; the root keeps the empty string.
-    pub name: String,
+    pub(crate) name: String,
     /// Path relative to the workspace root; the root is "".
-    pub path: String,
-    pub parent: Option<u32>,
+    pub(crate) path: String,
+    pub(crate) parent: Option<u32>,
     /// Child directories, name-sorted.
-    pub dirs: Vec<u32>,
+    pub(crate) dirs: Vec<u32>,
     /// Files directly in this directory (ids into the survey), name-sorted.
-    pub files: Vec<u32>,
-    pub depth: u32,
+    pub(crate) files: Vec<u32>,
+    pub(crate) depth: u32,
     /// Files in the whole subtree.
-    pub file_count: u32,
+    pub(crate) file_count: u32,
     /// The crate whose sources live under this directory, when this is the
     /// shallowest directory that holds them all — the district's engraved
     /// crate name.
-    pub krate: Option<String>,
+    pub(crate) krate: Option<String>,
 }
 
 /// The workspace's directory tree.
 #[derive(Clone, PartialEq, Debug)]
-pub struct FileTree {
-    pub dirs: Vec<DirNode>,
+pub(crate) struct FileTree {
+    pub(crate) dirs: Vec<DirNode>,
     /// Directory id for every file id.
-    pub dir_of_file: HashMap<u32, u32>,
+    pub(crate) dir_of_file: HashMap<u32, u32>,
 }
 
 impl FileTree {
-    pub fn build(graph: &CodeGraph) -> Self {
+    pub(crate) fn build(graph: &CodeGraph) -> Self {
         let mut dirs = vec![DirNode {
             id: ROOT,
             name: String::new(),
@@ -190,54 +190,57 @@ fn common_ancestor(dirs: &[DirNode], mut a: u32, mut b: u32) -> u32 {
 
 /// Marks the first paint budgets for. Beyond it, deep directories start
 /// folded as gates — stated in words on the plate, opened with one click.
-pub const MARK_BUDGET: usize = 320;
+pub(crate) const MARK_BUDGET: usize = 320;
 
-/// The deepest directory level that stays open by default: the largest depth
-/// keeping the visible mark count within the budget. Depth 1 always opens,
-/// so the map never greets the reviewer with a single closed gate.
-pub fn default_open_depth(tree: &FileTree, budget: usize) -> u32 {
-    let max_depth = tree.dirs.iter().map(|d| d.depth).max().unwrap_or(0);
-    let mut best = 1;
-    for depth in 1..=max_depth.max(1) {
-        let mut marks = 0usize;
-        for dir in &tree.dirs {
-            if dir.depth <= depth {
-                marks += dir.files.len() + 1; // its files + its own mark
-            } else if dir.depth == depth + 1 {
-                marks += 1; // a gate
+impl FileTree {
+    /// The deepest directory level that stays open by default: the largest
+    /// depth keeping the visible mark count within the budget. Depth 1 always
+    /// opens, so the map never greets the reviewer with a single closed gate.
+    pub(crate) fn default_open_depth(&self, budget: usize) -> u32 {
+        let max_depth = self.dirs.iter().map(|d| d.depth).max().unwrap_or(0);
+        let mut best = 1;
+        for depth in 1..=max_depth.max(1) {
+            let mut marks = 0usize;
+            for dir in &self.dirs {
+                if dir.depth <= depth {
+                    marks += dir.files.len() + 1; // its files + its own mark
+                } else if dir.depth == depth + 1 {
+                    marks += 1; // a gate
+                }
+            }
+            if depth == 1 || marks <= budget {
+                best = depth;
             }
         }
-        if depth == 1 || marks <= budget {
-            best = depth;
-        }
+        best
     }
-    best
-}
 
-/// Which directories are open, from the default depth and the reviewer's
-/// toggles. A directory under a closed ancestor is not in the set at all —
-/// it is invisible, not merely closed.
-pub fn open_dirs(tree: &FileTree, depth: u32, toggled: &HashSet<u32>) -> HashSet<u32> {
-    let mut open = HashSet::new();
-    let mut stack = vec![ROOT];
-    while let Some(id) = stack.pop() {
-        open.insert(id);
-        for &child in &tree.dirs[id as usize].dirs {
-            let default_open = tree.dirs[child as usize].depth <= depth;
-            if default_open != toggled.contains(&child) {
-                stack.push(child);
+    /// Which directories are open, from the default depth and the reviewer's
+    /// toggles. A directory under a closed ancestor is not in the set at all —
+    /// it is invisible, not merely closed.
+    pub(crate) fn open_dirs(&self, depth: u32, toggled: &HashSet<u32>) -> HashSet<u32> {
+        let mut open = HashSet::new();
+        let mut stack = vec![ROOT];
+        while let Some(id) = stack.pop() {
+            open.insert(id);
+            for &child in &self.dirs[id as usize].dirs {
+                let default_open = self.dirs[child as usize].depth <= depth;
+                if default_open != toggled.contains(&child) {
+                    stack.push(child);
+                }
             }
         }
+        open
     }
-    open
-}
 
-/// A visible directory that is not open: drawn as a gate carrying its count.
-pub fn is_gate(tree: &FileTree, open: &HashSet<u32>, dir: u32) -> bool {
-    !open.contains(&dir)
-        && tree.dirs[dir as usize]
-            .parent
-            .is_some_and(|p| open.contains(&p))
+    /// A visible directory that is not open: drawn as a gate carrying its
+    /// count.
+    pub(crate) fn is_gate(&self, open: &HashSet<u32>, dir: u32) -> bool {
+        !open.contains(&dir)
+            && self.dirs[dir as usize]
+                .parent
+                .is_some_and(|p| open.contains(&p))
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -245,28 +248,28 @@ pub fn is_gate(tree: &FileTree, open: &HashSet<u32>, dir: u32) -> bool {
 // ---------------------------------------------------------------------------
 
 /// One mark's key on the chart: a file or a directory.
-pub fn file_key(id: u32) -> String {
+pub(crate) fn file_key(id: u32) -> String {
     format!("f{id}")
 }
-pub fn dir_key(id: u32) -> String {
+pub(crate) fn dir_key(id: u32) -> String {
     format!("d{id}")
 }
 
 /// Block furniture, in flow units — one unit is one CSS pixel at zoom 1. The
 /// layout measures blocks itself, so the drawn plate must be handed exactly
 /// these numbers: a plate taller than its box would stand on its neighbor.
-pub const BLOCK_HEAD_H: f64 = 25.0;
-pub const BLOCK_ROW_H: f64 = 17.0;
+pub(crate) const BLOCK_HEAD_H: f64 = 25.0;
+pub(crate) const BLOCK_ROW_H: f64 = 17.0;
 /// One wrapped line of a fold's words. A fold that clips its own count says
 /// nothing, so the box grows to fit the sentence.
-pub const BLOCK_FOLD_LINE: f64 = 11.0;
-pub const BLOCK_PAD_X: f64 = 9.0;
+pub(crate) const BLOCK_FOLD_LINE: f64 = 11.0;
+pub(crate) const BLOCK_PAD_X: f64 = 9.0;
 /// Slack below the last row, so the frame never crowds the letters.
-pub const BLOCK_FOOT: f64 = 7.0;
-pub const BLOCK_MIN_W: f64 = 138.0;
-pub const BLOCK_MAX_W: f64 = 296.0;
+pub(crate) const BLOCK_FOOT: f64 = 7.0;
+pub(crate) const BLOCK_MIN_W: f64 = 138.0;
+pub(crate) const BLOCK_MAX_W: f64 = 296.0;
 /// A folded directory's gate: one counted line, no rows.
-pub const GATE_H: f64 = 31.0;
+pub(crate) const GATE_H: f64 = 31.0;
 
 /// District furniture: inner padding, the band the engraved label sits in,
 /// and the gap between siblings.
@@ -277,32 +280,32 @@ const GAP: f64 = 11.0;
 /// One em of advance in the data face (JetBrains Mono is monospaced). Every
 /// measured label on the map is data, so this is the only advance the layout
 /// needs.
-pub const MONO_ADVANCE: f64 = 0.6;
+pub(crate) const MONO_ADVANCE: f64 = 0.6;
 
 /// Estimated width of mono text at a given size. The map would rather carry
 /// slack than clip a name.
-pub fn text_w(text: &str, px: f64) -> f64 {
+pub(crate) fn text_w(text: &str, px: f64) -> f64 {
     tracked_w(text, px, MONO_ADVANCE, 0.0)
 }
 
 /// Estimated width of a tracked run of letters. The engraved labels are
 /// uppercase with heavy letter-spacing, and the tracking is most of what they
 /// measure — leaving it out is what makes a label collide with its neighbor.
-pub fn tracked_w(text: &str, px: f64, advance: f64, tracking_em: f64) -> f64 {
+pub(crate) fn tracked_w(text: &str, px: f64, advance: f64, tracking_em: f64) -> f64 {
     text.chars().count() as f64 * px * (advance + tracking_em)
 }
 
 /// One placed box on the paper.
 #[derive(Clone, Copy, PartialEq, Debug)]
-pub struct Placed {
-    pub x: f64,
-    pub y: f64,
-    pub w: f64,
-    pub h: f64,
+pub(crate) struct Placed {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) w: f64,
+    pub(crate) h: f64,
 }
 
 impl Placed {
-    pub fn center(&self) -> Point {
+    pub(crate) fn center(&self) -> Point {
         Point::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
     }
 
@@ -317,70 +320,72 @@ impl Placed {
 
 /// One district frame: a bordered territory with its name on the border.
 #[derive(Clone, PartialEq, Debug)]
-pub struct District {
-    pub dir: u32,
-    pub at: Placed,
-    pub depth: u32,
+pub(crate) struct District {
+    pub(crate) dir: u32,
+    pub(crate) at: Placed,
+    pub(crate) depth: u32,
 }
 
 /// What the layout must be told about what it seats: the measured size of
 /// every file block and gate, and the width of every district's engraved
 /// label. Measuring belongs with the drawing, not with the geometry.
 #[derive(Clone, PartialEq, Debug, Default)]
-pub struct Measures {
-    pub blocks: HashMap<u32, (f64, f64)>,
-    pub gates: HashMap<u32, (f64, f64)>,
-    pub labels: HashMap<u32, f64>,
+pub(crate) struct Measures {
+    pub(crate) blocks: HashMap<u32, (f64, f64)>,
+    pub(crate) gates: HashMap<u32, (f64, f64)>,
+    pub(crate) labels: HashMap<u32, f64>,
 }
 
 /// The whole map, placed.
 #[derive(Clone, PartialEq, Debug, Default)]
-pub struct MapLayout {
-    pub blocks: HashMap<u32, Placed>,
-    pub gates: HashMap<u32, Placed>,
+pub(crate) struct MapLayout {
+    pub(crate) blocks: HashMap<u32, Placed>,
+    pub(crate) gates: HashMap<u32, Placed>,
     /// Outermost first: districts paint in this order, so a nested tint lays
     /// over its parent's.
-    pub districts: Vec<District>,
-    pub size: (f64, f64),
+    pub(crate) districts: Vec<District>,
+    pub(crate) size: (f64, f64),
 }
 
-/// Lay the visible tree as nested territories, centered on the flow origin.
-/// Files come before subdirectories inside a district — the reading order of
-/// a directory listing — and everything is name-ordered, so the same
-/// workspace always draws the same map.
-pub fn map_layout(tree: &FileTree, open: &HashSet<u32>, m: &Measures) -> MapLayout {
-    let packed = pack_dir(tree, open, m, ROOT);
-    let (dx, dy) = (-packed.w / 2.0, -packed.h / 2.0);
-    // The root's own frame carries the workspace; every other district paints
-    // over it, in the order they were packed — an ancestor always first.
-    let root = District {
-        dir: ROOT,
-        at: Placed {
-            x: dx,
-            y: dy,
-            w: packed.w,
-            h: packed.h,
-        },
-        depth: 0,
-    };
-    MapLayout {
-        blocks: packed
-            .blocks
-            .into_iter()
-            .map(|(id, at)| (id, at.shifted(dx, dy)))
-            .collect(),
-        gates: packed
-            .gates
-            .into_iter()
-            .map(|(id, at)| (id, at.shifted(dx, dy)))
-            .collect(),
-        districts: std::iter::once(root)
-            .chain(packed.districts.into_iter().map(|d| District {
-                at: d.at.shifted(dx, dy),
-                ..d
-            }))
-            .collect(),
-        size: (packed.w, packed.h),
+impl FileTree {
+    /// Lay the visible tree as nested territories, centered on the flow
+    /// origin. Files come before subdirectories inside a district — the
+    /// reading order of a directory listing — and everything is name-ordered,
+    /// so the same workspace always draws the same map.
+    pub(crate) fn layout(&self, open: &HashSet<u32>, sizes: &Measures) -> MapLayout {
+        let packed = self.pack_dir(open, sizes, ROOT);
+        let (dx, dy) = (-packed.w / 2.0, -packed.h / 2.0);
+        // The root's own frame carries the workspace; every other district paints
+        // over it, in the order they were packed — an ancestor always first.
+        let root = District {
+            dir: ROOT,
+            at: Placed {
+                x: dx,
+                y: dy,
+                w: packed.w,
+                h: packed.h,
+            },
+            depth: 0,
+        };
+        MapLayout {
+            blocks: packed
+                .blocks
+                .into_iter()
+                .map(|(id, at)| (id, at.shifted(dx, dy)))
+                .collect(),
+            gates: packed
+                .gates
+                .into_iter()
+                .map(|(id, at)| (id, at.shifted(dx, dy)))
+                .collect(),
+            districts: std::iter::once(root)
+                .chain(packed.districts.into_iter().map(|d| District {
+                    at: d.at.shifted(dx, dy),
+                    ..d
+                }))
+                .collect(),
+            size: (packed.w, packed.h),
+        }
     }
 }
 
@@ -398,106 +403,108 @@ enum Kid {
     Dir(u32, Packed),
 }
 
-fn pack_dir(tree: &FileTree, open: &HashSet<u32>, m: &Measures, dir: u32) -> Packed {
-    let node = &tree.dirs[dir as usize];
-    let mut kids: Vec<(Kid, f64, f64)> = Vec::new();
-    for &file in &node.files {
-        let (w, h) = m
-            .blocks
-            .get(&file)
-            .copied()
-            .unwrap_or((BLOCK_MIN_W, BLOCK_HEAD_H + BLOCK_FOOT));
-        kids.push((Kid::File(file), w, h));
-    }
-    for &child in &node.dirs {
-        if open.contains(&child) {
-            let packed = pack_dir(tree, open, m, child);
-            let (w, h) = (packed.w, packed.h);
-            kids.push((Kid::Dir(child, packed), w, h));
-        } else {
-            let (w, h) = m
-                .gates
-                .get(&child)
+impl FileTree {
+    fn pack_dir(&self, open: &HashSet<u32>, sizes: &Measures, dir: u32) -> Packed {
+        let node = &self.dirs[dir as usize];
+        let mut kids: Vec<(Kid, f64, f64)> = Vec::new();
+        for &file in &node.files {
+            let (w, h) = sizes
+                .blocks
+                .get(&file)
                 .copied()
-                .unwrap_or((BLOCK_MIN_W, GATE_H));
-            kids.push((Kid::Gate(child), w, h));
+                .unwrap_or((BLOCK_MIN_W, BLOCK_HEAD_H + BLOCK_FOOT));
+            kids.push((Kid::File(file), w, h));
         }
-    }
-
-    // Shelves aiming for a landscape district — the shape of the paper it
-    // will be read on — and never narrower than its widest child. A district
-    // that grew tall and thin would read as a column of unrelated plates.
-    let widest = kids.iter().map(|(_, w, _)| *w).fold(0.0, f64::max);
-    let area: f64 = kids.iter().map(|(_, w, h)| (w + GAP) * (h + GAP)).sum();
-    let target = widest.max((area * 2.6).sqrt());
-
-    let mut blocks: Vec<(u32, Placed)> = Vec::new();
-    let mut gates: Vec<(u32, Placed)> = Vec::new();
-    let mut districts: Vec<District> = Vec::new();
-    let (mut x, mut y, mut row_h, mut content_w) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
-    for (kid, w, h) in kids {
-        if x > 0.0 && x + w > target {
-            y += row_h + GAP;
-            x = 0.0;
-            row_h = 0.0;
-        }
-        let at = Placed { x, y, w, h };
-        match kid {
-            Kid::File(file) => blocks.push((file, at)),
-            Kid::Gate(child) => gates.push((child, at)),
-            Kid::Dir(child, packed) => {
-                districts.push(District {
-                    dir: child,
-                    at,
-                    depth: tree.dirs[child as usize].depth,
-                });
-                blocks.extend(
-                    packed
-                        .blocks
-                        .into_iter()
-                        .map(|(id, p)| (id, p.shifted(x, y))),
-                );
-                gates.extend(
-                    packed
-                        .gates
-                        .into_iter()
-                        .map(|(id, p)| (id, p.shifted(x, y))),
-                );
-                districts.extend(packed.districts.into_iter().map(|d| District {
-                    at: d.at.shifted(x, y),
-                    ..d
-                }));
+        for &child in &node.dirs {
+            if open.contains(&child) {
+                let packed = self.pack_dir(open, sizes, child);
+                let (w, h) = (packed.w, packed.h);
+                kids.push((Kid::Dir(child, packed), w, h));
+            } else {
+                let (w, h) = sizes
+                    .gates
+                    .get(&child)
+                    .copied()
+                    .unwrap_or((BLOCK_MIN_W, GATE_H));
+                kids.push((Kid::Gate(child), w, h));
             }
         }
-        x += w + GAP;
-        content_w = content_w.max(x - GAP);
-        row_h = row_h.max(h);
-    }
-    let content_h = y + row_h;
 
-    // The frame around them, with room on the border for the engraved label.
-    let label = m.labels.get(&dir).copied().unwrap_or(0.0) + 30.0;
-    let w = (content_w + D_PAD * 2.0).max(label).max(BLOCK_MIN_W);
-    let h = content_h + D_PAD * 2.0 + D_LABEL_H;
-    let (dx, dy) = (D_PAD, D_PAD + D_LABEL_H);
-    Packed {
-        w,
-        h,
-        blocks: blocks
-            .into_iter()
-            .map(|(id, at)| (id, at.shifted(dx, dy)))
-            .collect(),
-        gates: gates
-            .into_iter()
-            .map(|(id, at)| (id, at.shifted(dx, dy)))
-            .collect(),
-        districts: districts
-            .into_iter()
-            .map(|d| District {
-                at: d.at.shifted(dx, dy),
-                ..d
-            })
-            .collect(),
+        // Shelves aiming for a landscape district — the shape of the paper it
+        // will be read on — and never narrower than its widest child. A district
+        // that grew tall and thin would read as a column of unrelated plates.
+        let widest = kids.iter().map(|(_, w, _)| *w).fold(0.0, f64::max);
+        let area: f64 = kids.iter().map(|(_, w, h)| (w + GAP) * (h + GAP)).sum();
+        let target = widest.max((area * 2.6).sqrt());
+
+        let mut blocks: Vec<(u32, Placed)> = Vec::new();
+        let mut gates: Vec<(u32, Placed)> = Vec::new();
+        let mut districts: Vec<District> = Vec::new();
+        let (mut x, mut y, mut row_h, mut content_w) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        for (kid, w, h) in kids {
+            if x > 0.0 && x + w > target {
+                y += row_h + GAP;
+                x = 0.0;
+                row_h = 0.0;
+            }
+            let at = Placed { x, y, w, h };
+            match kid {
+                Kid::File(file) => blocks.push((file, at)),
+                Kid::Gate(child) => gates.push((child, at)),
+                Kid::Dir(child, packed) => {
+                    districts.push(District {
+                        dir: child,
+                        at,
+                        depth: self.dirs[child as usize].depth,
+                    });
+                    blocks.extend(
+                        packed
+                            .blocks
+                            .into_iter()
+                            .map(|(id, p)| (id, p.shifted(x, y))),
+                    );
+                    gates.extend(
+                        packed
+                            .gates
+                            .into_iter()
+                            .map(|(id, p)| (id, p.shifted(x, y))),
+                    );
+                    districts.extend(packed.districts.into_iter().map(|d| District {
+                        at: d.at.shifted(x, y),
+                        ..d
+                    }));
+                }
+            }
+            x += w + GAP;
+            content_w = content_w.max(x - GAP);
+            row_h = row_h.max(h);
+        }
+        let content_h = y + row_h;
+
+        // The frame around them, with room on the border for the engraved label.
+        let label = sizes.labels.get(&dir).copied().unwrap_or(0.0) + 30.0;
+        let w = (content_w + D_PAD * 2.0).max(label).max(BLOCK_MIN_W);
+        let h = content_h + D_PAD * 2.0 + D_LABEL_H;
+        let (dx, dy) = (D_PAD, D_PAD + D_LABEL_H);
+        Packed {
+            w,
+            h,
+            blocks: blocks
+                .into_iter()
+                .map(|(id, at)| (id, at.shifted(dx, dy)))
+                .collect(),
+            gates: gates
+                .into_iter()
+                .map(|(id, at)| (id, at.shifted(dx, dy)))
+                .collect(),
+            districts: districts
+                .into_iter()
+                .map(|d| District {
+                    at: d.at.shifted(dx, dy),
+                    ..d
+                })
+                .collect(),
+        }
     }
 }
 
@@ -593,16 +600,16 @@ mod tests {
         let g = graph(&refs);
         let tree = FileTree::build(&g);
         // A tiny budget folds below depth 1; a huge one opens everything.
-        assert_eq!(default_open_depth(&tree, 10), 1);
-        let all = default_open_depth(&tree, 10_000);
+        assert_eq!(tree.default_open_depth(10), 1);
+        let all = tree.default_open_depth(10_000);
         assert_eq!(all, 3);
-        let open = open_dirs(&tree, 1, &HashSet::new());
+        let open = tree.open_dirs(1, &HashSet::new());
         // Root and the eight a* dirs are open; b dirs are gates.
         assert!(open.contains(&ROOT));
         let gates: Vec<u32> = tree
             .dirs
             .iter()
-            .filter(|d| is_gate(&tree, &open, d.id))
+            .filter(|d| tree.is_gate(&open, d.id))
             .map(|d| d.id)
             .collect();
         assert_eq!(gates.len(), 8);
@@ -613,11 +620,11 @@ mod tests {
         let g = graph(&["a/b/one.rs", "a/b/two.rs", "a/top.rs"]);
         let tree = FileTree::build(&g);
         let b = tree.dirs.iter().find(|d| d.path == "a/b").unwrap().id;
-        let closed = open_dirs(&tree, 1, &HashSet::new());
+        let closed = tree.open_dirs(1, &HashSet::new());
         assert!(!closed.contains(&b));
         let mut toggled = HashSet::new();
         toggled.insert(b);
-        let open = open_dirs(&tree, 1, &toggled);
+        let open = tree.open_dirs(1, &toggled);
         assert!(open.contains(&b));
     }
 
@@ -631,8 +638,8 @@ mod tests {
             "top.rs",
         ]);
         let tree = FileTree::build(&g);
-        let open = open_dirs(&tree, 9, &HashSet::new());
-        let layout = map_layout(&tree, &open, &measures(&g, &tree));
+        let open = tree.open_dirs(9, &HashSet::new());
+        let layout = tree.layout(&open, &measures(&g, &tree));
 
         // No two blocks share paper.
         let placed: Vec<Placed> = layout.blocks.values().copied().collect();
@@ -674,8 +681,8 @@ mod tests {
         let g = graph(&["a/one.rs", "a/deep/two.rs"]);
         let tree = FileTree::build(&g);
         let deep = tree.dirs.iter().find(|d| d.path == "a/deep").unwrap().id;
-        let open = open_dirs(&tree, 1, &HashSet::new());
-        let layout = map_layout(&tree, &open, &measures(&g, &tree));
+        let open = tree.open_dirs(1, &HashSet::new());
+        let layout = tree.layout(&open, &measures(&g, &tree));
         assert!(layout.gates.contains_key(&deep));
         assert!(!layout.districts.iter().any(|d| d.dir == deep));
         // The folded directory's file holds no ground of its own.

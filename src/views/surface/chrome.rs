@@ -49,7 +49,11 @@ fn diff_words(facts: &SurfaceFacts) -> String {
 /// The chart's title block: what surface the workspace publishes, what the diff
 /// moved, and the reading control for its body dependence.
 #[component]
-pub fn SurfaceCartouche(facts: SurfaceFacts, workspace: String, diff_line: String) -> Element {
+pub(crate) fn SurfaceCartouche(
+    facts: SurfaceFacts,
+    workspace: String,
+    diff_line: String,
+) -> Element {
     let insight = insight(&facts.changed_modules);
     rsx! {
         section { class: "plate pointer-events-auto",
@@ -360,7 +364,7 @@ pub(crate) fn HoldList(rows: Vec<HoldRow>) -> Element {
 /// chart keeps the selection's blast radius inked; this plate says the same
 /// thing in rows a reader can follow.
 #[component]
-pub fn SurfaceSheet(graph: CodeGraph, path: String, item: String) -> Element {
+pub(crate) fn SurfaceSheet(graph: CodeGraph, path: String, item: String) -> Element {
     let code = use_code();
     // The sheet reads holding structure, never the tie reading, so that
     // toggle is peeked: it moves nothing on this plate. The doors are read —
@@ -792,7 +796,7 @@ fn WireSample(
 /// clause per line ran five lines deep, and four of them pushed the plate off
 /// the page — the legend's budget is lines, not words.
 #[component]
-pub fn SurfaceLegend(
+pub(crate) fn SurfaceLegend(
     facts: SurfaceFacts,
     notes: Vec<String>,
     #[props(default = true)] start_open: bool,

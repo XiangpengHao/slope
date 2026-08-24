@@ -10,7 +10,7 @@ pub(crate) mod chrome;
 pub(crate) mod ego;
 pub(crate) mod map;
 pub(crate) mod model;
-pub mod tree;
+pub(crate) mod tree;
 
 use std::collections::{HashMap, HashSet};
 
@@ -26,7 +26,7 @@ use crate::views::survey::use_code_graph;
 
 /// What the route selects on the code map.
 #[derive(Clone, PartialEq, Debug, Default)]
-pub enum CodeSel {
+pub(crate) enum CodeSel {
     #[default]
     None,
     Crate(String),
@@ -40,7 +40,7 @@ pub enum CodeSel {
 /// heaviest ties in the chosen direction, and hovering it reveals the rest.
 /// `Both` is the unthinned picture, kept as an explicit choice.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum RefDir {
+pub(crate) enum RefDir {
     /// What each file reaches for — its heaviest outgoing ties. The default:
     /// the question a reviewer brings to a change is what it leans on.
     #[default]
@@ -54,7 +54,7 @@ pub enum RefDir {
 impl RefDir {
     /// How many ties one territory draws at rest in this reading. `Both` keeps
     /// every tie; the anchored readings keep each territory's heaviest few.
-    pub fn per_territory(self) -> Option<usize> {
+    pub(crate) fn per_territory(self) -> Option<usize> {
         match self {
             RefDir::Both => None,
             _ => Some(2),
@@ -69,7 +69,7 @@ impl RefDir {
 /// rule baked into the chart. Statics stand at every setting — state no type
 /// holds has nowhere else to be counted.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum Doors {
+pub(crate) enum Doors {
     /// `pub` only: the surface the crate publishes, and nothing behind it.
     Pub,
     /// `pub` and `pub(crate)` — every type with a door of any width. The
@@ -82,7 +82,7 @@ pub enum Doors {
 
 impl Doors {
     /// A type this visible gets a block rather than a place in a count.
-    pub fn admits(self, vis: Vis) -> bool {
+    pub(crate) fn admits(self, vis: Vis) -> bool {
         match self {
             Doors::Pub => vis == Vis::Pub,
             Doors::Crate => vis != Vis::Private,
@@ -94,7 +94,7 @@ impl Doors {
     /// holds `pub(crate)` items beside the private ones, and *internal* is
     /// the only word true of both. *Item* rather than *type*: the row counts
     /// everything below the door — functions, consts and aliases included.
-    pub fn fold_word(self) -> &'static str {
+    pub(crate) fn fold_word(self) -> &'static str {
         match self {
             Doors::Pub => "internal item",
             _ => "private item",
@@ -102,7 +102,7 @@ impl Doors {
     }
 
     /// What that row says when hovered.
-    pub fn fold_title(self) -> &'static str {
+    pub(crate) fn fold_title(self) -> &'static str {
         match self {
             Doors::Pub => {
                 "items with no door out of their crate are not drawn at this setting; \
@@ -119,29 +119,29 @@ impl Doors {
 /// change, so stepping through focuses — or out to the dependency chart and
 /// back — never resets it.
 #[derive(Clone, Copy)]
-pub struct CodeState {
+pub(crate) struct CodeState {
     /// Directories the reviewer folded or unfolded by hand, as flips against
     /// the default disclosure depth.
-    pub toggled: Signal<HashSet<u32>>,
+    pub(crate) toggled: Signal<HashSet<u32>>,
     /// File details already fetched, by file id: item lists and same-file
     /// references for the focus plate.
-    pub details: Signal<HashMap<u32, FileDetail>>,
+    pub(crate) details: Signal<HashMap<u32, FileDetail>>,
     /// Item source already fetched, by (file id, item id): the definition the
     /// focus plate quotes.
-    pub sources: Signal<HashMap<(u32, u32), ItemSource>>,
+    pub(crate) sources: Signal<HashMap<(u32, u32), ItemSource>>,
     /// Rows the reviewer expanded in place on a focus plate, by (file id,
     /// local item id). View state, not a URL: expansion never leaves the
     /// plate.
-    pub expanded: Signal<HashSet<(u32, u32)>>,
+    pub(crate) expanded: Signal<HashSet<(u32, u32)>>,
     /// Which reading of the map's ties is drawn.
-    pub ref_dir: Signal<RefDir>,
+    pub(crate) ref_dir: Signal<RefDir>,
     /// Which doors the data chart draws a block for.
-    pub doors: Signal<Doors>,
+    pub(crate) doors: Signal<Doors>,
     /// Modules the reviewer folded on the surface chart, each by the crate and
     /// module path that names it across builds. A folded module draws its
     /// boundary and one counted row. View state, not a URL: what the chart
     /// draws is the reading, and the URL carries the selection.
-    pub folds: Signal<Folds>,
+    pub(crate) folds: Signal<Folds>,
 }
 
 impl CodeState {
@@ -158,21 +158,23 @@ impl CodeState {
     }
 }
 
-pub fn use_code() -> CodeState {
+pub(crate) fn use_code() -> CodeState {
     use_context()
 }
 
-/// The selection the current route asks for.
-fn route_selection(route: &Route) -> CodeSel {
-    match route {
-        Route::CodeCrate { name } => CodeSel::Crate(name.clone()),
-        Route::CodeFile { path, item } => CodeSel::File(path.join("/"), item.clone()),
-        _ => CodeSel::None,
+impl From<&Route> for CodeSel {
+    /// The selection the current route asks for.
+    fn from(route: &Route) -> Self {
+        match route {
+            Route::CodeCrate { name } => CodeSel::Crate(name.clone()),
+            Route::CodeFile { path, item } => CodeSel::File(path.join("/"), item.clone()),
+            _ => CodeSel::None,
+        }
     }
 }
 
 /// The route that selects a file on the map.
-pub fn file_route(path: &str) -> Route {
+pub(crate) fn file_route(path: &str) -> Route {
     Route::CodeFile {
         path: path.split('/').map(str::to_string).collect(),
         item: String::new(),
@@ -180,7 +182,7 @@ pub fn file_route(path: &str) -> Route {
 }
 
 /// The route that selects one item inside a file.
-pub fn item_route(path: &str, item: &str) -> Route {
+pub(crate) fn item_route(path: &str, item: &str) -> Route {
     Route::CodeFile {
         path: path.split('/').map(str::to_string).collect(),
         item: item.to_string(),
@@ -191,9 +193,9 @@ pub fn item_route(path: &str, item: &str) -> Route {
 /// asks for — the ambient map, or one selection's focus plate. Mounted by the
 /// survey shell, which has already loaded the survey this map reads.
 #[component]
-pub fn CodeShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
+pub(crate) fn CodeShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
     let route = use_route::<Route>();
-    let sel = route_selection(&route);
+    let sel = CodeSel::from(&route);
     // A file or item focus replaces the map with its own plate; the map's
     // cartouche and legend are map furniture and go with it.
     let focused = matches!(sel, CodeSel::File(_, _));
@@ -252,14 +254,14 @@ pub fn CodeShell(graph: CodeGraph, workspace: String, diff_line: String) -> Elem
 /// `/code` — the whole map. The chart lives in the code shell; this route
 /// adds nothing else.
 #[component]
-pub fn CodeOverview() -> Element {
+pub(crate) fn CodeOverview() -> Element {
     rsx! {}
 }
 
 /// `/code/crate/:name` — one crate's district selected; its boundary
 /// references are drawn and the panel lists what crosses it.
 #[component]
-pub fn CodeCrate(name: String) -> Element {
+pub(crate) fn CodeCrate(name: String) -> Element {
     let Some(graph) = use_code_graph() else {
         return rsx! {};
     };
@@ -274,7 +276,7 @@ pub fn CodeCrate(name: String) -> Element {
 /// it. Either way the map steps aside for the focus plate. The key carries the
 /// whole selection, so re-centering starts every plate's folds closed.
 #[component]
-pub fn CodeFile(path: Vec<String>, item: String) -> Element {
+pub(crate) fn CodeFile(path: Vec<String>, item: String) -> Element {
     let Some(graph) = use_code_graph() else {
         return rsx! {};
     };

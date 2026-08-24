@@ -39,7 +39,7 @@ use crate::views::survey::use_code_graph;
 /// What the route selects on the chart. Both readings recede everything they
 /// do not reach; neither ever moves a block or the camera.
 #[derive(Clone, PartialEq, Debug)]
-pub enum SurfaceSel {
+pub(crate) enum SurfaceSel {
     /// One contract: the defining file, then the label the type's definition
     /// plate selects by.
     Mark(String, String),
@@ -48,17 +48,22 @@ pub enum SurfaceSel {
     Mod(Vec<String>),
 }
 
-/// The selection the current route asks for.
-fn selection(route: &Route) -> Option<SurfaceSel> {
-    match route {
-        Route::SurfaceFocus { path, item } => Some(SurfaceSel::Mark(path.join("/"), item.clone())),
-        Route::SurfaceModFocus { module } => Some(SurfaceSel::Mod(module.clone())),
-        _ => None,
+impl SurfaceSel {
+    /// The selection the current route asks for, or `None` where the route
+    /// is not this chart's.
+    fn of(route: &Route) -> Option<Self> {
+        match route {
+            Route::SurfaceFocus { path, item } => {
+                Some(SurfaceSel::Mark(path.join("/"), item.clone()))
+            }
+            Route::SurfaceModFocus { module } => Some(SurfaceSel::Mod(module.clone())),
+            _ => None,
+        }
     }
 }
 
 /// The route that selects one type on the chart.
-pub fn mark_route(path: &str, item: &str) -> Route {
+pub(crate) fn mark_route(path: &str, item: &str) -> Route {
     Route::SurfaceFocus {
         path: path.split('/').map(str::to_string).collect(),
         item: item.to_string(),
@@ -67,14 +72,14 @@ pub fn mark_route(path: &str, item: &str) -> Route {
 
 /// The route that selects one module frame — the whole boundary, by the key
 /// that names it in every build.
-pub fn mod_route(key: Vec<String>) -> Route {
+pub(crate) fn mod_route(key: Vec<String>) -> Route {
     Route::SurfaceModFocus { module: key }
 }
 
 /// `/surface` — the whole chart. The chart lives in the survey shell; this
 /// route adds nothing else.
 #[component]
-pub fn SurfaceOverview() -> Element {
+pub(crate) fn SurfaceOverview() -> Element {
     rsx! {}
 }
 
@@ -84,7 +89,7 @@ pub fn SurfaceOverview() -> Element {
 /// own link. The key carries the whole selection, so re-centering starts the
 /// sheet's folds closed.
 #[component]
-pub fn SurfaceFocus(path: Vec<String>, item: String) -> Element {
+pub(crate) fn SurfaceFocus(path: Vec<String>, item: String) -> Element {
     let Some(graph) = use_code_graph() else {
         return rsx! {};
     };
@@ -106,7 +111,7 @@ pub fn SurfaceFocus(path: Vec<String>, item: String) -> Element {
 /// reads a step behind, and the other modules recede. There is no sheet — a
 /// module is a place on the paper, and the paper is already saying it.
 #[component]
-pub fn SurfaceModFocus(module: Vec<String>) -> Element {
+pub(crate) fn SurfaceModFocus(module: Vec<String>) -> Element {
     let _ = module;
     rsx! {}
 }
@@ -114,10 +119,10 @@ pub fn SurfaceModFocus(module: Vec<String>) -> Element {
 /// The surface chart and its furniture. Mounted by the survey shell, which has
 /// already loaded the survey both it and the code map read.
 #[component]
-pub fn SurfaceShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
+pub(crate) fn SurfaceShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
     let code = use_code();
     let route = use_route::<Route>();
-    let sel = selection(&route);
+    let sel = SurfaceSel::of(&route);
     // The cartouche and the legend need the survey's totals, not its geometry:
     // one pass over the wire model, kept until the survey itself changes. The
     // reading toggle is peeked, not read: it moves which ties rest on the

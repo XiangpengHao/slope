@@ -46,29 +46,29 @@ use crate::api::{
 
 /// The whole survey, precomputed once: the shipped graph plus every file's
 /// cutaway detail, ready to answer per-file queries from memory.
-pub struct CodeIndex {
-    pub graph: CodeGraph,
+pub(crate) struct CodeIndex {
+    pub(crate) graph: CodeGraph,
     /// Indexed by [`FileInfo::id`].
-    pub details: Vec<FileDetail>,
+    pub(crate) details: Vec<FileDetail>,
     /// Every surveyed file's source text, indexed by [`FileInfo::id`]. The
     /// focus plate quotes it; it never crosses the wire whole.
-    pub sources: Vec<String>,
+    pub(crate) sources: Vec<String>,
     /// Clickable reference spans per file: (start byte, end byte, target file,
     /// target item label), sorted by start. The focus plate turns the ones
     /// inside a quoted item into links.
-    pub ref_spans: Vec<Vec<RefSpan>>,
+    pub(crate) ref_spans: Vec<Vec<RefSpan>>,
 }
 
 /// One clickable reference in a file's real source: the byte range of the
 /// reference's name token, and where it resolves. Server-side only — the
 /// focus plate translates the ones a quoted item contains into [`SrcLink`]s.
-pub struct RefSpan {
-    pub start: u32,
-    pub end: u32,
+pub(crate) struct RefSpan {
+    pub(crate) start: u32,
+    pub(crate) end: u32,
     /// Target file, a [`FileInfo::id`].
-    pub file: u32,
+    pub(crate) file: u32,
     /// Target item's URL label; empty for a whole-file target.
-    pub label: String,
+    pub(crate) label: String,
 }
 
 static INDEX: OnceCell<Result<Arc<CodeIndex>, String>> = OnceCell::const_new();
@@ -76,7 +76,7 @@ static INDEX: OnceCell<Result<Arc<CodeIndex>, String>> = OnceCell::const_new();
 /// The cached survey. The first caller pays for it (tens of seconds on a
 /// large workspace — rust-analyzer loads the whole workspace); everyone
 /// after answers from memory.
-pub async fn index() -> Result<Arc<CodeIndex>, String> {
+pub(crate) async fn index() -> Result<Arc<CodeIndex>, String> {
     INDEX
         .get_or_init(|| async {
             tokio::task::spawn_blocking(|| {
@@ -158,7 +158,7 @@ struct RefTarget {
 /// Where a reference comes from: (source file, source item, target).
 type RefSource = (u32, Option<u32>, RefTarget);
 
-pub fn survey(dir: &std::path::Path) -> Result<CodeIndex, String> {
+pub(crate) fn survey(dir: &std::path::Path) -> Result<CodeIndex, String> {
     let manifest = dir.join("Cargo.toml");
     if !manifest.exists() {
         return Err(format!(
@@ -270,7 +270,7 @@ fn survey_attached(
         starts.push(lines);
         sources.push(text);
         let mut items = Vec::new();
-        collect_items(source.syntax(), &ItemCtx::root(), &mut items);
+        collect_items(source.syntax(), &ItemScope::root(), &mut items);
         items.sort_by_key(|i| (i.range.start(), std::cmp::Reverse(i.range.end())));
         file.items = items;
     }
@@ -675,7 +675,7 @@ fn survey_attached(
     // The epoch's touch — the same diff the crate altitude reads. The full
     // diff stays around: the structural pass below reads base editions of the
     // changed files through it.
-    let diff = super::vcs::detect_diff(dir);
+    let diff = super::vcs::Diff::detect(dir);
     let changed: HashSet<String> = diff.changed_files.iter().cloned().collect();
 
     let files: Vec<FileInfo> = raw
@@ -900,7 +900,7 @@ fn impl_header(i: &ast::Impl) -> String {
 }
 
 /// What the item walk carries down the tree.
-struct ItemCtx {
+struct ItemScope {
     /// Inline-module path (`tests::`).
     prefix: String,
     /// The enclosing impl or trait header, for display.
@@ -914,7 +914,7 @@ struct ItemCtx {
     inherited: Option<Vis>,
 }
 
-impl ItemCtx {
+impl ItemScope {
     fn root() -> Self {
         Self {
             prefix: String::new(),
@@ -946,7 +946,7 @@ impl ItemCtx {
 /// Collect the file's items in tree order. Inline modules contribute their
 /// path to item names but are not containers at this altitude: their items
 /// stay on the file's own shelf.
-fn collect_items(node: &SyntaxNode, ctx: &ItemCtx, out: &mut Vec<RawItem>) {
+fn collect_items(node: &SyntaxNode, ctx: &ItemScope, out: &mut Vec<RawItem>) {
     for child in node.children() {
         let name_of = |n: Option<ast::Name>| n.map(|n| n.text().to_string());
         let range = child.text_range();
@@ -972,7 +972,7 @@ fn collect_items(node: &SyntaxNode, ctx: &ItemCtx, out: &mut Vec<RawItem>) {
                 let vis = ctx.vis(t.visibility());
                 out.push(ctx.item(&name, ItemKind::Trait, range, vis));
                 if let Some(list) = t.assoc_item_list() {
-                    let inner = ItemCtx {
+                    let inner = ItemScope {
                         prefix: ctx.prefix.clone(),
                         section: format!("trait {}{name}", ctx.prefix),
                         owner: Some(range),
@@ -1016,7 +1016,7 @@ fn collect_items(node: &SyntaxNode, ctx: &ItemCtx, out: &mut Vec<RawItem>) {
             {
                 let vis = ctx.vis(m.visibility());
                 out.push(ctx.item(&name, ItemKind::Mod, range, vis));
-                let inner = ItemCtx {
+                let inner = ItemScope {
                     prefix: format!("{}{name}::", ctx.prefix),
                     section: ctx.section.clone(),
                     owner: ctx.owner,
@@ -1032,7 +1032,7 @@ fn collect_items(node: &SyntaxNode, ctx: &ItemCtx, out: &mut Vec<RawItem>) {
             item.name = header.clone();
             out.push(item);
             if let Some(list) = i.assoc_item_list() {
-                let inner = ItemCtx {
+                let inner = ItemScope {
                     prefix: ctx.prefix.clone(),
                     section: header,
                     owner: Some(range),
@@ -1062,7 +1062,7 @@ fn item_at(items: &[RawItem], offset: TextSize) -> Option<u32> {
 }
 
 /// What one name in the source turned out to be.
-enum Named {
+enum Resolved {
     /// It resolved to something this survey charts.
     Target(RefTarget),
     /// It resolved, but not to anything the chart holds: a local, a `Vec`, a
@@ -1119,11 +1119,11 @@ fn scan_refs(
             continue;
         }
         match resolve_name(sema, db, vfs, root, file_of, raw, &tok) {
-            Named::Target(target) => {
+            Resolved::Target(target) => {
                 record(acc, spans, src_items, src_file, tok.text_range(), target);
             }
-            Named::Elsewhere => {}
-            Named::Missed => {
+            Resolved::Elsewhere => {}
+            Resolved::Missed => {
                 if countable(&tok) {
                     *unresolved += 1;
                 }
@@ -1176,7 +1176,7 @@ fn resolve_name(
     file_of: &HashMap<FileId, u32>,
     raw: &[RawFile],
     tok: &SyntaxToken,
-) -> Named {
+) -> Resolved {
     // In place first: it costs nothing and answers for most of the code.
     if let Some(named) = resolve_at(sema, db, vfs, root, file_of, raw, tok) {
         return named;
@@ -1186,7 +1186,7 @@ fn resolve_name(
             return named;
         }
     }
-    Named::Missed
+    Resolved::Missed
 }
 
 /// Read one name token exactly where it sits. `None` means this position has no
@@ -1201,10 +1201,10 @@ fn resolve_at(
     file_of: &HashMap<FileId, u32>,
     raw: &[RawFile],
     tok: &SyntaxToken,
-) -> Option<Named> {
+) -> Option<Resolved> {
     let landed = |def: ModuleDef| match def_target(sema, db, vfs, root, file_of, raw, def) {
-        Some(target) => Named::Target(target),
-        None => Named::Elsewhere,
+        Some(target) => Resolved::Target(target),
+        None => Resolved::Elsewhere,
     };
     let name_ref = tok.parent().and_then(ast::NameRef::cast)?;
     let parent = name_ref.syntax().parent()?;
@@ -1213,7 +1213,7 @@ fn resolve_at(
             let call = ast::MethodCallExpr::cast(parent)?;
             // `a.b(c)` also holds `c`; only the method's own name is the call.
             if !same_node(call.name_ref(), &name_ref) {
-                return Some(Named::Elsewhere);
+                return Some(Resolved::Elsewhere);
             }
             let f = sema.resolve_method_call(&call)?;
             Some(landed(f.into()))
@@ -1221,12 +1221,12 @@ fn resolve_at(
         SyntaxKind::FIELD_EXPR => {
             let field = ast::FieldExpr::cast(parent)?;
             if !same_node(field.name_ref(), &name_ref) {
-                return Some(Named::Elsewhere);
+                return Some(Resolved::Elsewhere);
             }
             // Tuple-field access (`pair.0`) has no named target; only a real
             // field names its parent type.
             let Some(f) = sema.resolve_field(&field)?.left() else {
-                return Some(Named::Elsewhere);
+                return Some(Resolved::Elsewhere);
             };
             let adt: Adt = match f.parent_def(db) {
                 Variant::Struct(s) => Adt::Struct(s),
@@ -1244,20 +1244,20 @@ fn resolve_at(
                 path = up;
             }
             if !same_node(path.segment(), &seg) {
-                return Some(Named::Elsewhere);
+                return Some(Resolved::Elsewhere);
             }
             match sema.resolve_path(&path)? {
                 PathResolution::Def(def) => Some(landed(def)),
                 PathResolution::SelfType(imp) => Some(match imp.self_ty(db).as_adt() {
                     Some(adt) => landed(adt.into()),
-                    None => Named::Elsewhere,
+                    None => Resolved::Elsewhere,
                 }),
-                _ => Some(Named::Elsewhere),
+                _ => Some(Resolved::Elsewhere),
             }
         }
         // A name in any other position — a struct literal's field, a record
         // pattern's — is charted by the path beside it, not twice.
-        _ => Some(Named::Elsewhere),
+        _ => Some(Resolved::Elsewhere),
     }
 }
 
@@ -1373,115 +1373,117 @@ fn target_at(
 // The definition plate: an item's own source, quoted.
 // ---------------------------------------------------------------------------
 
-/// One item's source text, dedented and lexed into coloured runs — what Go to
-/// Definition lands on. The plate quotes the file whole: nothing is rewritten
-/// or cut. Every run whose name resolved to something in the workspace
-/// carries a link, so the quoted code navigates like the code it quotes.
-pub fn item_source(idx: &CodeIndex, file: u32, item: u32) -> Option<ItemSource> {
-    let info = idx.details.get(file as usize)?.items.get(item as usize)?;
-    let text = idx.sources.get(file as usize)?;
-    let path = idx.graph.files.get(file as usize)?.path.clone();
+impl CodeIndex {
+    /// One item's source text, dedented and lexed into coloured runs — what Go to
+    /// Definition lands on. The plate quotes the file whole: nothing is rewritten
+    /// or cut. Every run whose name resolved to something in the workspace
+    /// carries a link, so the quoted code navigates like the code it quotes.
+    pub(crate) fn item_source(&self, file: u32, item: u32) -> Option<ItemSource> {
+        let info = self.details.get(file as usize)?.items.get(item as usize)?;
+        let text = self.sources.get(file as usize)?;
+        let path = self.graph.files.get(file as usize)?.path.clone();
 
-    let (start, end) = (info.start as usize, info.end as usize);
-    if start > end
-        || end > text.len()
-        || !text.is_char_boundary(start)
-        || !text.is_char_boundary(end)
-    {
-        return None;
-    }
+        let (start, end) = (info.start as usize, info.end as usize);
+        if start > end
+            || end > text.len()
+            || !text.is_char_boundary(start)
+            || !text.is_char_boundary(end)
+        {
+            return None;
+        }
 
-    // A method inside an impl starts mid-line: give it back the indent its own
-    // line begins with before stripping what every line shares, or its first
-    // line hangs out to the left of its body.
-    let bol = text[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
-    let indent = &text[bol..start];
-    let restored = indent.is_empty() || indent.chars().all(char::is_whitespace);
-    let mut snippet = String::with_capacity(end - start + indent.len());
-    if restored {
-        snippet.push_str(indent);
-    }
-    snippet.push_str(&text[start..end]);
-    let common = common_indent(&snippet);
-    let mut lines: Vec<Vec<SrcRun>> = lex_lines(&dedent(&snippet, common))
-        .into_iter()
-        .map(|line| {
-            line.into_iter()
-                .map(|(text, tok)| SrcRun {
-                    text,
-                    tok,
-                    link: None,
-                })
-                .collect()
-        })
-        .collect();
+        // A method inside an impl starts mid-line: give it back the indent its own
+        // line begins with before stripping what every line shares, or its first
+        // line hangs out to the left of its body.
+        let bol = text[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
+        let indent = &text[bol..start];
+        let restored = indent.is_empty() || indent.chars().all(char::is_whitespace);
+        let mut snippet = String::with_capacity(end - start + indent.len());
+        if restored {
+            snippet.push_str(indent);
+        }
+        snippet.push_str(&text[start..end]);
+        let common = common_indent(&snippet);
+        let mut lines: Vec<Vec<SrcRun>> = lex_lines(&dedent(&snippet, common))
+            .into_iter()
+            .map(|line| {
+                line.into_iter()
+                    .map(|(text, tok)| SrcRun {
+                        text,
+                        tok,
+                        link: None,
+                    })
+                    .collect()
+            })
+            .collect();
 
-    // Attach the file's clickable spans to the runs they name. A span's
-    // position translates from file bytes to plate bytes by the line it is on
-    // and the indent the plate stripped; a span that does not land cleanly on
-    // one run is silently left unlinked rather than guessed at.
-    let own_label = if info.section.is_empty() {
-        info.name.clone()
-    } else {
-        format!("{}::{}", section_type(&info.section), info.name)
-    };
-    let starts = LineStarts::new(text);
-    let mut links: Vec<SrcLink> = Vec::new();
-    let mut link_of: HashMap<(u32, String), u32> = HashMap::new();
-    for span in &idx.ref_spans[file as usize] {
-        if (span.start as usize) < start || (span.end as usize) > end {
-            continue;
-        }
-        // The quoted item linking to itself would navigate nowhere.
-        if span.file == file && span.label == own_label {
-            continue;
-        }
-        let file_line = starts.line(TextSize::new(span.start));
-        let Some(li) = file_line.checked_sub(info.line) else {
-            continue;
+        // Attach the file's clickable spans to the runs they name. A span's
+        // position translates from file bytes to plate bytes by the line it is on
+        // and the indent the plate stripped; a span that does not land cleanly on
+        // one run is silently left unlinked rather than guessed at.
+        let own_label = if info.section.is_empty() {
+            info.name.clone()
+        } else {
+            format!("{}::{}", section_type(&info.section), info.name)
         };
-        let Some(line) = lines.get_mut(li as usize) else {
-            continue;
-        };
-        // When the first line's indent was not restored (non-whitespace
-        // before the item on its own line), its columns are shifted; skip
-        // rather than mislink.
-        if li == 0 && !restored {
-            continue;
-        }
-        let Some(col) = starts
-            .start_of(file_line)
-            .and_then(|ls| span.start.checked_sub(ls))
-            .and_then(|c| c.checked_sub(common as u32))
-        else {
-            continue;
-        };
-        let (col, len) = (col as usize, (span.end - span.start) as usize);
-        // The name token lexes as exactly one run, so full containment is the
-        // normal case; runs are never split.
-        let mut at = 0usize;
-        for run in line.iter_mut() {
-            if at >= col && at + run.text.len() <= col + len {
-                let key = (span.file, span.label.clone());
-                let id = *link_of.entry(key).or_insert_with(|| {
-                    links.push(SrcLink {
-                        path: idx.graph.files[span.file as usize].path.clone(),
-                        label: span.label.clone(),
-                    });
-                    links.len() as u32 - 1
-                });
-                run.link = Some(id);
+        let starts = LineStarts::new(text);
+        let mut links: Vec<SrcLink> = Vec::new();
+        let mut link_of: HashMap<(u32, String), u32> = HashMap::new();
+        for span in &self.ref_spans[file as usize] {
+            if (span.start as usize) < start || (span.end as usize) > end {
+                continue;
             }
-            at += run.text.len();
+            // The quoted item linking to itself would navigate nowhere.
+            if span.file == file && span.label == own_label {
+                continue;
+            }
+            let file_line = starts.line(TextSize::new(span.start));
+            let Some(li) = file_line.checked_sub(info.line) else {
+                continue;
+            };
+            let Some(line) = lines.get_mut(li as usize) else {
+                continue;
+            };
+            // When the first line's indent was not restored (non-whitespace
+            // before the item on its own line), its columns are shifted; skip
+            // rather than mislink.
+            if li == 0 && !restored {
+                continue;
+            }
+            let Some(col) = starts
+                .start_of(file_line)
+                .and_then(|ls| span.start.checked_sub(ls))
+                .and_then(|c| c.checked_sub(common as u32))
+            else {
+                continue;
+            };
+            let (col, len) = (col as usize, (span.end - span.start) as usize);
+            // The name token lexes as exactly one run, so full containment is the
+            // normal case; runs are never split.
+            let mut at = 0usize;
+            for run in line.iter_mut() {
+                if at >= col && at + run.text.len() <= col + len {
+                    let key = (span.file, span.label.clone());
+                    let id = *link_of.entry(key).or_insert_with(|| {
+                        links.push(SrcLink {
+                            path: self.graph.files[span.file as usize].path.clone(),
+                            label: span.label.clone(),
+                        });
+                        links.len() as u32 - 1
+                    });
+                    run.link = Some(id);
+                }
+                at += run.text.len();
+            }
         }
-    }
 
-    Some(ItemSource {
-        path,
-        first_line: info.line,
-        lines,
-        links,
-    })
+        Some(ItemSource {
+            path,
+            first_line: info.line,
+            lines,
+            links,
+        })
+    }
 }
 
 /// The indent every non-blank line shares, in bytes — what [`dedent`] strips.

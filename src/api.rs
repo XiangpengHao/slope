@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 /// Which cargo dependency table an edge comes from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum DepKind {
+pub(crate) enum DepKind {
     Normal,
     Dev,
     Build,
@@ -19,7 +19,7 @@ pub enum DepKind {
 /// working copy. These are first-class review events: an LLM adding or
 /// bumping a dependency must be impossible to miss.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub enum DepEvent {
+pub(crate) enum DepEvent {
     Added,
     Removed,
     /// Version requirement changed: (old, new).
@@ -28,83 +28,83 @@ pub enum DepEvent {
 
 /// One crate in the resolved graph.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CrateInfo {
+pub(crate) struct CrateInfo {
     /// Stable node id: `name@version` (`name` alone for ghosts).
-    pub id: String,
-    pub name: String,
-    pub version: String,
+    pub(crate) id: String,
+    pub(crate) name: String,
+    pub(crate) version: String,
     /// Member of the workspace (vs an external dependency).
-    pub is_member: bool,
+    pub(crate) is_member: bool,
     /// Files under this member's directory changed in the epoch.
-    pub changed: bool,
-    pub changed_files: u32,
+    pub(crate) changed: bool,
+    pub(crate) changed_files: u32,
     /// This member's Cargo.toml changed in the epoch.
-    pub manifest_changed: bool,
+    pub(crate) manifest_changed: bool,
     /// Minimum hops downstream from a changed crate. `Some(0)` = changed
     /// itself; `None` = untouched by the epoch.
-    pub affected_dist: Option<u32>,
+    pub(crate) affected_dist: Option<u32>,
     /// How many crates in the resolved graph depend on this one. Drives the
     /// star's magnitude.
-    pub dependents: u32,
+    pub(crate) dependents: u32,
     /// Direct dependencies.
-    pub direct_deps: u32,
+    pub(crate) direct_deps: u32,
     /// Direct dependencies that are external (non-member) crates.
-    pub external_deps: u32,
+    pub(crate) external_deps: u32,
     /// Only present as the target of a removed dependency; no longer in the
     /// resolved graph.
-    pub ghost: bool,
+    pub(crate) ghost: bool,
     /// The manifest's own words about itself, when it has any.
-    pub description: Option<String>,
+    pub(crate) description: Option<String>,
     /// SPDX license expression from the manifest.
-    pub license: Option<String>,
+    pub(crate) license: Option<String>,
     /// Declared source repository, the link a reviewer wants most.
-    pub repository: Option<String>,
-    pub homepage: Option<String>,
+    pub(crate) repository: Option<String>,
+    pub(crate) homepage: Option<String>,
     /// Declared docs URL; externals from crates.io get a docs.rs link even
     /// without one.
-    pub documentation: Option<String>,
+    pub(crate) documentation: Option<String>,
     /// Resolved from crates.io, so the registry and docs.rs both have a page
     /// for this exact version.
-    pub crates_io: bool,
+    pub(crate) crates_io: bool,
     /// A member's directory, relative to the workspace root — where to look
     /// for the change on disk. `None` for externals.
-    pub rel_path: Option<String>,
+    pub(crate) rel_path: Option<String>,
 }
 
 /// A dependency edge: `from` depends on `to`. Both reference [`CrateInfo::id`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct DepLink {
-    pub from: String,
-    pub to: String,
-    pub kind: DepKind,
-    pub event: Option<DepEvent>,
+pub(crate) struct DepLink {
+    pub(crate) from: String,
+    pub(crate) to: String,
+    pub(crate) kind: DepKind,
+    pub(crate) event: Option<DepEvent>,
 }
 
 /// The diff window the chart reads against.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct Epoch {
+pub(crate) struct Epoch {
     /// Human-readable base, e.g. `main @ 1a2b3c4`.
-    pub base: String,
+    pub(crate) base: String,
     /// Human-readable target, normally `working copy`.
-    pub target: String,
+    pub(crate) target: String,
     /// Why change tracking is off or degraded, in plain words.
-    pub note: Option<String>,
+    pub(crate) note: Option<String>,
 }
 
 /// The full analysis result: every resolved crate and edge, plus the diff.
 /// The client decides what to draw; it never receives less than the truth.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkspaceGraph {
+pub(crate) struct WorkspaceGraph {
     /// Workspace display name (root directory name).
-    pub name: String,
+    pub(crate) name: String,
     /// Absolute workspace root path.
-    pub root: String,
+    pub(crate) root: String,
     /// Node id of the workspace's root package, when it has one. A virtual
     /// workspace (members only, no root package) has none.
-    pub root_crate: Option<String>,
-    pub epoch: Epoch,
-    pub crates: Vec<CrateInfo>,
-    pub links: Vec<DepLink>,
+    pub(crate) root_crate: Option<String>,
+    pub(crate) epoch: Epoch,
+    pub(crate) crates: Vec<CrateInfo>,
+    pub(crate) links: Vec<DepLink>,
 }
 
 /// Analyze the target workspace: resolved dependency graph via
@@ -112,7 +112,7 @@ pub struct WorkspaceGraph {
 /// `SLOPE_WORKSPACE` (falling back to the server's working directory);
 /// `SLOPE_BASE` overrides the diff base revision.
 #[server]
-pub async fn workspace_graph() -> Result<WorkspaceGraph, ServerFnError> {
+pub(crate) async fn workspace_graph() -> Result<WorkspaceGraph, ServerFnError> {
     tokio::task::spawn_blocking(crate::analyze::analyze)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?
@@ -125,7 +125,7 @@ pub async fn workspace_graph() -> Result<WorkspaceGraph, ServerFnError> {
 
 /// What kind of thing one item in a file is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum ItemKind {
+pub(crate) enum ItemKind {
     Fn,
     Struct,
     Enum,
@@ -146,7 +146,7 @@ pub enum ItemKind {
 /// `pub(in path)` are not `pub`: the altitude's interest bar reads them
 /// apart, and privacy is a permanent fold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum Vis {
+pub(crate) enum Vis {
     /// `pub` — visible outside its own crate.
     Pub,
     /// `pub(crate)`, `pub(super)`, `pub(in path)`.
@@ -158,7 +158,7 @@ pub enum Vis {
 impl Vis {
     /// Weight the interest bar adds for visibility: the wider the door, the
     /// more the map owes the reader a name.
-    pub fn weight(self) -> u32 {
+    pub(crate) fn weight(self) -> u32 {
         match self {
             Vis::Pub => 2,
             Vis::Crate => 1,
@@ -168,7 +168,7 @@ impl Vis {
 
     /// The visibility as rust writes it. Private declares nothing, so it has
     /// no keyword: rust writes nothing at all, and so does the interface.
-    pub fn keyword(self) -> Option<&'static str> {
+    pub(crate) fn keyword(self) -> Option<&'static str> {
         match self {
             Vis::Pub => Some("pub"),
             Vis::Crate => Some("pub(crate)"),
@@ -177,7 +177,7 @@ impl Vis {
     }
 
     /// The same fact in a sentence, for tooltips and titles.
-    pub fn words(self) -> &'static str {
+    pub(crate) fn words(self) -> &'static str {
         match self {
             Vis::Pub => "pub",
             Vis::Crate => "pub(crate)",
@@ -188,30 +188,30 @@ impl Vis {
 
 /// One source file in the workspace.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FileInfo {
+pub(crate) struct FileInfo {
     /// Stable within one analysis: index into [`CodeGraph::files`].
-    pub id: u32,
+    pub(crate) id: u32,
     /// Path relative to the workspace root, e.g. `src/views/atlas.rs`.
-    pub path: String,
+    pub(crate) path: String,
     /// Name of the crate this file belongs to.
-    pub krate: String,
+    pub(crate) krate: String,
     /// Touched between the epoch base and the working copy.
-    pub changed: bool,
-    pub lines: u32,
+    pub(crate) changed: bool,
+    pub(crate) lines: u32,
     /// How many items the file defines (functions, types, traits, …).
-    pub items: u32,
+    pub(crate) items: u32,
     /// How many other files reference this one. Drives the mark's magnitude:
     /// the more of the workspace leans on a file, the bigger its star.
-    pub refs_in_files: u32,
+    pub(crate) refs_in_files: u32,
 }
 
 /// A file-level reference edge: `from` uses something defined in `to`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FileRef {
-    pub from: u32,
-    pub to: u32,
+pub(crate) struct FileRef {
+    pub(crate) from: u32,
+    pub(crate) to: u32,
     /// Resolved references aggregated over the whole file pair.
-    pub count: u32,
+    pub(crate) count: u32,
 }
 
 /// How an item's own declaration differs from the diff base — the structural
@@ -221,7 +221,7 @@ pub struct FileRef {
 /// says nothing about what it cannot see. Items the base already had, in
 /// files the diff never touched, are `Same` by construction.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Delta {
+pub(crate) enum Delta {
     /// Written at the base exactly as it is now.
     #[default]
     Same,
@@ -235,7 +235,7 @@ pub enum Delta {
 /// did not have; `Removed` edges are re-drawn from the base edition and exist
 /// only as diff ink — the working copy no longer has the field that drew them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum HoldEvent {
+pub(crate) enum HoldEvent {
     Added,
     Removed,
 }
@@ -246,30 +246,30 @@ pub enum HoldEvent {
 /// vanishing. Its `id` continues after [`CodeGraph::items`], so a
 /// [`HoldEdge`] can land on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct GhostMark {
+pub(crate) struct GhostMark {
     /// `items.len() + index into ghosts` — one id space with the live marks.
-    pub id: u32,
+    pub(crate) id: u32,
     /// The file that declared it at the base, relative to the workspace root.
     /// The file itself may be gone too.
-    pub path: String,
+    pub(crate) path: String,
     /// The crate that file belongs to.
-    pub krate: String,
-    pub name: String,
-    pub kind: ItemKind,
-    pub vis: Vis,
+    pub(crate) krate: String,
+    pub(crate) name: String,
+    pub(crate) kind: ItemKind,
+    pub(crate) vis: Vis,
     /// 1-based line in the base edition of the file.
-    pub line: u32,
+    pub(crate) line: u32,
     /// Fields — or a function's parameters — as the base wrote them:
     /// (name, declared type).
-    pub field_rows: Vec<(String, String)>,
+    pub(crate) field_rows: Vec<(String, String)>,
     /// An enum's variants as the base wrote them.
-    pub variants: Vec<String>,
+    pub(crate) variants: Vec<String>,
     /// A static's declared type, or a function's return type, at the base.
-    pub ty: String,
+    pub(crate) ty: String,
     /// The methods the base wrote for it, quoted as (name, signature). A
     /// ghost's band is drawn whole: the base edition is all there is of it,
     /// so nothing here is gated on a door.
-    pub method_rows: Vec<(String, String)>,
+    pub(crate) method_rows: Vec<(String, String)>,
 }
 
 /// One method of a type, as the surface reads it: a clause of the contract
@@ -277,99 +277,99 @@ pub struct GhostMark {
 /// a method belongs to its type the way a field does, and giving each one a
 /// block would bury the shapes under their own API.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MethodRow {
+pub(crate) struct MethodRow {
     /// The method's own name, which is what its edges and its callers file
     /// under.
-    pub name: String,
+    pub(crate) name: String,
     /// The signature exactly as written, from the `fn` keyword's line through
     /// the return type, whitespace collapsed — visibility included, body and
     /// doc comment left where they are.
-    pub sig: String,
+    pub(crate) sig: String,
     /// As the method declares it. A door decides whether the row is drawn,
     /// and that decision is the client's.
-    pub vis: Vis,
+    pub(crate) vis: Vis,
     /// Declared in an `impl Trait for Type` block. Such a method carries no
     /// `pub` of its own and is not private for it: it is callable wherever
     /// the trait is, so the surface reads it as published.
-    pub via_trait: bool,
+    pub(crate) via_trait: bool,
     /// Its own [`ItemMark::id`] — so a reference the survey resolved to the
     /// method itself can be filed under this row rather than blurred into
     /// its type.
-    pub mark: u32,
+    pub(crate) mark: u32,
 }
 
 /// One landmark the map may engrave: an item, seated in the containment tree
 /// (crate → directory → file → type → method), with the weight that decides
 /// whether it clears the altitude's bar.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ItemMark {
+pub(crate) struct ItemMark {
     /// Index into [`CodeGraph::items`].
-    pub id: u32,
+    pub(crate) id: u32,
     /// The file whose source defines it.
-    pub file: u32,
+    pub(crate) file: u32,
     /// Index into that file's [`FileDetail::items`].
-    pub local: u32,
+    pub(crate) local: u32,
     /// Display name, without any section prefix.
-    pub name: String,
+    pub(crate) name: String,
     /// The label this item selects by in a URL: `Type::method` inside a
     /// section, the plain name otherwise.
-    pub label: String,
-    pub kind: ItemKind,
-    pub vis: Vis,
-    pub line: u32,
+    pub(crate) label: String,
+    pub(crate) kind: ItemKind,
+    pub(crate) vis: Vis,
+    pub(crate) line: u32,
     /// Semantic container: the type a method or associated item belongs to,
     /// resolved through the impl's self type even when the impl sits in
     /// another file. `None` for items the file itself contains.
-    pub parent: Option<u32>,
+    pub(crate) parent: Option<u32>,
     /// Item-level references reaching it from other files. Drives the
     /// engraved weight of its mark.
-    pub fan_in: u32,
+    pub(crate) fan_in: u32,
     /// Hand-written trait impls of this type, as their headers are written
     /// (`impl Clone for Vis`), gathered from every impl anywhere in the
     /// workspace. Derives are not here: they stand in the type's own source,
     /// and a derive is not code anyone wrote.
-    pub impls: Vec<String>,
+    pub(crate) impls: Vec<String>,
     /// A struct's or union's fields — or a free function's parameters —
     /// quoted from source in declaration order: the name as written (a tuple
     /// field's is its index, a parameter's is its pattern) and the declared
     /// type as written. The data chart quotes them all — what a field or a
     /// parameter reaches is on the holds edges. Empty for everything else.
-    pub field_rows: Vec<(String, String)>,
+    pub(crate) field_rows: Vec<(String, String)>,
     /// An enum's variants as written, in source order — name, payload types,
     /// and discriminant included. Empty for everything that is not an enum.
-    pub variants: Vec<String>,
+    pub(crate) variants: Vec<String>,
     /// A static's declared type or a free function's return type, as written.
     /// Empty for everything else, and for a function that returns nothing.
-    pub ty: String,
+    pub(crate) ty: String,
     /// The methods declared for this type anywhere in the workspace, in the
     /// survey's order — the second band of its block. Every one of them is
     /// here, whatever its visibility: which ones are rows is a door, and a
     /// door is the client's to set. Empty for everything that is not a type.
-    pub method_rows: Vec<MethodRow>,
+    pub(crate) method_rows: Vec<MethodRow>,
     /// How this declaration differs from the diff base.
-    pub delta: Delta,
+    pub(crate) delta: Delta,
     /// Fields added since the base: indexes into `field_rows`.
-    pub fields_added: Vec<u32>,
+    pub(crate) fields_added: Vec<u32>,
     /// Fields the base had that the working copy dropped, quoted from the
     /// base: (insert before this index of `field_rows`, name, declared type).
-    pub fields_removed: Vec<(u32, String, String)>,
+    pub(crate) fields_removed: Vec<(u32, String, String)>,
     /// Variants added since the base: indexes into `variants`.
-    pub variants_added: Vec<u32>,
+    pub(crate) variants_added: Vec<u32>,
     /// Variants the base had that the working copy dropped, quoted from the
     /// base: (insert before this index of `variants`, the variant as written).
-    pub variants_removed: Vec<(u32, String)>,
+    pub(crate) variants_removed: Vec<(u32, String)>,
     /// Methods added since the base: indexes into `method_rows`.
-    pub methods_added: Vec<u32>,
+    pub(crate) methods_added: Vec<u32>,
     /// Methods the base had that the working copy dropped, quoted from the
     /// base: (insert before this index of `method_rows`, name, signature).
-    pub methods_removed: Vec<(u32, String, String)>,
+    pub(crate) methods_removed: Vec<(u32, String, String)>,
 }
 
 /// What a row says about what it reaches: whether the dependent owns the
 /// value outright, shares a handle to it, only views it, names a trait
 /// instead of a type — or promises the trait's whole contract.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum HoldKind {
+pub(crate) enum HoldKind {
     /// No shared handle anywhere on the walk: the holder owns the value.
     /// Interior mutability alone (`Mutex`, `RefCell`) is still ownership.
     Owns,
@@ -393,33 +393,33 @@ pub enum HoldKind {
 /// names a workspace type the way a field does. Private types are here too
 /// — privacy folds the chart, it does not hide a fact from it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct HoldEdge {
+pub(crate) struct HoldEdge {
     /// The holder's [`ItemMark::id`]: a struct, an enum, a union, a static,
     /// or a free function whose signature names the held type.
-    pub from: u32,
+    pub(crate) from: u32,
     /// The held type's [`ItemMark::id`]. Equal to `from` when a type holds
     /// itself, which linked structures really do.
-    pub to: u32,
-    pub kind: HoldKind,
+    pub(crate) to: u32,
+    pub(crate) kind: HoldKind,
     /// The strongest wrapper met on the walk, in its own word (`Arc`, `Rc`,
     /// `Weak`, `Signal`, `&`, `&mut`, `dyn`); empty for a plain hold.
-    pub via: String,
+    pub(crate) via: String,
     /// Every field that draws this edge, quoted from source in declaration
     /// order: (name as written, declared type as written). A tuple field's
     /// name is its index; an enum payload's is its variant's name; a static's
     /// is the static's own name, and so is a free function's return type's.
     /// A method row's is the method's name, whichever part of its signature
     /// reached the target.
-    pub fields: Vec<(String, String)>,
+    pub(crate) fields: Vec<(String, String)>,
     /// The rows drawing this edge are `from`'s **methods**, not its fields:
     /// its API names the held type rather than keeping one. Aggregation
     /// splits on this, so a pair reached both ways draws both edges and
     /// neither reading has to be guessed at.
-    pub from_method: bool,
+    pub(crate) from_method: bool,
     /// This relation against the diff base: `None` = the base held it too.
     /// A `Removed` edge is not structure — the working copy no longer has the
     /// field that drew it — and either end may name a ghost.
-    pub event: Option<HoldEvent>,
+    pub(crate) event: Option<HoldEvent>,
 }
 
 /// A reference between two items, aggregated per pair. Endpoints carry their
@@ -427,29 +427,29 @@ pub struct HoldEdge {
 /// fold state without fetching item detail; a `None` item is a reference to a
 /// file as a whole (a `use` of its module).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ItemEdge {
-    pub from_file: u32,
-    pub from: Option<u32>,
-    pub to_file: u32,
-    pub to: Option<u32>,
-    pub count: u32,
+pub(crate) struct ItemEdge {
+    pub(crate) from_file: u32,
+    pub(crate) from: Option<u32>,
+    pub(crate) to_file: u32,
+    pub(crate) to: Option<u32>,
+    pub(crate) count: u32,
 }
 
 /// One `impl Trait for Type` between two marks the chart draws. The
 /// arrowhead rests on the type, as every family's does: the trait is the
 /// contract, and a change to it travels to everything that promised it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ImplEdge {
+pub(crate) struct ImplEdge {
     /// The trait's [`ItemMark::id`] — the tail.
-    pub trait_mark: u32,
+    pub(crate) trait_mark: u32,
     /// The implementing type's [`ItemMark::id`] — the dependent.
-    pub ty: u32,
+    pub(crate) ty: u32,
     /// The header as the impl writes it (`impl Clone for Vis`), for the
     /// sheet's row.
-    pub header: String,
+    pub(crate) header: String,
     /// This impl against the diff base. A workspace type promising a new
     /// contract, or dropping one, is the kind of change a reviewer came for.
-    pub event: Option<HoldEvent>,
+    pub(crate) event: Option<HoldEvent>,
 }
 
 /// A reference between two items of one file, at mark precision, summed. The
@@ -460,12 +460,12 @@ pub struct ImplEdge {
 /// reference was written in says nothing about whether one contract leans on
 /// another.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct MarkRef {
+pub(crate) struct MarkRef {
     /// The [`ItemMark::id`] whose body names the other. A reference written
     /// in an impl block belongs to the type the impl names.
-    pub from: u32,
-    pub to: u32,
-    pub count: u32,
+    pub(crate) from: u32,
+    pub(crate) to: u32,
+    pub(crate) count: u32,
 }
 
 /// The code-structure survey: every workspace source file, every resolved
@@ -473,74 +473,74 @@ pub struct MarkRef {
 /// engrave. Item *bodies* — fields, variants, signatures — ship separately,
 /// per file, when a focus asks for them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct CodeGraph {
-    pub files: Vec<FileInfo>,
-    pub refs: Vec<FileRef>,
+pub(crate) struct CodeGraph {
+    pub(crate) files: Vec<FileInfo>,
+    pub(crate) refs: Vec<FileRef>,
     /// Every chartable item, in (file, source) order. Impl blocks are not
     /// here: they are attribution, not geometry.
-    pub items: Vec<ItemMark>,
+    pub(crate) items: Vec<ItemMark>,
     /// Which workspace types implement which workspace traits, resolved
     /// through the impl's own self type and trait — never from the header
     /// text. An impl of a foreign trait, or for a foreign type, is not here:
     /// it stays a string on [`ItemMark::impls`], because it has no second end
     /// to land on.
-    pub implements: Vec<ImplEdge>,
+    pub(crate) implements: Vec<ImplEdge>,
     /// Cross-file references at item precision, aggregated per pair.
-    pub item_edges: Vec<ItemEdge>,
+    pub(crate) item_edges: Vec<ItemEdge>,
     /// The references the pair above cannot carry: two items of one file,
     /// both ends a mark. Together the two lists are every resolved reference
     /// the survey placed at item precision.
-    pub local_refs: Vec<MarkRef>,
+    pub(crate) local_refs: Vec<MarkRef>,
     /// Which type holds which, and through what wrapper — the data
     /// altitude's structure. Every surveyed type is here, private ones
     /// included. Edges carrying a [`HoldEvent`] are the structural diff's:
     /// `Removed` ones are re-drawn from the base edition.
-    pub holds: Vec<HoldEdge>,
+    pub(crate) holds: Vec<HoldEdge>,
     /// Types, statics, and free functions the base had that the working copy
     /// dropped. Their ids continue after `items`, so `holds` can land on them.
-    pub ghosts: Vec<GhostMark>,
+    pub(crate) ghosts: Vec<GhostMark>,
     /// Names the survey could not resolve (type-inference limits). They are
     /// not on the chart; the words on the plate must say so.
-    pub unresolved: u32,
+    pub(crate) unresolved: u32,
     /// What the survey could not read about **references**, in plain words —
     /// the code map's limits, and the limits of the dashed ink at every
     /// altitude that draws it.
-    pub notes: Vec<String>,
+    pub(crate) notes: Vec<String>,
     /// What the survey could not read about the **holds walk**, in plain words
     /// — the surface and data charts' limits. Kept apart from `notes` so a
     /// legend states the limits of the ink it actually draws, and so no legend
     /// has to paraphrase the survey in prose of its own.
-    pub walk_notes: Vec<String>,
+    pub(crate) walk_notes: Vec<String>,
 }
 
 /// One item inside a file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ItemInfo {
+pub(crate) struct ItemInfo {
     /// Index into [`FileDetail::items`].
-    pub id: u32,
+    pub(crate) id: u32,
     /// Display name; inline-module items carry their path (`tests::sample`).
-    pub name: String,
+    pub(crate) name: String,
     /// The impl or trait header this item sits under, e.g. `impl Trail`;
     /// empty for top-level items.
-    pub section: String,
-    pub kind: ItemKind,
+    pub(crate) section: String,
+    pub(crate) kind: ItemKind,
     /// 1-based line in the source file.
-    pub line: u32,
-    pub vis: Vis,
+    pub(crate) line: u32,
+    pub(crate) vis: Vis,
     /// Index into [`CodeGraph::items`]; `None` for impl blocks.
-    pub mark: Option<u32>,
+    pub(crate) mark: Option<u32>,
     /// Byte offsets of the item's own source text, doc comment and attributes
     /// included. The focus plate quotes exactly this range.
-    pub start: u32,
-    pub end: u32,
+    pub(crate) start: u32,
+    pub(crate) end: u32,
 }
 
 /// A reference between two items of the same file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ItemRef {
-    pub from: u32,
-    pub to: u32,
-    pub count: u32,
+pub(crate) struct ItemRef {
+    pub(crate) from: u32,
+    pub(crate) to: u32,
+    pub(crate) count: u32,
 }
 
 /// Everything the cutaway needs for one file: its items in source order and
@@ -548,11 +548,11 @@ pub struct ItemRef {
 /// on [`CodeGraph::item_edges`], where the map can lift them to any fold state
 /// without fetching a file's detail at all.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct FileDetail {
-    pub file: u32,
-    pub items: Vec<ItemInfo>,
+pub(crate) struct FileDetail {
+    pub(crate) file: u32,
+    pub(crate) items: Vec<ItemInfo>,
     /// References between this file's own items.
-    pub item_refs: Vec<ItemRef>,
+    pub(crate) item_refs: Vec<ItemRef>,
 }
 
 /// Survey the workspace's code structure with rust-analyzer: every workspace
@@ -560,7 +560,7 @@ pub struct FileDetail {
 /// call runs the survey (tens of seconds on a large workspace); later calls
 /// answer from the cache.
 #[server]
-pub async fn code_graph() -> Result<CodeGraph, ServerFnError> {
+pub(crate) async fn code_graph() -> Result<CodeGraph, ServerFnError> {
     crate::analyze::code::index()
         .await
         .map(|idx| idx.graph.clone())
@@ -570,7 +570,7 @@ pub async fn code_graph() -> Result<CodeGraph, ServerFnError> {
 /// One file's cutaway: items and item-level references. `file` is the id the
 /// last [`code_graph`] call handed out.
 #[server]
-pub async fn file_detail(file: u32) -> Result<FileDetail, ServerFnError> {
+pub(crate) async fn file_detail(file: u32) -> Result<FileDetail, ServerFnError> {
     let idx = crate::analyze::code::index()
         .await
         .map_err(ServerFnError::new)?;
@@ -583,7 +583,7 @@ pub async fn file_detail(file: u32) -> Result<FileDetail, ServerFnError> {
 /// What one run of source text is, for colouring. The classes are a lexer's,
 /// not a palette's: the client decides how each one is inked.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum Tok {
+pub(crate) enum Tok {
     /// A rust keyword.
     Kw,
     Comment,
@@ -610,20 +610,20 @@ pub enum Tok {
 /// is a resolved reference to something in the workspace — where it goes,
 /// as an index into [`ItemSource::links`].
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SrcRun {
-    pub text: String,
-    pub tok: Tok,
-    pub link: Option<u32>,
+pub(crate) struct SrcRun {
+    pub(crate) text: String,
+    pub(crate) tok: Tok,
+    pub(crate) link: Option<u32>,
 }
 
 /// Where a clickable run of quoted source navigates.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SrcLink {
+pub(crate) struct SrcLink {
     /// Target file path relative to the workspace root.
-    pub path: String,
+    pub(crate) path: String,
     /// Target item's URL label (`Type::method`), matching [`ItemMark::label`];
     /// empty when the reference targets the file as a whole.
-    pub label: String,
+    pub(crate) label: String,
 }
 
 /// One item's own source text, lexed into coloured runs — what Go to
@@ -631,26 +631,26 @@ pub struct SrcLink {
 /// it, so nothing here is reconstructed: the runs concatenate back to exactly
 /// the bytes on disk, minus the shared indent every line was stripped of.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct ItemSource {
+pub(crate) struct ItemSource {
     /// Path relative to the workspace root, for the locator.
-    pub path: String,
+    pub(crate) path: String,
     /// 1-based line the first quoted line is, in the real file. Equal to
     /// [`ItemInfo::line`].
-    pub first_line: u32,
+    pub(crate) first_line: u32,
     /// Per line, its runs of text in order. A run whose name resolved to
     /// something in the workspace carries a link.
-    pub lines: Vec<Vec<SrcRun>>,
+    pub(crate) lines: Vec<Vec<SrcRun>>,
     /// The navigation targets the runs link to, deduplicated.
-    pub links: Vec<SrcLink>,
+    pub(crate) links: Vec<SrcLink>,
 }
 
 /// One item's source, lexed. `file` is a [`FileInfo::id`] and `item` is that
 /// item's [`ItemMark::local`] index inside the file.
 #[server]
-pub async fn item_source(file: u32, item: u32) -> Result<ItemSource, ServerFnError> {
+pub(crate) async fn item_source(file: u32, item: u32) -> Result<ItemSource, ServerFnError> {
     let idx = crate::analyze::code::index()
         .await
         .map_err(ServerFnError::new)?;
-    crate::analyze::code::item_source(&idx, file, item)
+    idx.item_source(file, item)
         .ok_or_else(|| ServerFnError::new(format!("no item {item} in file {file} in this survey")))
 }

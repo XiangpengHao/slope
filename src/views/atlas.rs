@@ -17,7 +17,7 @@ use dioxus_flow::prelude::{
 };
 
 use crate::api::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
-use crate::views::radial::{DEFAULT_CAP, RadialLayout, radial_layout};
+use crate::views::radial::{DEFAULT_CAP, RadialLayout};
 use crate::views::shell::{DirFilter, step_ring, use_atlas, use_graph};
 use crate::views::star::{StarData, StarNode, star_box, star_radius};
 
@@ -150,189 +150,191 @@ fn uphill_from<'g>(graph: &'g WorkspaceGraph, sel_ids: &HashSet<&'g str>) -> Has
     seen
 }
 
-/// Derive the drawn chart. Every placed crate is always on the chart as a
-/// star; what changes with the selection is which edges are drawn, which
-/// stars carry the focal ring, and which are named at rest.
-fn build_chart(
-    graph: &WorkspaceGraph,
-    layout: &RadialLayout,
-    sel_names: Vec<String>,
-    dir: DirFilter,
-    focused: bool,
-    ring: Option<u32>,
-) -> AtlasDrawing {
-    let sel: HashSet<&str> = sel_names.iter().map(String::as_str).collect();
-    let sel_ids: HashSet<&str> = graph
-        .crates
-        .iter()
-        .filter(|c| !c.ghost && sel.contains(c.name.as_str()))
-        .map(|c| c.id.as_str())
-        .collect();
+impl AtlasDrawing {
+    /// Derive the drawn chart. Every placed crate is always on the chart as a
+    /// star; what changes with the selection is which edges are drawn, which
+    /// stars carry the focal ring, and which are named at rest.
+    fn build(
+        graph: &WorkspaceGraph,
+        layout: &RadialLayout,
+        sel_names: Vec<String>,
+        dir: DirFilter,
+        focused: bool,
+        ring: Option<u32>,
+    ) -> Self {
+        let sel: HashSet<&str> = sel_names.iter().map(String::as_str).collect();
+        let sel_ids: HashSet<&str> = graph
+            .crates
+            .iter()
+            .filter(|c| !c.ghost && sel.contains(c.name.as_str()))
+            .map(|c| c.id.as_str())
+            .collect();
 
-    // "Path to root" draws a whole chain of crates, so it needs the
-    // transitive closure first; the other two readings only ever look at
-    // the selection's own edges.
-    let uphill: HashSet<&str> = match dir {
-        DirFilter::PathToRoot => uphill_from(graph, &sel_ids),
-        _ => HashSet::new(),
-    };
-
-    // The edge set: the selection's own edges in the toggled direction (or
-    // every hop of its routes to the root), plus every manifest event
-    // (always drawn). Everything else stays undrawn — the whole resolved
-    // graph at once is exactly the hairball this chart exists to refuse.
-    let mut pairs: HashMap<(&str, &str), (Role, DepKind, Option<DepEvent>)> = HashMap::new();
-    for link in &graph.links {
-        let (from, to) = (link.from.as_str(), link.to.as_str());
-        if !layout.placed.contains_key(from) || !layout.placed.contains_key(to) {
-            continue;
-        }
-        let from_sel = sel_ids.contains(from);
-        let to_sel = sel_ids.contains(to);
-        let wanted = match dir {
-            DirFilter::Deps => from_sel,
-            DirFilter::Users => to_sel,
-            // An edge is one hop of a route to the selection exactly when
-            // its dependency end still reaches the selection.
-            DirFilter::PathToRoot => uphill.contains(to),
+        // "Path to root" draws a whole chain of crates, so it needs the
+        // transitive closure first; the other two readings only ever look at
+        // the selection's own edges.
+        let uphill: HashSet<&str> = match dir {
+            DirFilter::PathToRoot => uphill_from(graph, &sel_ids),
+            _ => HashSet::new(),
         };
-        if !wanted && link.event.is_none() {
-            continue;
-        }
-        // Every hop of a route runs the dependents way, so it reads in the
-        // dependents grammar: hairline, arrow pointing at the user.
-        let role = if from_sel {
-            Role::Dep
-        } else if to_sel || wanted {
-            Role::User
-        } else {
-            Role::Event
-        };
-        let entry = pairs
-            .entry((from, to))
-            .or_insert((role, link.kind, link.event.clone()));
-        if kind_rank(link.kind) < kind_rank(entry.1) {
-            entry.1 = link.kind;
-        }
-        if entry.2.is_none() {
-            entry.2 = link.event.clone();
-        }
-        if entry.0 == Role::Event && role != Role::Event {
-            entry.0 = role;
-        }
-    }
 
-    // The selection's neighborhood: itself plus every far end of its edges.
-    let mut hood: HashSet<String> = sel_ids.iter().map(|id| id.to_string()).collect();
-    for ((from, to), (role, _, _)) in &pairs {
-        if *role != Role::Event {
-            hood.insert(from.to_string());
-            hood.insert(to.to_string());
-        }
-    }
-
-    // Lines are drawn from the dependency to the crate that uses it: the
-    // direction change travels.
-    let mut lines: Vec<FlowEdge> = pairs
-        .into_iter()
-        .map(|((from, to), (role, kind, event))| {
-            let mut edge = FlowEdge::new(to, from)
-                .id(format!("{to}->{from}"))
-                .style(edge_style(role, kind, &event));
-            edge.marker_end = MarkerKind::None;
-            // The role class colors the arrowhead; the legend names each.
-            edge = match (&event, role) {
-                (Some(ev), _) => edge.label(event_label(ev)).class("evented"),
-                (None, Role::Dep) => edge.class("dep"),
-                (None, _) => edge.class("user"),
+        // The edge set: the selection's own edges in the toggled direction (or
+        // every hop of its routes to the root), plus every manifest event
+        // (always drawn). Everything else stays undrawn — the whole resolved
+        // graph at once is exactly the hairball this chart exists to refuse.
+        let mut pairs: HashMap<(&str, &str), (Role, DepKind, Option<DepEvent>)> = HashMap::new();
+        for link in &graph.links {
+            let (from, to) = (link.from.as_str(), link.to.as_str());
+            if !layout.placed.contains_key(from) || !layout.placed.contains_key(to) {
+                continue;
+            }
+            let from_sel = sel_ids.contains(from);
+            let to_sel = sel_ids.contains(to);
+            let wanted = match dir {
+                DirFilter::Deps => from_sel,
+                DirFilter::Users => to_sel,
+                // An edge is one hop of a route to the selection exactly when
+                // its dependency end still reaches the selection.
+                DirFilter::PathToRoot => uphill.contains(to),
             };
-            edge
-        })
-        .collect();
-    lines.sort_by(|a, b| a.id.cmp(&b.id));
-    // Event labels on nearby curves take staggered seats so they never pile
-    // onto one another.
-    for (i, edge) in lines.iter_mut().filter(|e| e.label.is_some()).enumerate() {
-        edge.label_position = [0.38, 0.54, 0.68][i % 3];
-    }
+            if !wanted && link.event.is_none() {
+                continue;
+            }
+            // Every hop of a route runs the dependents way, so it reads in the
+            // dependents grammar: hairline, arrow pointing at the user.
+            let role = if from_sel {
+                Role::Dep
+            } else if to_sel || wanted {
+                Role::User
+            } else {
+                Role::Event
+            };
+            let entry = pairs
+                .entry((from, to))
+                .or_insert((role, link.kind, link.event.clone()));
+            if kind_rank(link.kind) < kind_rank(entry.1) {
+                entry.1 = link.kind;
+            }
+            if entry.2.is_none() {
+                entry.2 = link.event.clone();
+            }
+            if entry.0 == Role::Event && role != Role::Event {
+                entry.0 = role;
+            }
+        }
 
-    // Names engraved at rest: members, the diff, the neighborhood, and the
-    // handful of externals big enough to be landmarks.
-    let mut named: HashSet<&str> = graph
-        .crates
-        .iter()
-        .filter(|c| c.is_member || c.changed || c.ghost || c.affected_dist.is_some())
-        .map(|c| c.id.as_str())
-        .collect();
-    for id in &hood {
-        if let Some(c) = graph.crates.iter().find(|c| &c.id == id) {
+        // The selection's neighborhood: itself plus every far end of its edges.
+        let mut hood: HashSet<String> = sel_ids.iter().map(|id| id.to_string()).collect();
+        for ((from, to), (role, _, _)) in &pairs {
+            if *role != Role::Event {
+                hood.insert(from.to_string());
+                hood.insert(to.to_string());
+            }
+        }
+
+        // Lines are drawn from the dependency to the crate that uses it: the
+        // direction change travels.
+        let mut lines: Vec<FlowEdge> = pairs
+            .into_iter()
+            .map(|((from, to), (role, kind, event))| {
+                let mut edge = FlowEdge::new(to, from)
+                    .id(format!("{to}->{from}"))
+                    .style(edge_style(role, kind, &event));
+                edge.marker_end = MarkerKind::None;
+                // The role class colors the arrowhead; the legend names each.
+                edge = match (&event, role) {
+                    (Some(ev), _) => edge.label(event_label(ev)).class("evented"),
+                    (None, Role::Dep) => edge.class("dep"),
+                    (None, _) => edge.class("user"),
+                };
+                edge
+            })
+            .collect();
+        lines.sort_by(|a, b| a.id.cmp(&b.id));
+        // Event labels on nearby curves take staggered seats so they never pile
+        // onto one another.
+        for (i, edge) in lines.iter_mut().filter(|e| e.label.is_some()).enumerate() {
+            edge.label_position = [0.38, 0.54, 0.68][i % 3];
+        }
+
+        // Names engraved at rest: members, the diff, the neighborhood, and the
+        // handful of externals big enough to be landmarks.
+        let mut named: HashSet<&str> = graph
+            .crates
+            .iter()
+            .filter(|c| c.is_member || c.changed || c.ghost || c.affected_dist.is_some())
+            .map(|c| c.id.as_str())
+            .collect();
+        for id in &hood {
+            if let Some(c) = graph.crates.iter().find(|c| &c.id == id) {
+                named.insert(c.id.as_str());
+            }
+        }
+        let mut landmarks: Vec<&CrateInfo> = graph
+            .crates
+            .iter()
+            .filter(|c| !c.is_member && !c.ghost)
+            .collect();
+        landmarks.sort_by_key(|c| (std::cmp::Reverse(c.dependents), c.name.as_str()));
+        for c in landmarks.into_iter().take(NAMED_EXTERNALS) {
             named.insert(c.id.as_str());
         }
-    }
-    let mut landmarks: Vec<&CrateInfo> = graph
-        .crates
-        .iter()
-        .filter(|c| !c.is_member && !c.ghost)
-        .collect();
-    landmarks.sort_by_key(|c| (std::cmp::Reverse(c.dependents), c.name.as_str()));
-    for c in landmarks.into_iter().take(NAMED_EXTERNALS) {
-        named.insert(c.id.as_str());
-    }
 
-    // A crate name can resolve to several versions at once (cargo keeps a
-    // 1.x and a 2.x side by side), and each version is its own star on its
-    // own ring. Those stars must say which version they are, or one crate
-    // looks like it was drawn twice.
-    let mut seen_names: HashMap<&str, u32> = HashMap::new();
-    for c in graph.crates.iter().filter(|c| !c.ghost) {
-        if layout.placed.contains_key(&c.id) {
-            *seen_names.entry(c.name.as_str()).or_default() += 1;
+        // A crate name can resolve to several versions at once (cargo keeps a
+        // 1.x and a 2.x side by side), and each version is its own star on its
+        // own ring. Those stars must say which version they are, or one crate
+        // looks like it was drawn twice.
+        let mut seen_names: HashMap<&str, u32> = HashMap::new();
+        for c in graph.crates.iter().filter(|c| !c.ghost) {
+            if layout.placed.contains_key(&c.id) {
+                *seen_names.entry(c.name.as_str()).or_default() += 1;
+            }
         }
-    }
 
-    let mut stars: Vec<FlowNode<StarData>> = graph
-        .crates
-        .iter()
-        .filter_map(|c| {
-            let p = layout.placed.get(&c.id)?;
-            let focal = !c.ghost && sel.contains(c.name.as_str());
-            let b = star_box(c);
-            let (ux, uy) = if p.ring == 0 {
-                (0.0, 1.0)
-            } else {
-                (p.angle.cos(), p.angle.sin())
-            };
-            Some(
-                FlowNode::with_data(
-                    c.id.clone(),
-                    c.name.clone(),
-                    (p.point.x - b / 2.0, p.point.y - b / 2.0),
-                    StarData {
-                        info: c.clone(),
-                        ring: p.hops,
-                        ux,
-                        uy,
-                        focal,
-                        named: named.contains(c.id.as_str()),
-                        versioned: seen_names.get(c.name.as_str()).is_some_and(|n| *n > 1),
-                    },
+        let mut stars: Vec<FlowNode<StarData>> = graph
+            .crates
+            .iter()
+            .filter_map(|c| {
+                let p = layout.placed.get(&c.id)?;
+                let focal = !c.ghost && sel.contains(c.name.as_str());
+                let b = star_box(c);
+                let (ux, uy) = if p.ring == 0 {
+                    (0.0, 1.0)
+                } else {
+                    (p.angle.cos(), p.angle.sin())
+                };
+                Some(
+                    FlowNode::with_data(
+                        c.id.clone(),
+                        c.name.clone(),
+                        (p.point.x - b / 2.0, p.point.y - b / 2.0),
+                        StarData {
+                            info: c.clone(),
+                            ring: p.hops,
+                            ux,
+                            uy,
+                            focal,
+                            named: named.contains(c.id.as_str()),
+                            versioned: seen_names.get(c.name.as_str()).is_some_and(|n| *n > 1),
+                        },
+                    )
+                    .size(Size::new(b, b))
+                    .sides(Side::Left, Side::Right)
+                    .draggable(false)
+                    .selectable(false),
                 )
-                .size(Size::new(b, b))
-                .sides(Side::Left, Side::Right)
-                .draggable(false)
-                .selectable(false),
-            )
-        })
-        .collect();
-    stars.sort_by(|a, b| a.id.cmp(&b.id));
+            })
+            .collect();
+        stars.sort_by(|a, b| a.id.cmp(&b.id));
 
-    AtlasDrawing {
-        stars,
-        lines,
-        hood,
-        focused,
-        ring,
-        names: sel_names,
+        AtlasDrawing {
+            stars,
+            lines,
+            hood,
+            focused,
+            ring,
+            names: sel_names,
+        }
     }
 }
 
@@ -582,22 +584,24 @@ fn frame_chart(
     );
 }
 
-/// The bounds the camera should frame: a focused view frames the selection's
-/// neighborhood; the overview frames every ring.
-fn frame_target(drawing: &AtlasDrawing) -> (Option<Rect>, Option<Point>) {
-    let focal_center = drawing
-        .stars
-        .iter()
-        .filter(|n| n.data.focal)
-        .min_by_key(|n| n.data.ring)
-        .map(|n| n.rect().center());
-    let rects: Vec<Rect> = drawing
-        .stars
-        .iter()
-        .filter(|n| !drawing.focused || drawing.hood.contains(&n.id))
-        .map(|n| n.rect())
-        .collect();
-    (Rect::bounds(rects), focal_center)
+impl AtlasDrawing {
+    /// The bounds the camera should frame: a focused view frames the
+    /// selection's neighborhood; the overview frames every ring.
+    fn frame_target(&self) -> (Option<Rect>, Option<Point>) {
+        let focal_center = self
+            .stars
+            .iter()
+            .filter(|n| n.data.focal)
+            .min_by_key(|n| n.data.ring)
+            .map(|n| n.rect().center());
+        let rects: Vec<Rect> = self
+            .stars
+            .iter()
+            .filter(|n| !self.focused || self.hood.contains(&n.id))
+            .map(|n| n.rect())
+            .collect();
+        (Rect::bounds(rects), focal_center)
+    }
 }
 
 /// The keyboard surface, taught in the legend: `/` finds, `n`/`p` walk the
@@ -643,7 +647,7 @@ impl DrawnCap {
 
 /// The rings chart, mounted once for the whole session.
 #[component]
-pub fn Chart(graph: WorkspaceGraph) -> Element {
+pub(crate) fn Chart(graph: WorkspaceGraph) -> Element {
     let atlas = use_atlas();
     let drawn_cap = use_context::<DrawnCap>().cap;
     let flow = dioxus_flow::use_flow_handle::<StarData>();
@@ -653,7 +657,7 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
     // expand for a selection to sit on its exact ring.
     let base = use_memo({
         let graph = graph.clone();
-        move || radial_layout(&graph, u32::MAX)
+        move || RadialLayout::build(&graph, u32::MAX)
     });
     let name_hops = use_memo({
         let graph = graph.clone();
@@ -723,7 +727,7 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
     // collapsed stars radially — nothing ever swings sideways.
     let layout = use_memo({
         let graph = graph.clone();
-        move || radial_layout(&graph, drawn())
+        move || RadialLayout::build(&graph, drawn())
     });
     // The default selection: the crate at the center.
     let center_name = use_memo({
@@ -755,7 +759,7 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
     });
 
     // The chart is a pure function of the selection and direction filter.
-    let built = use_memo({
+    let chart = use_memo({
         let graph = graph.clone();
         move || {
             let step = atlas.trail.read().current_focus();
@@ -781,7 +785,7 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
                 },
             };
             let dir = *atlas.dir.read();
-            build_chart(&graph, &layout, sel_names, dir, focused, ring)
+            AtlasDrawing::build(&graph, &layout, sel_names, dir, focused, ring)
         }
     });
 
@@ -792,22 +796,22 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
     // Apply each build to the canvas and frame the camera: the whole rings
     // on the overview, the selection's neighborhood on a focus.
     use_effect(move || {
-        let b = built();
-        let (bounds, focal_center) = frame_target(&b);
-        let focused = b.focused;
+        let drawing = chart();
+        let (bounds, focal_center) = drawing.frame_target();
+        let focused = drawing.focused;
         // A whole-ring selection frames like the overview: the ring is the
         // shape, not a neighborhood to zoom into.
-        let legible = b.focused && b.ring.is_none();
+        let legible = drawing.focused && drawing.ring.is_none();
         let reduced = prefers_reduced_motion();
         let mut nodes = nodes;
         let mut edges = edges;
         // Materialize the selection for modifier-clicks to toggle against.
         let mut selected = atlas.selected;
-        if *selected.peek() != b.names {
-            selected.set(b.names.clone());
+        if *selected.peek() != drawing.names {
+            selected.set(drawing.names.clone());
         }
-        nodes.set(b.stars);
-        edges.set(b.lines);
+        nodes.set(drawing.stars);
+        edges.set(drawing.lines);
         // While the rings are still sliding to the new cap, the bounds belong
         // to the geometry being left behind: frame once, when it settles.
         if drawn() != cap() {
@@ -860,8 +864,10 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
                 match key.as_str() {
                     "f" => {
                         let bounds = {
-                            let b = built.peek();
-                            dioxus_flow::prelude::Rect::bounds(b.stars.iter().map(|n| n.rect()))
+                            let drawing = chart.peek();
+                            dioxus_flow::prelude::Rect::bounds(
+                                drawing.stars.iter().map(|n| n.rect()),
+                            )
                         };
                         if let Some(bounds) = bounds {
                             frame_chart(flow, bounds, None, false, false, 400);
@@ -945,7 +951,7 @@ pub fn Chart(graph: WorkspaceGraph) -> Element {
 /// in the shell and the key names the rings, so this route adds nothing: the
 /// overview is the chart, unobstructed.
 #[component]
-pub fn Overview() -> Element {
+pub(crate) fn Overview() -> Element {
     rsx! {}
 }
 
@@ -953,7 +959,7 @@ pub fn Overview() -> Element {
 /// route adds the panel: one crate's fact sheet, or the multi-selection
 /// roster when names are joined with `+`.
 #[component]
-pub fn Focus(name: String) -> Element {
+pub(crate) fn Focus(name: String) -> Element {
     let Some(graph) = use_graph() else {
         return rsx! {};
     };
@@ -971,7 +977,7 @@ pub fn Focus(name: String) -> Element {
 /// `/ring/:hop` — every crate on one ring selected; this route adds the
 /// ring's roster panel.
 #[component]
-pub fn RingSel(hop: u32) -> Element {
+pub(crate) fn RingSel(hop: u32) -> Element {
     let Some(graph) = use_graph() else {
         return rsx! {};
     };
@@ -1038,9 +1044,9 @@ mod tests {
     /// Edge ids, sorted. Lines run from the dependency into its user, so an
     /// id reads `dependency->user`.
     fn drawn(graph: &WorkspaceGraph, sel: &str, dir: DirFilter) -> Vec<String> {
-        let layout = radial_layout(graph, DEFAULT_CAP);
-        let built = build_chart(graph, &layout, vec![sel.to_string()], dir, true, None);
-        let mut ids: Vec<String> = built.lines.iter().map(|e| e.id.clone()).collect();
+        let layout = RadialLayout::build(graph, DEFAULT_CAP);
+        let drawing = AtlasDrawing::build(graph, &layout, vec![sel.to_string()], dir, true, None);
+        let mut ids: Vec<String> = drawing.lines.iter().map(|e| e.id.clone()).collect();
         ids.sort();
         ids
     }

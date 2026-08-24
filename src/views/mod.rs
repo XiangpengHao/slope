@@ -10,8 +10,8 @@ mod star;
 mod surface;
 mod survey;
 
-pub use atlas::{Focus, Overview, RingSel};
-pub use codemap::{CodeCrate, CodeFile, CodeOverview};
-pub use data::{DataFocus, DataModFocus, DataOverview};
-pub use shell::AtlasShell;
-pub use surface::{SurfaceFocus, SurfaceModFocus, SurfaceOverview};
+pub(crate) use atlas::{Focus, Overview, RingSel};
+pub(crate) use codemap::{CodeCrate, CodeFile, CodeOverview};
+pub(crate) use data::{DataFocus, DataModFocus, DataOverview};
+pub(crate) use shell::AtlasShell;
+pub(crate) use surface::{SurfaceFocus, SurfaceModFocus, SurfaceOverview};

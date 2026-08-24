@@ -6,15 +6,15 @@ use std::process::Command;
 
 use crate::api::Epoch;
 
-pub struct Diff {
-    pub epoch: Epoch,
+pub(crate) struct Diff {
+    pub(crate) epoch: Epoch,
     /// Paths relative to the workspace root.
-    pub changed_files: Vec<String>,
+    pub(crate) changed_files: Vec<String>,
     /// How to read a file at the base revision.
-    pub base_ref: Option<BaseRef>,
+    pub(crate) base_ref: Option<BaseRef>,
 }
 
-pub enum BaseRef {
+pub(crate) enum BaseRef {
     Git { repo_root: PathBuf, rev: String },
     Jj { repo_root: PathBuf, rev: String },
 }
@@ -43,32 +43,34 @@ fn find_up(start: &Path, marker: &str) -> Option<PathBuf> {
     }
 }
 
-/// Detect the VCS and compute changed files between the base and the working
-/// copy. `SLOPE_BASE` overrides the base revision (a git rev or jj revset).
-pub fn detect_diff(workspace_root: &Path) -> Diff {
-    let base_override = std::env::var("SLOPE_BASE").ok();
+impl Diff {
+    /// Detect the VCS and compute changed files between the base and the working
+    /// copy. `SLOPE_BASE` overrides the base revision (a git rev or jj revset).
+    pub(crate) fn detect(workspace_root: &Path) -> Self {
+        let base_override = std::env::var("SLOPE_BASE").ok();
 
-    // A colocated jj repo has both markers; git plumbing is the more
-    // predictable of the two, so prefer it whenever .git exists.
-    if let Some(repo) = find_up(workspace_root, ".git")
-        && let Some(diff) = git_diff(workspace_root, &repo, base_override.as_deref())
-    {
-        return diff;
-    }
-    if let Some(repo) = find_up(workspace_root, ".jj")
-        && let Some(diff) = jj_diff(workspace_root, &repo, base_override.as_deref())
-    {
-        return diff;
-    }
+        // A colocated jj repo has both markers; git plumbing is the more
+        // predictable of the two, so prefer it whenever .git exists.
+        if let Some(repo) = find_up(workspace_root, ".git")
+            && let Some(diff) = git_diff(workspace_root, &repo, base_override.as_deref())
+        {
+            return diff;
+        }
+        if let Some(repo) = find_up(workspace_root, ".jj")
+            && let Some(diff) = jj_diff(workspace_root, &repo, base_override.as_deref())
+        {
+            return diff;
+        }
 
-    Diff {
-        epoch: Epoch {
-            base: "—".into(),
-            target: "working copy".into(),
-            note: Some("No version control detected — change tracking is off.".into()),
-        },
-        changed_files: Vec::new(),
-        base_ref: None,
+        Diff {
+            epoch: Epoch {
+                base: "—".into(),
+                target: "working copy".into(),
+                note: Some("No version control detected — change tracking is off.".into()),
+            },
+            changed_files: Vec::new(),
+            base_ref: None,
+        }
     }
 }
 
@@ -183,7 +185,7 @@ fn jj_diff(workspace_root: &Path, repo: &Path, base_override: Option<&str>) -> O
 }
 
 /// Contents of `rel_path` (relative to the workspace root) at the diff base.
-pub fn file_at_base(workspace_root: &Path, diff: &Diff, rel_path: &str) -> Option<String> {
+pub(crate) fn file_at_base(workspace_root: &Path, diff: &Diff, rel_path: &str) -> Option<String> {
     match diff.base_ref.as_ref()? {
         BaseRef::Git { repo_root, rev } => {
             let abs = workspace_root.join(rel_path);

@@ -23,7 +23,7 @@ use crate::views::codemap::{CodeSel, RefDir, file_route, item_route, use_code};
 
 /// One landmark row inside a block.
 #[derive(Clone, PartialEq)]
-struct Row {
+struct LandmarkRow {
     name: String,
     /// The label this item selects by in its URL.
     label: String,
@@ -41,7 +41,7 @@ enum CodeNodeData {
     Block {
         info: FileInfo,
         name: String,
-        rows: Vec<Row>,
+        rows: Vec<LandmarkRow>,
         /// What the block folded away, in words, and the height those words
         /// were measured to need.
         fold: Option<String>,
@@ -140,14 +140,14 @@ fn row_px(tier: u8) -> f64 {
 /// One landmark row as it is written: `pub fn parse`, `struct Parse`. The row
 /// is measured on this string, not on the name alone, or the keyword the row
 /// exists to state would be the first thing clipped.
-fn row_words(row: &Row) -> String {
+fn row_words(row: &LandmarkRow) -> String {
     format!("{} {}", decl_words(row.vis, row.kind), row.name)
 }
 
 /// A block's measured size, and the height its fold's words need. The layout
 /// must know both before anything is drawn, so the plate and its box agree to
 /// the pixel — and so a fold never has its count clipped.
-fn block_size(name: &str, rows: &[Row], fold: Option<&str>) -> (f64, f64, f64) {
+fn block_size(name: &str, rows: &[LandmarkRow], fold: Option<&str>) -> (f64, f64, f64) {
     // Each line on its own face and tracking: the name at 10.5px, the fold's
     // words at 8.5px tracked 0.02em. The header holds the name and the changed
     // marker and nothing else, so the name is never the half that gets clipped.
@@ -221,376 +221,379 @@ fn gate_words(files: u32, items: u32) -> String {
     )
 }
 
-fn build_map(
-    graph: &CodeGraph,
-    tree: &FileTree,
-    open: &HashSet<u32>,
-    containment: &Containment,
-    sel: &CodeSel,
-    workspace: &str,
-    ref_dir: RefDir,
-) -> CodeDrawing {
-    // Visible files: everything whose directory chain is open. A file behind
-    // a gate keeps its references — they gather onto the gate.
-    let visible: Vec<u32> = graph
-        .files
-        .iter()
-        .filter(|f| {
-            tree.dir_of_file
-                .get(&f.id)
-                .is_some_and(|d| open.contains(d))
-        })
-        .map(|f| f.id)
-        .collect();
-
-    let blocks = model::blocks(graph, &visible, containment);
-
-    // ---- Measure, then place. ---------------------------------------------
-    /// A block's drawn content, measured before anything is seated.
-    struct BlockView {
-        info: FileInfo,
-        name: String,
-        rows: Vec<Row>,
-        fold: Option<String>,
-        fold_h: f64,
-    }
-    let mut node_data: HashMap<u32, BlockView> = HashMap::new();
-    let mut measures = Measures::default();
-    for block in &blocks {
-        let info = graph.files[block.file as usize].clone();
-        let name = file_name(&info.path).to_string();
-        let rows: Vec<Row> = block
-            .rows
+impl CodeDrawing {
+    fn build(
+        graph: &CodeGraph,
+        tree: &FileTree,
+        open: &HashSet<u32>,
+        containment: &Containment,
+        sel: &CodeSel,
+        workspace: &str,
+        ref_dir: RefDir,
+    ) -> Self {
+        // Visible files: everything whose directory chain is open. A file behind
+        // a gate keeps its references — they gather onto the gate.
+        let visible: Vec<u32> = graph
+            .files
             .iter()
-            .map(|&m| {
-                let mark = &graph.items[m as usize];
-                Row {
-                    name: mark.name.clone(),
-                    label: mark.label.clone(),
-                    kind: mark.kind,
-                    tier: model::tier(mark.fan_in),
-                    fan_in: mark.fan_in,
-                    vis: mark.vis,
+            .filter(|f| {
+                tree.dir_of_file
+                    .get(&f.id)
+                    .is_some_and(|d| open.contains(d))
+            })
+            .map(|f| f.id)
+            .collect();
+
+        let blocks = model::Block::all(graph, &visible, containment);
+
+        // ---- Measure, then place. ---------------------------------------------
+        /// A block's drawn content, measured before anything is seated.
+        struct BlockView {
+            info: FileInfo,
+            name: String,
+            rows: Vec<LandmarkRow>,
+            fold: Option<String>,
+            fold_h: f64,
+        }
+        let mut node_data: HashMap<u32, BlockView> = HashMap::new();
+        let mut measures = Measures::default();
+        for block in &blocks {
+            let info = graph.files[block.file as usize].clone();
+            let name = file_name(&info.path).to_string();
+            let rows: Vec<LandmarkRow> = block
+                .rows
+                .iter()
+                .map(|&m| {
+                    let mark = &graph.items[m as usize];
+                    LandmarkRow {
+                        name: mark.name.clone(),
+                        label: mark.label.clone(),
+                        kind: mark.kind,
+                        tier: model::tier(mark.fan_in),
+                        fan_in: mark.fan_in,
+                        vis: mark.vis,
+                    }
+                })
+                .collect();
+            let fold = block.fold_words();
+            let (w, h, fold_h) = block_size(&name, &rows, fold.as_deref());
+            measures.blocks.insert(block.file, (w, h));
+            node_data.insert(
+                block.file,
+                BlockView {
+                    info,
+                    name,
+                    rows,
+                    fold,
+                    fold_h,
+                },
+            );
+        }
+
+        // Items under a directory, for the district labels and the gates' words.
+        let mut dir_items: Vec<u32> = vec![0; tree.dirs.len()];
+        for file in &graph.files {
+            if let Some(&dir) = tree.dir_of_file.get(&file.id) {
+                let mut at = Some(dir);
+                while let Some(d) = at {
+                    dir_items[d as usize] += file.items;
+                    at = tree.dirs[d as usize].parent;
+                }
+            }
+        }
+
+        let mut gate_text: HashMap<u32, String> = HashMap::new();
+        for dir in &tree.dirs {
+            if tree.is_gate(open, dir.id) {
+                let words = gate_words(dir.file_count, dir_items[dir.id as usize]);
+                // Two lines, each measured on its own face: the gate's name, then
+                // its counts.
+                let w = tree::text_w(&format!("▸ {}/", dir.name), 10.0).max(tree::tracked_w(
+                    &words,
+                    8.5,
+                    tree::MONO_ADVANCE,
+                    0.05,
+                )) + tree::BLOCK_PAD_X * 2.0
+                    + 6.0;
+                measures.gates.insert(
+                    dir.id,
+                    (w.clamp(tree::BLOCK_MIN_W, tree::BLOCK_MAX_W), tree::GATE_H),
+                );
+                gate_text.insert(dir.id, words);
+            }
+        }
+
+        // A crate tag only earns its place where there is more than one crate to
+        // tell apart; in a single-crate workspace it repeats the cartouche.
+        let multi_crate = graph
+            .files
+            .iter()
+            .map(|f| f.krate.as_str())
+            .collect::<HashSet<&str>>()
+            .len()
+            > 1;
+        let district_label = |dir: &tree::DirNode| -> String {
+            // The directory as it is on disk, with the marker that folds it. The
+            // root holds the whole survey and never folds, so it carries none.
+            if dir.id == ROOT {
+                workspace.to_string()
+            } else {
+                format!("▾ {}/", dir.name)
+            }
+        };
+        fn district_crate(dir: &tree::DirNode, multi_crate: bool) -> Option<&str> {
+            dir.krate.as_deref().filter(|_| multi_crate)
+        }
+        for dir in &tree.dirs {
+            if !open.contains(&dir.id) {
+                continue;
+            }
+            // The frame must be wide enough for the whole band.
+            let mut band = LABEL_X + name_w(&district_label(dir)) + LABEL_X;
+            if let Some(krate) = district_crate(dir, multi_crate) {
+                band += LABEL_GAP + crate_w(&crate_tag(krate));
+            }
+            measures.labels.insert(dir.id, band);
+        }
+
+        let layout = tree.layout(open, &measures);
+
+        // ---- The selection: a crate district, or nothing. ---------------------
+        let sel_crate_dir: Option<u32> = match sel {
+            CodeSel::Crate(name) => tree
+                .dirs
+                .iter()
+                .find(|d| d.krate.as_deref() == Some(name.as_str()))
+                .map(|d| d.id),
+            _ => None,
+        };
+        let crate_files: HashSet<u32> = match sel {
+            CodeSel::Crate(name) => graph
+                .files
+                .iter()
+                .filter(|f| &f.krate == name)
+                .map(|f| f.id)
+                .collect(),
+            _ => HashSet::new(),
+        };
+
+        // ---- Nodes. -----------------------------------------------------------
+        let mut nodes: Vec<FlowNode<CodeNodeData>> = Vec::new();
+        for (file, at) in &layout.blocks {
+            let Some(view) = node_data.get(file) else {
+                continue;
+            };
+            nodes.push(
+                FlowNode::with_data(
+                    file_key(*file),
+                    view.info.path.clone(),
+                    (at.x, at.y),
+                    CodeNodeData::Block {
+                        info: view.info.clone(),
+                        name: view.name.clone(),
+                        rows: view.rows.clone(),
+                        fold: view.fold.clone(),
+                        fold_h: view.fold_h,
+                        size: (at.w, at.h),
+                        focal: crate_files.contains(file),
+                    },
+                )
+                .size(Size::new(at.w, at.h))
+                .sides(Side::Left, Side::Right)
+                .draggable(false)
+                .selectable(false),
+            );
+        }
+        for (dir, at) in &layout.gates {
+            nodes.push(
+                FlowNode::with_data(
+                    dir_key(*dir),
+                    tree.dirs[*dir as usize].path.clone(),
+                    (at.x, at.y),
+                    CodeNodeData::Gate {
+                        dir: *dir,
+                        name: tree.dirs[*dir as usize].name.clone(),
+                        words: gate_text.get(dir).cloned().unwrap_or_default(),
+                        size: (at.w, at.h),
+                    },
+                )
+                .size(Size::new(at.w, at.h))
+                .sides(Side::Left, Side::Right)
+                .draggable(false)
+                .selectable(false),
+            );
+        }
+        nodes.sort_by(|a, b| a.id.cmp(&b.id));
+
+        // ---- Districts. -------------------------------------------------------
+        let districts: Vec<DistrictView> = layout
+            .districts
+            .iter()
+            .map(|d| {
+                let dir = &tree.dirs[d.dir as usize];
+                let label = district_label(dir);
+                // Two segments, seated left to right, the crate clear of the name.
+                let after_name = LABEL_X + name_w(&label) + LABEL_GAP;
+                DistrictView {
+                    dir: d.dir,
+                    at: d.at,
+                    label,
+                    krate: district_crate(dir, multi_crate)
+                        .map(|name| (name.to_string(), after_name)),
+                    depth: d.depth,
+                    root: d.dir == ROOT,
+                    focal: sel_crate_dir == Some(d.dir),
                 }
             })
             .collect();
-        let fold = block.fold_words();
-        let (w, h, fold_h) = block_size(&name, &rows, fold.as_deref());
-        measures.blocks.insert(block.file, (w, h));
-        node_data.insert(
-            block.file,
-            BlockView {
-                info,
-                name,
-                rows,
-                fold,
-                fold_h,
-            },
-        );
-    }
 
-    // Items under a directory, for the district labels and the gates' words.
-    let mut dir_items: Vec<u32> = vec![0; tree.dirs.len()];
-    for file in &graph.files {
-        if let Some(&dir) = tree.dir_of_file.get(&file.id) {
-            let mut at = Some(dir);
-            while let Some(d) = at {
-                dir_items[d as usize] += file.items;
-                at = tree.dirs[d as usize].parent;
-            }
-        }
-    }
-
-    let mut gate_text: HashMap<u32, String> = HashMap::new();
-    for dir in &tree.dirs {
-        if tree::is_gate(tree, open, dir.id) {
-            let words = gate_words(dir.file_count, dir_items[dir.id as usize]);
-            // Two lines, each measured on its own face: the gate's name, then
-            // its counts.
-            let w = tree::text_w(&format!("▸ {}/", dir.name), 10.0).max(tree::tracked_w(
-                &words,
-                8.5,
-                tree::MONO_ADVANCE,
-                0.05,
-            )) + tree::BLOCK_PAD_X * 2.0
-                + 6.0;
-            measures.gates.insert(
-                dir.id,
-                (w.clamp(tree::BLOCK_MIN_W, tree::BLOCK_MAX_W), tree::GATE_H),
-            );
-            gate_text.insert(dir.id, words);
-        }
-    }
-
-    // A crate tag only earns its place where there is more than one crate to
-    // tell apart; in a single-crate workspace it repeats the cartouche.
-    let multi_crate = graph
-        .files
-        .iter()
-        .map(|f| f.krate.as_str())
-        .collect::<HashSet<&str>>()
-        .len()
-        > 1;
-    let district_label = |dir: &tree::DirNode| -> String {
-        // The directory as it is on disk, with the marker that folds it. The
-        // root holds the whole survey and never folds, so it carries none.
-        if dir.id == ROOT {
-            workspace.to_string()
-        } else {
-            format!("▾ {}/", dir.name)
-        }
-    };
-    fn district_crate(dir: &tree::DirNode, multi_crate: bool) -> Option<&str> {
-        dir.krate.as_deref().filter(|_| multi_crate)
-    }
-    for dir in &tree.dirs {
-        if !open.contains(&dir.id) {
-            continue;
-        }
-        // The frame must be wide enough for the whole band.
-        let mut band = LABEL_X + name_w(&district_label(dir)) + LABEL_X;
-        if let Some(krate) = district_crate(dir, multi_crate) {
-            band += LABEL_GAP + crate_w(&crate_tag(krate));
-        }
-        measures.labels.insert(dir.id, band);
-    }
-
-    let layout = tree::map_layout(tree, open, &measures);
-
-    // ---- The selection: a crate district, or nothing. ---------------------
-    let sel_crate_dir: Option<u32> = match sel {
-        CodeSel::Crate(name) => tree
-            .dirs
-            .iter()
-            .find(|d| d.krate.as_deref() == Some(name.as_str()))
-            .map(|d| d.id),
-        _ => None,
-    };
-    let crate_files: HashSet<u32> = match sel {
-        CodeSel::Crate(name) => graph
-            .files
-            .iter()
-            .filter(|f| &f.krate == name)
-            .map(|f| f.id)
-            .collect(),
-        _ => HashSet::new(),
-    };
-
-    // ---- Nodes. -----------------------------------------------------------
-    let mut nodes: Vec<FlowNode<CodeNodeData>> = Vec::new();
-    for (file, at) in &layout.blocks {
-        let Some(view) = node_data.get(file) else {
-            continue;
-        };
-        nodes.push(
-            FlowNode::with_data(
-                file_key(*file),
-                view.info.path.clone(),
-                (at.x, at.y),
-                CodeNodeData::Block {
-                    info: view.info.clone(),
-                    name: view.name.clone(),
-                    rows: view.rows.clone(),
-                    fold: view.fold.clone(),
-                    fold_h: view.fold_h,
-                    size: (at.w, at.h),
-                    focal: crate_files.contains(file),
-                },
-            )
-            .size(Size::new(at.w, at.h))
-            .sides(Side::Left, Side::Right)
-            .draggable(false)
-            .selectable(false),
-        );
-    }
-    for (dir, at) in &layout.gates {
-        nodes.push(
-            FlowNode::with_data(
-                dir_key(*dir),
-                tree.dirs[*dir as usize].path.clone(),
-                (at.x, at.y),
-                CodeNodeData::Gate {
-                    dir: *dir,
-                    name: tree.dirs[*dir as usize].name.clone(),
-                    words: gate_text.get(dir).cloned().unwrap_or_default(),
-                    size: (at.w, at.h),
-                },
-            )
-            .size(Size::new(at.w, at.h))
-            .sides(Side::Left, Side::Right)
-            .draggable(false)
-            .selectable(false),
-        );
-    }
-    nodes.sort_by(|a, b| a.id.cmp(&b.id));
-
-    // ---- Districts. -------------------------------------------------------
-    let districts: Vec<DistrictView> = layout
-        .districts
-        .iter()
-        .map(|d| {
-            let dir = &tree.dirs[d.dir as usize];
-            let label = district_label(dir);
-            // Two segments, seated left to right, the crate clear of the name.
-            let after_name = LABEL_X + name_w(&label) + LABEL_GAP;
-            DistrictView {
-                dir: d.dir,
-                at: d.at,
-                label,
-                krate: district_crate(dir, multi_crate).map(|name| (name.to_string(), after_name)),
-                depth: d.depth,
-                root: d.dir == ROOT,
-                focal: sel_crate_dir == Some(d.dir),
-            }
-        })
-        .collect();
-
-    // ---- Ties: every reference between two territories, summed. -----------
-    let gate_for = |file: u32| -> Option<Territory> {
-        let mut dir = tree.dir_of_file.get(&file).copied();
-        while let Some(d) = dir {
-            if layout.gates.contains_key(&d) {
-                return Some(Territory::Dir(d));
-            }
-            dir = tree.dirs[d as usize].parent;
-        }
-        None
-    };
-    let territory = |file: u32| -> Option<Territory> {
-        if layout.blocks.contains_key(&file) {
-            Some(Territory::File(file))
-        } else {
-            gate_for(file)
-        }
-    };
-    let rect_of = |t: Territory| -> Option<Placed> {
-        match t {
-            Territory::File(f) => layout.blocks.get(&f).copied(),
-            Territory::Dir(d) => layout.gates.get(&d).copied(),
-        }
-    };
-    let all_ties = model::ties(graph, containment, territory);
-    // A selected crate reads like the dependency chart's selection: it is the
-    // anchor, so only ties crossing its boundary draw, in the direction the
-    // reading asks for. A territory is the selection's when its file belongs to
-    // the crate, or its gate stands inside the crate's district.
-    let in_sel = |t: Territory| -> bool {
-        let Some(sel_dir) = sel_crate_dir else {
-            return false;
-        };
-        match t {
-            Territory::File(f) => crate_files.contains(&f),
-            Territory::Dir(mut d) => loop {
-                if d == sel_dir {
-                    break true;
+        // ---- Ties: every reference between two territories, summed. -----------
+        let gate_for = |file: u32| -> Option<Territory> {
+            let mut dir = tree.dir_of_file.get(&file).copied();
+            while let Some(d) = dir {
+                if layout.gates.contains_key(&d) {
+                    return Some(Territory::Dir(d));
                 }
-                match tree.dirs[d as usize].parent {
-                    Some(p) => d = p,
-                    None => break false,
+                dir = tree.dirs[d as usize].parent;
+            }
+            None
+        };
+        let territory = |file: u32| -> Option<Territory> {
+            if layout.blocks.contains_key(&file) {
+                Some(Territory::File(file))
+            } else {
+                gate_for(file)
+            }
+        };
+        let rect_of = |t: Territory| -> Option<Placed> {
+            match t {
+                Territory::File(f) => layout.blocks.get(&f).copied(),
+                Territory::Dir(d) => layout.gates.get(&d).copied(),
+            }
+        };
+        let all_ties = model::ties(graph, containment, territory);
+        // A selected crate reads like the dependency chart's selection: it is the
+        // anchor, so only ties crossing its boundary draw, in the direction the
+        // reading asks for. A territory is the selection's when its file belongs to
+        // the crate, or its gate stands inside the crate's district.
+        let in_sel = |t: Territory| -> bool {
+            let Some(sel_dir) = sel_crate_dir else {
+                return false;
+            };
+            match t {
+                Territory::File(f) => crate_files.contains(&f),
+                Territory::Dir(mut d) => loop {
+                    if d == sel_dir {
+                        break true;
+                    }
+                    match tree.dirs[d as usize].parent {
+                        Some(p) => d = p,
+                        None => break false,
+                    }
+                },
+            }
+        };
+        let kept: Vec<model::Tie> = all_ties
+            .into_iter()
+            .filter(|tie| {
+                if sel_crate_dir.is_none() {
+                    return true;
                 }
-            },
-        }
-    };
-    let kept: Vec<model::Tie> = all_ties
-        .into_iter()
-        .filter(|tie| {
-            if sel_crate_dir.is_none() {
-                return true;
-            }
-            match ref_dir {
-                RefDir::Both => in_sel(tie.def) || in_sel(tie.user),
-                RefDir::UsedBy => in_sel(tie.def) && !in_sel(tie.user),
-                RefDir::Uses => in_sel(tie.user) && !in_sel(tie.def),
-            }
-        })
-        .collect();
-
-    // Which ties rest on the paper. Direction alone cannot thin an unanchored
-    // map — every tie is one territory's use and another's users — so each
-    // territory becomes its own anchor and draws its heaviest few in the
-    // reading's direction. Everything else stays in the set and inks in when
-    // the reader hovers one of its ends. A crate selection is already an
-    // anchor, so its boundary set draws whole.
-    let resting: HashSet<usize> = match (sel_crate_dir, ref_dir.per_territory()) {
-        (None, Some(cap)) => {
-            let mut by_anchor: HashMap<Territory, Vec<usize>> = HashMap::new();
-            for (i, tie) in kept.iter().enumerate() {
-                // `uses` anchors on the territory writing the reference; `used
-                // by` anchors on the one being referenced.
-                let anchor = match ref_dir {
-                    RefDir::UsedBy => tie.def,
-                    _ => tie.user,
-                };
-                by_anchor.entry(anchor).or_default().push(i);
-            }
-            by_anchor
-                .into_values()
-                .flat_map(|mut idx| {
-                    idx.sort_unstable_by_key(|&i| (std::cmp::Reverse(kept[i].count), i));
-                    idx.into_iter().take(cap)
-                })
-                .collect()
-        }
-        _ => (0..kept.len()).collect(),
-    };
-
-    // The label bar: among the resting ties, the heaviest handful state their
-    // counts, so the labels stay data instead of texture. Every other resting
-    // tie says its count when the reader hovers either end.
-    let label_bar = {
-        let mut counts: Vec<u32> = resting.iter().map(|&i| kept[i].count).collect();
-        counts.sort_unstable_by(|a, b| b.cmp(a));
-        counts.get(TIE_LABELS).copied().unwrap_or(0).max(2)
-    };
-    let ties: Vec<TieView> = kept
-        .iter()
-        .enumerate()
-        .filter_map(|(i, tie)| {
-            let (def, user) = (rect_of(tie.def)?, rect_of(tie.user)?);
-            let (from, to) = tie_ends(def, user);
-            let rest = resting.contains(&i);
-            Some(TieView {
-                key: format!("{:?}-{:?}", tie.def, tie.user),
-                def: tie.def,
-                user: tie.user,
-                count: tie.count,
-                from,
-                to,
-                width: (0.55 + tie.count as f64 * 0.13).min(2.8),
-                labeled: rest && tie.count > label_bar,
-                rest,
+                match ref_dir {
+                    RefDir::Both => in_sel(tie.def) || in_sel(tie.user),
+                    RefDir::UsedBy => in_sel(tie.def) && !in_sel(tie.user),
+                    RefDir::Uses => in_sel(tie.user) && !in_sel(tie.def),
+                }
             })
-        })
-        .collect();
+            .collect();
 
-    // ---- The frame. -------------------------------------------------------
-    let frame = match sel_crate_dir.and_then(|d| {
-        layout
-            .districts
+        // Which ties rest on the paper. Direction alone cannot thin an unanchored
+        // map — every tie is one territory's use and another's users — so each
+        // territory becomes its own anchor and draws its heaviest few in the
+        // reading's direction. Everything else stays in the set and inks in when
+        // the reader hovers one of its ends. A crate selection is already an
+        // anchor, so its boundary set draws whole.
+        let resting: HashSet<usize> = match (sel_crate_dir, ref_dir.per_territory()) {
+            (None, Some(cap)) => {
+                let mut by_anchor: HashMap<Territory, Vec<usize>> = HashMap::new();
+                for (i, tie) in kept.iter().enumerate() {
+                    // `uses` anchors on the territory writing the reference; `used
+                    // by` anchors on the one being referenced.
+                    let anchor = match ref_dir {
+                        RefDir::UsedBy => tie.def,
+                        _ => tie.user,
+                    };
+                    by_anchor.entry(anchor).or_default().push(i);
+                }
+                by_anchor
+                    .into_values()
+                    .flat_map(|mut idx| {
+                        idx.sort_unstable_by_key(|&i| (std::cmp::Reverse(kept[i].count), i));
+                        idx.into_iter().take(cap)
+                    })
+                    .collect()
+            }
+            _ => (0..kept.len()).collect(),
+        };
+
+        // The label bar: among the resting ties, the heaviest handful state their
+        // counts, so the labels stay data instead of texture. Every other resting
+        // tie says its count when the reader hovers either end.
+        let label_bar = {
+            let mut counts: Vec<u32> = resting.iter().map(|&i| kept[i].count).collect();
+            counts.sort_unstable_by(|a, b| b.cmp(a));
+            counts.get(TIE_LABELS).copied().unwrap_or(0).max(2)
+        };
+        let ties: Vec<TieView> = kept
             .iter()
-            .find(|dv| dv.dir == d)
-            .map(|dv| dv.at)
-    }) {
-        Some(at) => Some(Rect::new(
-            at.x - 30.0,
-            at.y - 30.0,
-            at.w + 60.0,
-            at.h + 60.0,
-        )),
-        None => Rect::bounds(nodes.iter().map(|n| n.rect())).or_else(|| {
+            .enumerate()
+            .filter_map(|(i, tie)| {
+                let (def, user) = (rect_of(tie.def)?, rect_of(tie.user)?);
+                let (from, to) = tie_ends(def, user);
+                let rest = resting.contains(&i);
+                Some(TieView {
+                    key: format!("{:?}-{:?}", tie.def, tie.user),
+                    def: tie.def,
+                    user: tie.user,
+                    count: tie.count,
+                    from,
+                    to,
+                    width: (0.55 + tie.count as f64 * 0.13).min(2.8),
+                    labeled: rest && tie.count > label_bar,
+                    rest,
+                })
+            })
+            .collect();
+
+        // ---- The frame. -------------------------------------------------------
+        let frame = match sel_crate_dir.and_then(|d| {
             layout
                 .districts
-                .first()
-                .map(|d| Rect::new(d.at.x, d.at.y, d.at.w, d.at.h))
-        }),
-    };
+                .iter()
+                .find(|dv| dv.dir == d)
+                .map(|dv| dv.at)
+        }) {
+            Some(at) => Some(Rect::new(
+                at.x - 30.0,
+                at.y - 30.0,
+                at.w + 60.0,
+                at.h + 60.0,
+            )),
+            None => Rect::bounds(nodes.iter().map(|n| n.rect())).or_else(|| {
+                layout
+                    .districts
+                    .first()
+                    .map(|d| Rect::new(d.at.x, d.at.y, d.at.w, d.at.h))
+            }),
+        };
 
-    CodeDrawing {
-        nodes,
-        districts,
-        ties,
-        frame,
-        focused: sel_crate_dir.is_some(),
+        CodeDrawing {
+            nodes,
+            districts,
+            ties,
+            frame,
+            focused: sel_crate_dir.is_some(),
+        }
     }
 }
 
@@ -605,7 +608,7 @@ fn build_map(
 fn BlockPlate(
     info: FileInfo,
     name: String,
-    rows: Vec<Row>,
+    rows: Vec<LandmarkRow>,
     fold: Option<String>,
     fold_h: f64,
     size: (f64, f64),
@@ -990,7 +993,7 @@ document.addEventListener('keydown', window.__slopeKeys);
 
 /// The ambient map, mounted while no file or item holds the focus.
 #[component]
-pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
+pub(crate) fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
     let code = use_code();
     let camera = use_context::<CodeCamera>();
     let flow = dioxus_flow::use_flow_handle::<CodeNodeData>();
@@ -1004,7 +1007,7 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
         let graph = graph.clone();
         move || Containment::build(&graph)
     });
-    let open_depth = use_memo(move || tree::default_open_depth(&tree.read(), tree::MARK_BUDGET));
+    let open_depth = use_memo(move || tree.read().default_open_depth(tree::MARK_BUDGET));
 
     // Selecting a crate opens the gates above its district: disclosure follows
     // focus, and folding back is one click on the gate.
@@ -1042,14 +1045,14 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
         }
     }));
 
-    let open = use_memo(move || tree::open_dirs(&tree.read(), open_depth(), &code.toggled.read()));
+    let open = use_memo(move || tree.read().open_dirs(open_depth(), &code.toggled.read()));
 
     // `sel` is a prop, not a signal: the memo must be told when the route
     // hands the map a new selection. The direction toggle is a signal and
     // tracks itself.
-    let built = use_memo(use_reactive((&sel, &graph, &workspace), {
+    let chart = use_memo(use_reactive((&sel, &graph, &workspace), {
         move |(sel, graph, workspace)| {
-            build_map(
+            CodeDrawing::build(
                 &graph,
                 &tree.read(),
                 &open.read(),
@@ -1068,20 +1071,20 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
     let core_live: Signal<bool> = use_signal(|| false);
 
     use_effect(move || {
-        let b = built();
+        let drawing = chart();
         let mut nodes = nodes;
-        nodes.set(b.nodes);
+        nodes.set(drawing.nodes);
         let reduced = prefers_reduced_motion();
         #[cfg(target_arch = "wasm32")]
         {
             let mut framed = framed;
             let first = !*framed.peek();
             framed.set(true);
-            if !b.focused && !first {
+            if !drawing.focused && !first {
                 return;
             }
             let duration = if first || reduced { 0 } else { 400 };
-            let (frame, focused) = (b.frame, b.focused);
+            let (frame, focused) = (drawing.frame, drawing.focused);
             let mut core_live = core_live;
             spawn(async move {
                 gloo_timers::future::TimeoutFuture::new(if first { 150 } else { 30 }).await;
@@ -1111,8 +1114,8 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let _ = (framed, reduced, core_live);
-            if let Some(frame) = b.frame {
-                frame_chart(flow, frame, b.focused, 0);
+            if let Some(frame) = drawing.frame {
+                frame_chart(flow, frame, drawing.focused, 0);
             }
         }
     });
@@ -1137,12 +1140,12 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
                 match key.as_str() {
                     "f" => {
                         if let Some(bounds) =
-                            Rect::bounds(built.peek().nodes.iter().map(|n| n.rect()))
+                            Rect::bounds(chart.peek().nodes.iter().map(|n| n.rect()))
                         {
                             frame_chart(flow, bounds, false, 400);
                         }
                     }
-                    "Escape" if built.peek().focused => {
+                    "Escape" if chart.peek().focused => {
                         nav.push(crate::Route::CodeOverview {});
                     }
                     _ => {}
@@ -1182,17 +1185,17 @@ pub fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
                 {
                     let (top, right, bottom, left) = chrome_insets(
                         narrow_viewport(),
-                        built.read().focused,
+                        chart.read().focused,
                     );
                     rsx! {
                         FitInsets { top, right, bottom, left }
                     }
                 }
                 WorldLayer { class: "code-ground",
-                    DistrictLayer { districts: built.read().districts.clone() }
+                    DistrictLayer { districts: chart.read().districts.clone() }
                 }
                 WorldLayer { class: "code-ties",
-                    TieLayer { ties: built.read().ties.clone(), hot }
+                    TieLayer { ties: chart.read().ties.clone(), hot }
                 }
                 dioxus_flow::prelude::Controls {}
             }

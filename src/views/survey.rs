@@ -18,7 +18,7 @@ use crate::views::surface::SurfaceShell;
 type CodeResource = Resource<Result<CodeGraph, ServerFnError>>;
 
 /// The loaded code survey, for route components under this shell.
-pub fn use_code_graph() -> Option<CodeGraph> {
+pub(crate) fn use_code_graph() -> Option<CodeGraph> {
     let res = try_use_context::<CodeResource>()?;
     let state = res.read();
     state.as_ref().and_then(|r| r.as_ref().ok()).cloned()
@@ -28,7 +28,7 @@ pub fn use_code_graph() -> Option<CodeGraph> {
 /// whichever altitude the route asks for. Mounted by the atlas shell for every
 /// `/code` and `/surface` route.
 #[component]
-pub fn SurveyShell(workspace: String, diff_line: String) -> Element {
+pub(crate) fn SurveyShell(workspace: String, diff_line: String) -> Element {
     let resource: CodeResource = use_resource(code_graph);
     use_context_provider(|| resource);
 

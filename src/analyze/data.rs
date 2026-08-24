@@ -43,48 +43,48 @@ pub(super) struct Holder {
     /// The [`crate::api::ItemMark::id`] the rows and the edges belong to. For
     /// a method that is its *type's* mark: a method is a clause of the type's
     /// contract, never a landmark of its own.
-    pub mark: u32,
-    pub kind: ItemKind,
+    pub(crate) mark: u32,
+    pub(crate) kind: ItemKind,
     /// Index into the survey's file list. An impl block can sit in a file the
     /// type does not, so this is the method's own file, not the type's.
-    pub file: u32,
+    pub(crate) file: u32,
     /// The item's own source range — how the survey names a syntax node.
-    pub range: TextRange,
+    pub(crate) range: TextRange,
     /// Set when this holder is one method of `mark`.
-    pub method: Option<MethodOf>,
+    pub(crate) method: Option<MethodOf>,
 }
 
 /// What the survey knows about a method that its own source does not say: who
 /// declares it, and whether it arrived through a trait.
 pub(super) struct MethodOf {
     /// The method's own mark.
-    pub mark: u32,
-    pub vis: Vis,
+    pub(crate) mark: u32,
+    pub(crate) vis: Vis,
     /// Declared inside `impl Trait for Type`.
-    pub via_trait: bool,
+    pub(crate) via_trait: bool,
 }
 
 /// What the walk found. Everything but `holds` is indexed by mark id, so the
 /// survey can lift it straight onto the [`crate::api::ItemMark`]s.
 pub(super) struct DataWalk {
     /// Holding edges, aggregated per (from, to, kind, via, rows) and sorted.
-    pub holds: Vec<HoldEdge>,
+    pub(crate) holds: Vec<HoldEdge>,
     /// A struct's or union's fields — or a free function's parameters —
     /// quoted in declaration order: (name as written, declared type as
     /// written).
-    pub field_rows: Vec<Vec<(String, String)>>,
+    pub(crate) field_rows: Vec<Vec<(String, String)>>,
     /// An enum's variants as written — name, payload, discriminant.
-    pub variants: Vec<Vec<String>>,
+    pub(crate) variants: Vec<Vec<String>>,
     /// A static's declared type or a free function's return type, as written.
-    pub ty: Vec<String>,
+    pub(crate) ty: Vec<String>,
     /// A type's methods, in the survey's order, quoted as written.
-    pub method_rows: Vec<Vec<MethodRow>>,
+    pub(crate) method_rows: Vec<Vec<MethodRow>>,
 }
 
 /// Where a wrapper has to be defined to count as one. A type the reviewer
 /// wrote is never a wrapper, whatever it happens to be called.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Home {
+enum WrapperHome {
     /// `std`, `core`, or `alloc`.
     Std,
     /// Any crate whose name starts with `dioxus`.
@@ -107,25 +107,25 @@ enum Home {
 /// Interior mutability without a shared handle is still ownership; sharing
 /// needs a shared handle. The legend on `/surface` quotes this table, so the
 /// two must agree.
-const WRAPPERS: &[(&str, Home, HoldKind)] = &[
+const WRAPPERS: &[(&str, WrapperHome, HoldKind)] = &[
     // A shared handle: the state behind it has more than one possible reader.
-    ("Arc", Home::Std, HoldKind::Shares),
-    ("Rc", Home::Std, HoldKind::Shares),
-    ("Weak", Home::Std, HoldKind::Shares),
+    ("Arc", WrapperHome::Std, HoldKind::Shares),
+    ("Rc", WrapperHome::Std, HoldKind::Shares),
+    ("Weak", WrapperHome::Std, HoldKind::Shares),
     // A dioxus signal is Copy-shared runtime storage; holding one is holding
     // a handle to state the runtime owns.
-    ("Signal", Home::Dioxus, HoldKind::Shares),
-    ("GlobalSignal", Home::Dioxus, HoldKind::Shares),
-    ("ReadSignal", Home::Dioxus, HoldKind::Shares),
-    ("Memo", Home::Dioxus, HoldKind::Shares),
-    ("Resource", Home::Dioxus, HoldKind::Shares),
+    ("Signal", WrapperHome::Dioxus, HoldKind::Shares),
+    ("GlobalSignal", WrapperHome::Dioxus, HoldKind::Shares),
+    ("ReadSignal", WrapperHome::Dioxus, HoldKind::Shares),
+    ("Memo", WrapperHome::Dioxus, HoldKind::Shares),
+    ("Resource", WrapperHome::Dioxus, HoldKind::Shares),
 ];
 
-impl Home {
+impl WrapperHome {
     fn matches(self, krate: &str) -> bool {
         match self {
-            Home::Std => matches!(krate, "std" | "core" | "alloc"),
-            Home::Dioxus => krate.starts_with("dioxus"),
+            WrapperHome::Std => matches!(krate, "std" | "core" | "alloc"),
+            WrapperHome::Dioxus => krate.starts_with("dioxus"),
         }
     }
 }

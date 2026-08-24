@@ -52,7 +52,7 @@ fn diff_words(facts: &DataFacts) -> String {
 /// teaches; the edges are what the chart shows. No doors toggle either: state
 /// does not fold at a door, so every datum is drawn whatever its `pub`.
 #[component]
-pub fn DataCartouche(facts: DataFacts, workspace: String, diff_line: String) -> Element {
+pub(crate) fn DataCartouche(facts: DataFacts, workspace: String, diff_line: String) -> Element {
     let insight = insight(&facts.changed_modules);
     let kinds = {
         let mut parts = vec![
@@ -239,7 +239,7 @@ fn tier_line(mark: &DataMark) -> String {
 /// loud, because `named by 12 signatures` is ink this chart refuses to draw
 /// and a reviewer must never mistake for silence.
 #[component]
-pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
+pub(crate) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
     let code = use_code();
     let data = use_data();
     let model = use_memo(use_reactive((&graph,), move |(graph,)| {
@@ -614,7 +614,7 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
 /// statics — ranked the way the code search ranks: a prefix match is what the
 /// reviewer meant, then whatever more of the workspace leans on.
 #[component]
-pub fn DataSearch(graph: CodeGraph) -> Element {
+pub(crate) fn DataSearch(graph: CodeGraph) -> Element {
     let mut query = use_signal(String::new);
     let mut active = use_signal(|| 0usize);
     let nav = use_navigator();
@@ -774,7 +774,7 @@ fn WireSample(
 /// stand as a key strip, sample beside word, because at 224px of plate a
 /// sentence per mark cost five lines each and ran the plate off the page.
 #[component]
-pub fn DataLegend(
+pub(crate) fn DataLegend(
     facts: DataFacts,
     notes: Vec<String>,
     #[props(default = true)] start_open: bool,

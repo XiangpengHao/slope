@@ -29,7 +29,7 @@ use crate::views::codemap::chrome::{decl_words, plural};
 use crate::views::codemap::map::{narrow_viewport, prefers_reduced_motion, tie_ends, window_size};
 use crate::views::codemap::tree::{Placed, text_w};
 use crate::views::codemap::use_code;
-use crate::views::surface::layout::{self, Sizes, SurfaceLayout};
+use crate::views::surface::layout::{Sizes, SurfaceLayout};
 use crate::views::surface::model::{
     Anchor, FieldRow, RowState, SurfaceMark, SurfaceModel, upstream,
 };
@@ -95,7 +95,7 @@ fn wrapped(text: &str, px: f64, usable: f64) -> f64 {
 /// behind a count (user decision, 2026-08-20). The only counted lines left at
 /// the foot are the chart's own folds — the fan-in it does not draw as ink.
 #[derive(Clone, PartialEq)]
-struct MarkView {
+struct MeasuredMark {
     id: u32,
     /// `pub struct`, `static` — what rust writes in front of the name.
     decl: String,
@@ -158,7 +158,7 @@ struct FoldView {
 /// making every fold row in the node list as large as a mark.
 #[derive(Clone, PartialEq)]
 enum SurfaceNodeData {
-    Mark(Box<MarkView>),
+    Mark(Box<MeasuredMark>),
     Fold(FoldView),
 }
 
@@ -258,7 +258,7 @@ struct ModHome {
 /// keeps full ink, whatever crosses it reads a step behind, and the other
 /// modules recede — frames, blocks and wires alike.
 #[derive(Clone, PartialEq)]
-struct KinView {
+struct SurfaceKin {
     /// The chosen mark, where the reading is one contract's.
     sel: Option<Anchor>,
     /// The chosen boundary, where the reading is a module's.
@@ -276,7 +276,7 @@ struct KinView {
     near: HashSet<Anchor>,
 }
 
-impl KinView {
+impl SurfaceKin {
     /// The selection's reading of one built chart. Both families arrive as
     /// their drawn pairs, tail first: a hold runs held → holder, a uses edge
     /// runs def → user.
@@ -444,109 +444,114 @@ fn fold_words(mark: &SurfaceMark) -> Vec<String> {
 /// height is every line it draws: the whole quotation stands inside the box the
 /// layout is handed, so the plate a reader meets is the plate the geometry
 /// budgeted for.
-fn measure(mark: &SurfaceMark) -> MarkView {
-    let decl = decl_words(mark.vis, mark.kind);
-    let head = format!("{decl} {}", mark.name);
-    let locator = mark.locator();
-    let letter = mark.letter();
-    // A signature's return line wears rust's own arrow, so the block reads as
-    // the declaration it quotes rather than as a type sitting under a name.
-    let ty = if mark.is_fn() && !mark.ty.is_empty() {
-        format!("-> {}", mark.ty)
-    } else {
-        mark.ty.clone()
-    };
-    let folds = fold_words(mark);
+impl From<&SurfaceMark> for MeasuredMark {
+    fn from(mark: &SurfaceMark) -> Self {
+        let decl = decl_words(mark.vis, mark.kind);
+        let head = format!("{decl} {}", mark.name);
+        let locator = mark.locator();
+        let letter = mark.letter();
+        // A signature's return line wears rust's own arrow, so the block reads as
+        // the declaration it quotes rather than as a type sitting under a name.
+        let ty = if mark.is_fn() && !mark.ty.is_empty() {
+            format!("-> {}", mark.ty)
+        } else {
+            mark.ty.clone()
+        };
+        let folds = fold_words(mark);
 
-    let mut widest = text_w(&head, 10.5) + if letter.is_some() { 12.0 } else { 0.0 };
-    // A long row clips at the block's own maximum rather than stretching it
-    // past the paper's patience. A marked row carries its `+`/`−` in front.
-    let wrapping = MARK_MAX_W - PAD_X;
-    let marker_w = |row: &FieldRow| {
-        if row.state == RowState::Same {
+        let mut widest = text_w(&head, 10.5) + if letter.is_some() { 12.0 } else { 0.0 };
+        // A long row clips at the block's own maximum rather than stretching it
+        // past the paper's patience. A marked row carries its `+`/`−` in front.
+        let wrapping = MARK_MAX_W - PAD_X;
+        let marker_w = |row: &FieldRow| {
+            if row.state == RowState::Same {
+                0.0
+            } else {
+                11.0
+            }
+        };
+        for fold in &folds {
+            // Browsers round each glyph up at this size; measured with the font's
+            // exact advance the last characters clip. Carry slack.
+            widest = widest.max(text_w(fold, 9.0) * META_SLACK);
+        }
+        for row in &mark.fields {
+            widest = widest.max(
+                (text_w(&format!("{}: {}", row.name, row.decl), 10.0) + marker_w(row))
+                    .min(wrapping),
+            );
+        }
+        for row in mark.variants.iter().chain(&mark.methods) {
+            widest = widest.max((text_w(&row.decl, 10.0) + marker_w(row)).min(wrapping));
+        }
+        for fold in &folds {
+            widest = widest.max(text_w(fold, 9.0));
+        }
+        if !ty.is_empty() {
+            widest = widest.max(text_w(&ty, 9.5).min(wrapping));
+        }
+        let w = (widest + PAD_X).clamp(MARK_MIN_W, MARK_MAX_W);
+        let usable = w - PAD_X;
+
+        let ty_lines = if ty.is_empty() {
             0.0
         } else {
-            11.0
+            wrapped(&ty, 9.5, usable)
+        };
+        let fold_block = if folds.is_empty() {
+            0.0
+        } else {
+            FOLDS_TOP + folds.len() as f64 * FOLD_H
+        };
+        // The band opens on a rule of its own, so the shape reads before the API.
+        let band = if mark.methods.is_empty() {
+            0.0
+        } else {
+            BAND_TOP + mark.methods.len() as f64 * ROW_H
+        };
+        let h = PAD_TOP
+            + HEAD_H
+            + ty_lines * TY_H
+            + mark.fields.len() as f64 * ROW_H
+            + mark.variants.len() as f64 * ROW_H
+            + band
+            + fold_block
+            + PAD_BOTTOM;
+
+        MeasuredMark {
+            id: mark.id,
+            decl,
+            name: mark.name.clone(),
+            letter,
+            ghost: mark.ghost,
+            is_static: mark.is_static(),
+            is_enum: mark.kind == ItemKind::Enum,
+            is_fn: mark.is_fn(),
+            fields: mark.fields.clone(),
+            ty,
+            ty_target: mark.ty_target.clone(),
+            variants: mark.variants.clone(),
+            methods: mark.methods.clone(),
+            folds,
+            locator,
+            path: mark.path.clone(),
+            label: mark.label.clone(),
+            size: (w, h),
         }
-    };
-    for fold in &folds {
-        // Browsers round each glyph up at this size; measured with the font's
-        // exact advance the last characters clip. Carry slack.
-        widest = widest.max(text_w(fold, 9.0) * META_SLACK);
-    }
-    for row in &mark.fields {
-        widest = widest.max(
-            (text_w(&format!("{}: {}", row.name, row.decl), 10.0) + marker_w(row)).min(wrapping),
-        );
-    }
-    for row in mark.variants.iter().chain(&mark.methods) {
-        widest = widest.max((text_w(&row.decl, 10.0) + marker_w(row)).min(wrapping));
-    }
-    for fold in &folds {
-        widest = widest.max(text_w(fold, 9.0));
-    }
-    if !ty.is_empty() {
-        widest = widest.max(text_w(&ty, 9.5).min(wrapping));
-    }
-    let w = (widest + PAD_X).clamp(MARK_MIN_W, MARK_MAX_W);
-    let usable = w - PAD_X;
-
-    let ty_lines = if ty.is_empty() {
-        0.0
-    } else {
-        wrapped(&ty, 9.5, usable)
-    };
-    let fold_block = if folds.is_empty() {
-        0.0
-    } else {
-        FOLDS_TOP + folds.len() as f64 * FOLD_H
-    };
-    // The band opens on a rule of its own, so the shape reads before the API.
-    let band = if mark.methods.is_empty() {
-        0.0
-    } else {
-        BAND_TOP + mark.methods.len() as f64 * ROW_H
-    };
-    let h = PAD_TOP
-        + HEAD_H
-        + ty_lines * TY_H
-        + mark.fields.len() as f64 * ROW_H
-        + mark.variants.len() as f64 * ROW_H
-        + band
-        + fold_block
-        + PAD_BOTTOM;
-
-    MarkView {
-        id: mark.id,
-        decl,
-        name: mark.name.clone(),
-        letter,
-        ghost: mark.ghost,
-        is_static: mark.is_static(),
-        is_enum: mark.kind == ItemKind::Enum,
-        is_fn: mark.is_fn(),
-        fields: mark.fields.clone(),
-        ty,
-        ty_target: mark.ty_target.clone(),
-        variants: mark.variants.clone(),
-        methods: mark.methods.clone(),
-        folds,
-        locator,
-        path: mark.path.clone(),
-        label: mark.label.clone(),
-        size: (w, h),
     }
 }
 
-/// A counted fold row, measured.
-fn measure_row(anchor: Anchor, words: String, title: String) -> FoldView {
-    let w = (text_w(&words, 9.5) + 20.0).clamp(ROW_MIN_W, MARK_MAX_W);
-    FoldView {
-        anchor,
-        words,
-        title,
-        unfolds: None,
-        size: (w, ROW_FOLD_H),
+impl FoldView {
+    /// A counted fold row, measured.
+    fn row(anchor: Anchor, words: String, title: String) -> Self {
+        let w = (text_w(&words, 9.5) + 20.0).clamp(ROW_MIN_W, MARK_MAX_W);
+        FoldView {
+            anchor,
+            words,
+            title,
+            unfolds: None,
+            size: (w, ROW_FOLD_H),
+        }
     }
 }
 
@@ -572,199 +577,201 @@ fn hold_class(kind: HoldKind) -> &'static str {
     }
 }
 
-/// Measure everything, place it, and gather what the chart draws.
-fn build_chart(model: &SurfaceModel) -> SurfaceDrawing {
-    let mut sizes = Sizes::default();
-    let mut views: HashMap<u32, MarkView> = HashMap::new();
-    for mark in &model.marks {
-        let view = measure(mark);
-        sizes.marks.insert(mark.id, view.size);
-        views.insert(mark.id, view);
-    }
-    let mut rows: HashMap<Anchor, FoldView> = HashMap::new();
-    for frame in &model.frames {
-        // A folded module is one row: every contract inside it, its nested
-        // modules included, and the way back out.
-        if frame.folded {
-            let anchor = Anchor::Mod(frame.id);
-            // *Item*, the word the other counted rows use: what is inside a
-            // boundary is contracts, private helpers and all, and one row
-            // standing for a whole module cannot sort them out.
-            let words = match frame.packed {
-                0 => "folded".to_string(),
-                n => format!("+ {}", plural(n as usize, "item")),
-            };
-            let mut row = measure_row(
-                anchor,
-                words,
-                format!(
-                    "{} is folded to this row — every item inside it, and inside the \
-                     modules nested in it; click to unfold",
-                    frame.words()
-                ),
-            );
-            row.unfolds = Some(frame.key());
-            sizes.rows.insert(anchor, row.size);
-            rows.insert(anchor, row);
+impl From<&SurfaceModel> for SurfaceDrawing {
+    /// Measure everything, place it, and gather what the chart draws.
+    fn from(model: &SurfaceModel) -> Self {
+        let mut sizes = Sizes::default();
+        let mut views: HashMap<u32, MeasuredMark> = HashMap::new();
+        for mark in &model.marks {
+            let view = MeasuredMark::from(mark);
+            sizes.marks.insert(mark.id, view.size);
+            views.insert(mark.id, view);
         }
-        if frame.private > 0 {
-            let anchor = Anchor::Private(frame.id);
-            let words = format!(
-                "+ {}",
-                plural(frame.private as usize, model.doors.fold_word())
-            );
-            let row = measure_row(anchor, words, model.doors.fold_title().to_string());
-            sizes.rows.insert(anchor, row.size);
-            rows.insert(anchor, row);
-        }
-        if let Some(label) = frame.label(model.multi_crate) {
-            sizes.labels.insert(frame.id, text_w(&label, 12.0) + 18.0);
-        }
-    }
-
-    let placed: SurfaceLayout = layout::layout(&model.frames, &sizes);
-
-    let mut nodes: Vec<FlowNode<SurfaceNodeData>> = Vec::new();
-    for (id, view) in &views {
-        let Some(at) = placed.marks.get(id) else {
-            continue;
-        };
-        nodes.push(
-            FlowNode::with_data(
-                node_key(Anchor::Mark(*id)),
-                view.name.clone(),
-                (at.x, at.y),
-                SurfaceNodeData::Mark(Box::new(view.clone())),
-            )
-            .size(Size::new(at.w, at.h))
-            .sides(Side::Left, Side::Right)
-            .draggable(false)
-            .selectable(false),
-        );
-    }
-    for (anchor, row) in &rows {
-        let Some(at) = placed.rows.get(anchor) else {
-            continue;
-        };
-        nodes.push(
-            FlowNode::with_data(
-                node_key(*anchor),
-                row.words.clone(),
-                (at.x, at.y),
-                SurfaceNodeData::Fold(row.clone()),
-            )
-            .size(Size::new(at.w, at.h))
-            .sides(Side::Left, Side::Right)
-            .draggable(false)
-            .selectable(false),
-        );
-    }
-    nodes.sort_by(|a, b| a.id.cmp(&b.id));
-
-    let frames: Vec<FrameView> = placed
-        .frames
-        .iter()
-        .map(|(id, at)| {
-            let frame = &model.frames[*id as usize];
-            let label = frame.label(model.multi_crate);
-            FrameView {
-                id: *id,
-                parent: frame.parent,
-                at: *at,
-                label_w: label.as_deref().map_or(0.0, |l| text_w(l, 12.0)),
-                label,
-                key: frame.key(),
-                words: frame.words(),
-                folded: frame.folded,
+        let mut rows: HashMap<Anchor, FoldView> = HashMap::new();
+        for frame in &model.frames {
+            // A folded module is one row: every contract inside it, its nested
+            // modules included, and the way back out.
+            if frame.folded {
+                let anchor = Anchor::Mod(frame.id);
+                // *Item*, the word the other counted rows use: what is inside a
+                // boundary is contracts, private helpers and all, and one row
+                // standing for a whole module cannot sort them out.
+                let words = match frame.packed {
+                    0 => "folded".to_string(),
+                    n => format!("+ {}", plural(n as usize, "item")),
+                };
+                let mut row = FoldView::row(
+                    anchor,
+                    words,
+                    format!(
+                        "{} is folded to this row — every item inside it, and inside the \
+                         modules nested in it; click to unfold",
+                        frame.words()
+                    ),
+                );
+                row.unfolds = Some(frame.key());
+                sizes.rows.insert(anchor, row.size);
+                rows.insert(anchor, row);
             }
-        })
-        .collect();
+            if frame.private > 0 {
+                let anchor = Anchor::Private(frame.id);
+                let words = format!(
+                    "+ {}",
+                    plural(frame.private as usize, model.doors.fold_word())
+                );
+                let row = FoldView::row(anchor, words, model.doors.fold_title().to_string());
+                sizes.rows.insert(anchor, row.size);
+                rows.insert(anchor, row);
+            }
+            if let Some(label) = frame.label(model.multi_crate) {
+                sizes.labels.insert(frame.id, text_w(&label, 12.0) + 18.0);
+            }
+        }
 
-    // Where everything sits, in one map: a mark in the module that declares
-    // it, a counted row in the frame that counts it.
-    let homes: HashMap<Anchor, u32> = model
-        .marks
-        .iter()
-        .map(|m| (Anchor::Mark(m.id), m.frame))
-        .chain(
-            rows.keys()
-                .filter_map(|&anchor| anchor.frame().map(|frame| (anchor, frame))),
-        )
-        .collect();
+        let placed: SurfaceLayout = SurfaceLayout::build(&model.frames, &sizes);
 
-    // The arrowhead rests on the holder, so the wire runs held → holder.
-    // A diff event writes its own word on the line, after the wrapper's.
-    let holds: Vec<WireView> = model
-        .holds
-        .iter()
-        .filter_map(|hold| {
-            let (a, b) = (placed.rect(hold.held)?, placed.rect(hold.holder)?);
-            let (from, to) = tie_ends(a, b);
-            let event_word = match hold.event {
-                Some(HoldEvent::Added) => Some("added"),
-                Some(HoldEvent::Removed) => Some("removed"),
-                None => None,
+        let mut nodes: Vec<FlowNode<SurfaceNodeData>> = Vec::new();
+        for (id, view) in &views {
+            let Some(at) = placed.marks.get(id) else {
+                continue;
             };
-            let label = match event_word {
-                Some(word) if hold.via.is_empty() => Some(word.to_string()),
-                Some(word) => Some(format!("{} · {word}", hold.via)),
-                None => (!hold.via.is_empty()).then(|| hold.via.clone()),
+            nodes.push(
+                FlowNode::with_data(
+                    node_key(Anchor::Mark(*id)),
+                    view.name.clone(),
+                    (at.x, at.y),
+                    SurfaceNodeData::Mark(Box::new(view.clone())),
+                )
+                .size(Size::new(at.w, at.h))
+                .sides(Side::Left, Side::Right)
+                .draggable(false)
+                .selectable(false),
+            );
+        }
+        for (anchor, row) in &rows {
+            let Some(at) = placed.rows.get(anchor) else {
+                continue;
             };
-            Some(WireView {
-                key: hold.key(),
-                from,
-                to,
-                a: hold.held,
-                b: hold.holder,
-                label,
-                width: hold_width(hold.kind),
-                rest: hold.rest,
-                class: hold_class(hold.kind),
-                event: match hold.event {
-                    Some(HoldEvent::Added) => "is-added",
-                    Some(HoldEvent::Removed) => "is-removed",
-                    None => "",
-                },
+            nodes.push(
+                FlowNode::with_data(
+                    node_key(*anchor),
+                    row.words.clone(),
+                    (at.x, at.y),
+                    SurfaceNodeData::Fold(row.clone()),
+                )
+                .size(Size::new(at.w, at.h))
+                .sides(Side::Left, Side::Right)
+                .draggable(false)
+                .selectable(false),
+            );
+        }
+        nodes.sort_by(|a, b| a.id.cmp(&b.id));
+
+        let frames: Vec<FrameView> = placed
+            .frames
+            .iter()
+            .map(|(id, at)| {
+                let frame = &model.frames[*id as usize];
+                let label = frame.label(model.multi_crate);
+                FrameView {
+                    id: *id,
+                    parent: frame.parent,
+                    at: *at,
+                    label_w: label.as_deref().map_or(0.0, |l| text_w(l, 12.0)),
+                    label,
+                    key: frame.key(),
+                    words: frame.words(),
+                    folded: frame.folded,
+                }
             })
-        })
-        .collect();
+            .collect();
 
-    // The uses family: the arrowhead rests on the dependent, as everywhere.
-    let ties: Vec<WireView> = model
-        .ties
-        .iter()
-        .filter_map(|tie| {
-            let (a, b) = (placed.rect(tie.def)?, placed.rect(tie.user)?);
-            let (from, to) = tie_ends(a, b);
-            Some(WireView {
-                key: tie.key(),
-                from,
-                to,
-                a: tie.def,
-                b: tie.user,
-                label: tie.labeled.then(|| tie.count.to_string()),
-                width: tie_width(tie.count),
-                rest: tie.rest,
-                class: "is-ref",
-                event: "",
+        // Where everything sits, in one map: a mark in the module that declares
+        // it, a counted row in the frame that counts it.
+        let homes: HashMap<Anchor, u32> = model
+            .marks
+            .iter()
+            .map(|m| (Anchor::Mark(m.id), m.frame))
+            .chain(
+                rows.keys()
+                    .filter_map(|&anchor| anchor.frame().map(|frame| (anchor, frame))),
+            )
+            .collect();
+
+        // The arrowhead rests on the holder, so the wire runs held → holder.
+        // A diff event writes its own word on the line, after the wrapper's.
+        let holds: Vec<WireView> = model
+            .holds
+            .iter()
+            .filter_map(|hold| {
+                let (a, b) = (placed.rect(hold.held)?, placed.rect(hold.holder)?);
+                let (from, to) = tie_ends(a, b);
+                let event_word = match hold.event {
+                    Some(HoldEvent::Added) => Some("added"),
+                    Some(HoldEvent::Removed) => Some("removed"),
+                    None => None,
+                };
+                let label = match event_word {
+                    Some(word) if hold.via.is_empty() => Some(word.to_string()),
+                    Some(word) => Some(format!("{} · {word}", hold.via)),
+                    None => (!hold.via.is_empty()).then(|| hold.via.clone()),
+                };
+                Some(WireView {
+                    key: hold.key(),
+                    from,
+                    to,
+                    a: hold.held,
+                    b: hold.holder,
+                    label,
+                    width: hold_width(hold.kind),
+                    rest: hold.rest,
+                    class: hold_class(hold.kind),
+                    event: match hold.event {
+                        Some(HoldEvent::Added) => "is-added",
+                        Some(HoldEvent::Removed) => "is-removed",
+                        None => "",
+                    },
+                })
             })
-        })
-        .collect();
+            .collect();
 
-    let frame = Rect::bounds(nodes.iter().map(|n| n.rect())).or_else(|| {
-        frames
-            .first()
-            .map(|f| Rect::new(f.at.x, f.at.y, f.at.w, f.at.h))
-    });
+        // The uses family: the arrowhead rests on the dependent, as everywhere.
+        let ties: Vec<WireView> = model
+            .ties
+            .iter()
+            .filter_map(|tie| {
+                let (a, b) = (placed.rect(tie.def)?, placed.rect(tie.user)?);
+                let (from, to) = tie_ends(a, b);
+                Some(WireView {
+                    key: tie.key(),
+                    from,
+                    to,
+                    a: tie.def,
+                    b: tie.user,
+                    label: tie.labeled.then(|| tie.count.to_string()),
+                    width: tie_width(tie.count),
+                    rest: tie.rest,
+                    class: "is-ref",
+                    event: "",
+                })
+            })
+            .collect();
 
-    SurfaceDrawing {
-        nodes,
-        frames,
-        holds,
-        ties,
-        homes,
-        frame,
-        dirty: model.marks.iter().any(|m| m.letter().is_some()),
+        let frame = Rect::bounds(nodes.iter().map(|n| n.rect())).or_else(|| {
+            frames
+                .first()
+                .map(|f| Rect::new(f.at.x, f.at.y, f.at.w, f.at.h))
+        });
+
+        SurfaceDrawing {
+            nodes,
+            frames,
+            holds,
+            ties,
+            homes,
+            frame,
+            dirty: model.marks.iter().any(|m| m.letter().is_some()),
+        }
     }
 }
 
@@ -838,7 +845,7 @@ pub(crate) fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool
 /// survive a whole-attribute write), so dropping `height` from the string does
 /// not drop it from the element.
 #[component]
-fn MarkPlate(view: MarkView, selected: bool) -> Element {
+fn MarkPlate(view: MeasuredMark, selected: bool) -> Element {
     let nav = use_navigator();
     let to = if selected {
         Route::SurfaceOverview {}
@@ -1028,7 +1035,7 @@ fn SurfaceNode(ctx: NodeViewCtx<SurfaceNodeData>, selected: bool) -> Element {
 /// a re-layout, not a reading — the chart is drawn again around what is left —
 /// which is exactly why the two gestures are two marks and never one.
 #[component]
-fn FrameLayer(frames: Vec<FrameView>, kin: Option<KinView>) -> Element {
+fn FrameLayer(frames: Vec<FrameView>, kin: Option<SurfaceKin>) -> Element {
     let nav = use_navigator();
     let mut folds = use_code().folds;
     // A boundary's whole reading, drawn: its tint, the band of paper the
@@ -1226,7 +1233,7 @@ fn wire_classes(
     w: &WireView,
     is_ref: bool,
     hot: Option<Anchor>,
-    kin: Option<&KinView>,
+    kin: Option<&SurfaceKin>,
 ) -> Vec<&'static str> {
     let is_kin = kin.is_some_and(|k| !is_ref && k.wire_kin(w.a, w.b));
     let is_near = kin.is_some_and(|k| is_ref && k.tie_near(w.a, w.b));
@@ -1253,7 +1260,7 @@ fn WireLayer(
     holds: Vec<WireView>,
     ties: Vec<WireView>,
     hot: Signal<Option<Anchor>>,
-    kin: Option<KinView>,
+    kin: Option<SurfaceKin>,
 ) -> Element {
     let hot = hot();
     let wire = |w: &WireView, family: &'static str, side: f64| {
@@ -1377,7 +1384,7 @@ document.addEventListener('keydown', window.__slopeKeys);
 
 /// The surface chart, mounted for `/surface`.
 #[component]
-pub fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element {
+pub(crate) fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element {
     let code = use_code();
     let camera = use_context::<SurfaceCamera>();
     let flow = dioxus_flow::use_flow_handle::<SurfaceNodeData>();
@@ -1386,7 +1393,7 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element {
     // `graph` is a prop, not a signal; the two toggles are signals and track
     // themselves — the reading moves which ties rest, the doors move which
     // types are drawn at all, so this re-seats on either.
-    let built = use_memo(use_reactive((&graph,), {
+    let chart = use_memo(use_reactive((&graph,), {
         move |(graph,)| {
             let model = SurfaceModel::build(
                 &graph,
@@ -1394,7 +1401,7 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element {
                 *code.doors.read(),
                 &code.folds.read(),
             );
-            build_chart(&model)
+            SurfaceDrawing::from(&model)
         }
     }));
 
@@ -1403,31 +1410,31 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element {
     // the far ends of its uses edges; a module's is its boundary and one hop
     // across it. `None` while nothing is selected, or when the route names a
     // type or a module this survey does not draw.
-    let kin: Memo<Option<KinView>> = use_memo(use_reactive((&sel,), move |(sel,)| {
-        let b = built.read();
+    let kin: Memo<Option<SurfaceKin>> = use_memo(use_reactive((&sel,), move |(sel,)| {
+        let drawing = chart.read();
         let pairs = |wires: &[WireView]| -> Vec<(Anchor, Anchor)> {
             wires.iter().map(|w| (w.a, w.b)).collect()
         };
         match sel? {
             SurfaceSel::Mark(path, label) => {
-                let id = b.nodes.iter().find_map(|n| match &n.data {
+                let id = drawing.nodes.iter().find_map(|n| match &n.data {
                     SurfaceNodeData::Mark(m) if m.path == path && m.label == label => Some(m.id),
                     _ => None,
                 })?;
-                Some(KinView::read(
+                Some(SurfaceKin::read(
                     Anchor::Mark(id),
-                    &pairs(&b.holds),
-                    &pairs(&b.ties),
+                    &pairs(&drawing.holds),
+                    &pairs(&drawing.ties),
                 ))
             }
             SurfaceSel::Mod(key) => {
-                let frame = b.frames.iter().find(|f| f.key == key)?.id;
-                Some(KinView::read_mod(
+                let frame = drawing.frames.iter().find(|f| f.key == key)?.id;
+                Some(SurfaceKin::read_mod(
                     frame,
-                    &b.frames,
-                    &b.homes,
-                    &pairs(&b.holds),
-                    &pairs(&b.ties),
+                    &drawing.frames,
+                    &drawing.homes,
+                    &pairs(&drawing.holds),
+                    &pairs(&drawing.ties),
                 ))
             }
         }
@@ -1450,9 +1457,9 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element {
     let core_live: Signal<bool> = use_signal(|| false);
 
     use_effect(move || {
-        let b = built();
+        let drawing = chart();
         let mut nodes = nodes;
-        nodes.set(b.nodes);
+        nodes.set(drawing.nodes);
         // Camera discipline: the first paint seats the reader where they left
         // the chart, and frames it only when there is nothing to give back (a
         // fresh session). After that, only an explicit refit moves it —
@@ -1464,7 +1471,7 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element {
                 return;
             }
             framed.set(true);
-            let frame = b.frame;
+            let frame = drawing.frame;
             let panel = *sel_on.peek();
             let mut core_live = core_live;
             spawn(async move {
@@ -1488,7 +1495,7 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let _ = (framed, core_live);
-            if let Some(frame) = b.frame {
+            if let Some(frame) = drawing.frame {
                 frame_chart(flow, frame, false, 0);
             }
         }
@@ -1513,7 +1520,7 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element {
                 match key.as_str() {
                     "f" => {
                         if let Some(bounds) =
-                            Rect::bounds(built.peek().nodes.iter().map(|n| n.rect()))
+                            Rect::bounds(chart.peek().nodes.iter().map(|n| n.rect()))
                         {
                             let duration = if prefers_reduced_motion() { 0 } else { 400 };
                             frame_chart(flow, bounds, *sel_on.peek(), duration);
@@ -1562,7 +1569,7 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element {
                     // On a dirty chart, whatever the diff never touched rests
                     // at a lighter pressure; a selection's own ink outranks it.
                     let rest = kin_class.is_empty()
-                        && built.read().dirty
+                        && chart.read().dirty
                         && !ctx.node.data.touched();
                     rsx! {
                         div {
@@ -1582,12 +1589,12 @@ pub fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element {
                     }
                 }
                 WorldLayer { class: "data-ground",
-                    FrameLayer { frames: built.read().frames.clone(), kin: kin() }
+                    FrameLayer { frames: chart.read().frames.clone(), kin: kin() }
                 }
                 WorldLayer { class: "data-wires",
                     WireLayer {
-                        holds: built.read().holds.clone(),
-                        ties: built.read().ties.clone(),
+                        holds: chart.read().holds.clone(),
+                        ties: chart.read().ties.clone(),
                         hot,
                         kin: kin(),
                     }
@@ -1646,8 +1653,8 @@ mod tests {
 
     #[test]
     fn a_block_is_tall_enough_for_every_line_it_draws() {
-        let bare = measure(&mark("Wire", ItemKind::Struct, vec![]));
-        let held = measure(&mark(
+        let bare = MeasuredMark::from(&mark("Wire", ItemKind::Struct, vec![]));
+        let held = MeasuredMark::from(&mark(
             "Wire",
             ItemKind::Struct,
             vec![("items", "Vec<ItemMark>", "ItemMark")],
@@ -1669,13 +1676,13 @@ mod tests {
         };
         let mut long = mark("Tok", ItemKind::Enum, vec![]);
         long.variants = vec![row.clone(); 20];
-        let bare = measure(&mark("Tok", ItemKind::Enum, vec![]));
+        let bare = MeasuredMark::from(&mark("Tok", ItemKind::Enum, vec![]));
         let short = {
             let mut m = mark("Tok", ItemKind::Enum, vec![]);
             m.variants = vec![row.clone(); 8];
-            measure(&m)
+            MeasuredMark::from(&m)
         };
-        let view = measure(&long);
+        let view = MeasuredMark::from(&long);
         // Every row past the old cap of eight is still one row of height.
         assert!(view.size.1 > short.size.1);
         assert!(short.size.1 > bare.size.1);
@@ -1683,7 +1690,7 @@ mod tests {
         assert!(view.folds.is_empty());
         // An enum's name takes the sum-type color; a struct's does not.
         assert!(view.is_enum);
-        assert!(!measure(&mark("Wire", ItemKind::Struct, vec![])).is_enum);
+        assert!(!MeasuredMark::from(&mark("Wire", ItemKind::Struct, vec![])).is_enum);
     }
 
     /// The block is as wide as its widest row, whichever row that is and
@@ -1705,7 +1712,7 @@ mod tests {
                 state: RowState::Same,
             })
             .collect();
-        let view = measure(&wide);
+        let view = MeasuredMark::from(&wide);
         assert_eq!(view.fields.len(), 12);
         assert!(view.folds.is_empty());
         assert!(view.size.0 >= text_w("f11: HashMap<String, Vec<ItemMark>>", 10.0));
@@ -1718,7 +1725,7 @@ mod tests {
         let mut hub = mark("Id", ItemKind::Struct, vec![("raw", "u32", "")]);
         hub.held_by = 6;
         hub.named_by = 2;
-        let view = measure(&hub);
+        let view = MeasuredMark::from(&hub);
         assert_eq!(
             view.folds,
             vec![
@@ -1764,7 +1771,7 @@ mod tests {
         );
         survey.ty = "Nut".to_string();
         survey.ty_target = "Nut".to_string();
-        let view = measure(&survey);
+        let view = MeasuredMark::from(&survey);
         assert!(view.is_fn);
         assert_eq!(view.ty, "-> Nut");
         // The arrow is punctuation; what it hands back is still the bold run.
@@ -1785,7 +1792,7 @@ mod tests {
                 state: RowState::Same,
             })
             .collect();
-        let wide = measure(&wide);
+        let wide = MeasuredMark::from(&wide);
         assert_eq!(wide.fields.len(), 11);
         assert!(wide.folds.is_empty());
         assert!(wide.size.1 > view.size.1);
@@ -1806,7 +1813,7 @@ mod tests {
             Anchor::Mark(3),
             Anchor::Mark(4),
         );
-        let kin = KinView::read(
+        let kin = SurfaceKin::read(
             sel,
             &[(sel, holder)],
             &[(sel, caller), (callee, sel), (callee, stranger)],
@@ -1875,7 +1882,7 @@ mod tests {
         let homes: HashMap<Anchor, u32> = [(root, 0), (own, 1), (deep, 2), (stranger, 3), (row, 2)]
             .into_iter()
             .collect();
-        let kin = KinView::read_mod(
+        let kin = SurfaceKin::read_mod(
             1,
             &frames,
             &homes,
@@ -1909,7 +1916,7 @@ mod tests {
 
         // A mark's reading leaves the ground alone: the blast radius is a walk
         // between blocks, not a place on the paper.
-        let marks = KinView::read(own, &[(own, root)], &[]);
+        let marks = SurfaceKin::read(own, &[(own, root)], &[]);
         assert_eq!(marks.frame_class(3), "");
         assert_eq!(marks.node_class(own), "is-sel");
     }
@@ -1920,7 +1927,7 @@ mod tests {
     #[test]
     fn a_folded_tie_touching_the_selection_is_inked_in() {
         let (sel, far) = (Anchor::Mark(0), Anchor::Mark(1));
-        let kin = KinView::read(sel, &[], &[(sel, far)]);
+        let kin = SurfaceKin::read(sel, &[], &[(sel, far)]);
         let folded = WireView {
             key: "folded".to_string(),
             from: Point::new(0.0, 0.0),

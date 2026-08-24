@@ -33,7 +33,7 @@ use crate::views::survey::use_code_graph;
 
 /// What the route selects on the chart.
 #[derive(Clone, PartialEq, Debug)]
-pub enum DataSel {
+pub(crate) enum DataSel {
     /// One datum: the defining file, then the label its definition plate
     /// selects by.
     Mark(String, String),
@@ -41,17 +41,20 @@ pub enum DataSel {
     Mod(Vec<String>),
 }
 
-/// The selection the current route asks for.
-fn selection(route: &Route) -> Option<DataSel> {
-    match route {
-        Route::DataFocus { path, item } => Some(DataSel::Mark(path.join("/"), item.clone())),
-        Route::DataModFocus { module } => Some(DataSel::Mod(module.clone())),
-        _ => None,
+impl DataSel {
+    /// The selection the current route asks for, or `None` where the route
+    /// is not this chart's.
+    fn of(route: &Route) -> Option<Self> {
+        match route {
+            Route::DataFocus { path, item } => Some(DataSel::Mark(path.join("/"), item.clone())),
+            Route::DataModFocus { module } => Some(DataSel::Mod(module.clone())),
+            _ => None,
+        }
     }
 }
 
 /// The route that selects one datum on the chart.
-pub fn mark_route(path: &str, item: &str) -> Route {
+pub(crate) fn mark_route(path: &str, item: &str) -> Route {
     Route::DataFocus {
         path: path.split('/').map(str::to_string).collect(),
         item: item.to_string(),
@@ -59,7 +62,7 @@ pub fn mark_route(path: &str, item: &str) -> Route {
 }
 
 /// The route that selects one module boundary.
-pub fn mod_route(key: Vec<String>) -> Route {
+pub(crate) fn mod_route(key: Vec<String>) -> Route {
     Route::DataModFocus { module: key }
 }
 
@@ -68,13 +71,13 @@ pub fn mod_route(key: Vec<String>) -> Route {
 /// reader folding a module out of one question should not lose it from the
 /// other.
 #[derive(Clone, Copy)]
-pub struct DataState {
+pub(crate) struct DataState {
     /// The modules the reviewer folded by hand on this chart.
-    pub folds: Signal<Folds>,
+    pub(crate) folds: Signal<Folds>,
 }
 
 impl DataState {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             folds: Signal::new(Folds::new()),
         }
@@ -82,14 +85,14 @@ impl DataState {
 }
 
 /// This altitude's state, from the shell's context.
-pub fn use_data() -> DataState {
+pub(crate) fn use_data() -> DataState {
     use_context::<DataState>()
 }
 
 /// `/data` — the whole chart. The chart lives in the survey shell; this
 /// route adds nothing else.
 #[component]
-pub fn DataOverview() -> Element {
+pub(crate) fn DataOverview() -> Element {
     rsx! {}
 }
 
@@ -97,7 +100,7 @@ pub fn DataOverview() -> Element {
 /// blast radius inked; this sheet says who holds it, who names it, and who
 /// uses it, in rows a reader can follow.
 #[component]
-pub fn DataFocus(path: Vec<String>, item: String) -> Element {
+pub(crate) fn DataFocus(path: Vec<String>, item: String) -> Element {
     let Some(graph) = use_code_graph() else {
         return rsx! {};
     };
@@ -118,7 +121,7 @@ pub fn DataFocus(path: Vec<String>, item: String) -> Element {
 /// whole reading; there is no sheet, because a module is a place on the
 /// paper and the paper is already saying it.
 #[component]
-pub fn DataModFocus(module: Vec<String>) -> Element {
+pub(crate) fn DataModFocus(module: Vec<String>) -> Element {
     let _ = module;
     rsx! {}
 }
@@ -126,11 +129,11 @@ pub fn DataModFocus(module: Vec<String>) -> Element {
 /// The data chart and its furniture. Mounted by the survey shell, which has
 /// already loaded the survey all three code-reading altitudes share.
 #[component]
-pub fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
+pub(crate) fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
     let code = use_code();
     let data = use_data();
     let route = use_route::<Route>();
-    let sel = selection(&route);
+    let sel = DataSel::of(&route);
     let facts = use_memo(use_reactive((&graph,), move |(graph,)| {
         DataModel::build(&graph, *code.ref_dir.peek(), &data.folds.read()).facts(graph.unresolved)
     }));

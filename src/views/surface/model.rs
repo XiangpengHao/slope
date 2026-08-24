@@ -61,7 +61,7 @@ const HELD_CAP: usize = 3;
 // its foot is the chart's own ink — a folded fan-in — never its own words.
 /// Resting uses edges whose counts are engraved. Past this the labels are
 /// the chart's texture instead of its data.
-pub const TIE_LABELS: usize = 12;
+pub(crate) const TIE_LABELS: usize = 12;
 /// Uses edges one mark rests in an anchored reading.
 const TIES_PER_MARK: usize = 2;
 
@@ -69,7 +69,7 @@ const TIES_PER_MARK: usize = 2;
 /// Privacy folds a type for good and a reader can fold a whole module; either
 /// way the edge lands on the row that counts it instead of being cut.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
-pub enum Anchor {
+pub(crate) enum Anchor {
     /// A type or static with a block of its own.
     Mark(u32),
     /// A frame's `+ n private items` row.
@@ -82,11 +82,11 @@ pub enum Anchor {
 /// The modules the reviewer folded by hand, each named the way a fold has to
 /// survive the next build: the crate, then the module path as rust nests it.
 /// A frame id is an index into one build and says nothing across two.
-pub type Folds = HashSet<Vec<String>>;
+pub(crate) type Folds = HashSet<Vec<String>>;
 
 /// A module frame's name in a [`Folds`] set: the crate first, then the module
 /// path. The crate's own frame is the crate name alone.
-pub fn mod_key(krate: &str, module: &[String]) -> Vec<String> {
+pub(crate) fn mod_key(krate: &str, module: &[String]) -> Vec<String> {
     let mut key = vec![krate.to_string()];
     key.extend(module.iter().cloned());
     key
@@ -95,7 +95,7 @@ pub fn mod_key(krate: &str, module: &[String]) -> Vec<String> {
 impl Anchor {
     /// The frame a counted row stands in. `None` on a mark, which stands for
     /// itself wherever it was seated.
-    pub fn frame(self) -> Option<u32> {
+    pub(crate) fn frame(self) -> Option<u32> {
         match self {
             Anchor::Mark(_) => None,
             Anchor::Private(frame) | Anchor::Mod(frame) => Some(frame),
@@ -108,15 +108,15 @@ impl Anchor {
 /// what only private code owns hangs under the row that counts the private
 /// code, because that row is the only holder the chart draws.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Seat {
-    pub anchor: Anchor,
+pub(crate) struct Seat {
+    pub(crate) anchor: Anchor,
     /// Seated one layer beneath, in the survey's order.
-    pub children: Vec<Seat>,
+    pub(crate) children: Vec<Seat>,
 }
 
 impl Seat {
     /// A seat with nothing under it.
-    pub fn leaf(anchor: Anchor) -> Self {
+    pub(crate) fn leaf(anchor: Anchor) -> Self {
         Self {
             anchor,
             children: Vec::new(),
@@ -130,35 +130,35 @@ impl Seat {
 /// as the tree the code is written in rather than as one flat row of the
 /// crate's first segments.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Frame {
-    pub id: u32,
-    pub krate: String,
+pub(crate) struct Frame {
+    pub(crate) id: u32,
+    pub(crate) krate: String,
     /// The module path, segment by segment, as rust names it: `["views",
     /// "surface"]` is `mod views::surface`. Empty is the crate's own frame,
     /// which holds the types its crate root declares.
-    pub module: Vec<String>,
+    pub(crate) module: Vec<String>,
     /// The frame this one sits inside: the module one segment up, or the crate
     /// frame for a top-level module. `None` only on a crate frame.
-    pub parent: Option<u32>,
+    pub(crate) parent: Option<u32>,
     /// Drawn marks seated here, in the survey's (file, source) order. The
     /// roster of what the frame draws; `forest` says where each one sits.
-    pub marks: Vec<u32>,
+    pub(crate) marks: Vec<u32>,
     /// Private types, never drawn, counted here.
-    pub private: u32,
+    pub(crate) private: u32,
     /// The reviewer folded this module by hand: it draws its border, its label
     /// and one row, and nothing inside it is on the paper. The modules nested
     /// in it earn no frame of their own — a fold is one boundary, not a stack
     /// of empty ones.
-    pub folded: bool,
+    pub(crate) folded: bool,
     /// What that row counts: every contract inside this module and inside the
     /// modules nested in it, whatever door it stood at. Zero on an open frame.
-    pub packed: u32,
+    pub(crate) packed: u32,
     /// How they seat: the frame's ownership forest, in reading order —
     /// statics, then trees biggest first, then the free functions, then the
     /// vocabulary leaves, then the counted fold rows. Every mark in `marks`
     /// sits somewhere in here exactly once, and a fold row the frame counts is
     /// a seat of its own.
-    pub forest: Vec<Seat>,
+    pub(crate) forest: Vec<Seat>,
 }
 
 impl Frame {
@@ -168,7 +168,7 @@ impl Frame {
     /// own nesting says the rest of the path. A crate frame names its crate
     /// only where the survey has more than one to tell apart; in a single-crate
     /// workspace that name is already the cartouche's.
-    pub fn label(&self, multi_crate: bool) -> Option<String> {
+    pub(crate) fn label(&self, multi_crate: bool) -> Option<String> {
         match self.module.last() {
             Some(segment) => Some(format!("mod {segment}")),
             None => multi_crate.then(|| self.krate.clone()),
@@ -176,7 +176,7 @@ impl Frame {
     }
 
     /// This frame's name in a [`Folds`] set, and in the URL that selects it.
-    pub fn key(&self) -> Vec<String> {
+    pub(crate) fn key(&self) -> Vec<String> {
         mod_key(&self.krate, &self.module)
     }
 
@@ -185,7 +185,7 @@ impl Frame {
     /// the crate's own name where the frame is the crate's. The border's chip
     /// says `mod surface` and three modules in this workspace answer to that,
     /// so a line the reader meets away from the chart spells the path out.
-    pub fn words(&self) -> String {
+    pub(crate) fn words(&self) -> String {
         match self.module.is_empty() {
             true => self.krate.clone(),
             false => self.module.join("::"),
@@ -196,7 +196,7 @@ impl Frame {
 /// One quoted row's own diff state, in the diff's own idiom: an added row
 /// wears `+`, a dropped one is quoted from the base and struck.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum RowState {
+pub(crate) enum RowState {
     #[default]
     Same,
     Added,
@@ -205,7 +205,7 @@ pub enum RowState {
 
 impl RowState {
     /// The diff's own marker for the row.
-    pub fn marker(self) -> Option<&'static str> {
+    pub(crate) fn marker(self) -> Option<&'static str> {
         match self {
             RowState::Same => None,
             RowState::Added => Some("+"),
@@ -214,7 +214,7 @@ impl RowState {
     }
 
     /// The row's CSS class, empty for an untouched row.
-    pub fn class(self) -> &'static str {
+    pub(crate) fn class(self) -> &'static str {
         match self {
             RowState::Same => "",
             RowState::Added => "is-add",
@@ -226,56 +226,56 @@ impl RowState {
 /// One holding field, quoted from the source: the name as written and the
 /// declared type as written. Nothing here is reconstructed.
 #[derive(Clone, PartialEq, Debug)]
-pub struct FieldRow {
-    pub name: String,
-    pub decl: String,
+pub(crate) struct FieldRow {
+    pub(crate) name: String,
+    pub(crate) decl: String,
     /// The held type's name — the one run of the declaration drawn in full ink,
     /// so `Vec<FileDetail>` reads as the wrapper it is around the type it holds.
-    pub target: String,
+    pub(crate) target: String,
     /// The row against the diff base. A `Removed` row is the base's, seated
     /// where it stood.
-    pub state: RowState,
+    pub(crate) state: RowState,
 }
 
 /// One type, static, or free function with a block on the paper.
 #[derive(Clone, PartialEq, Debug)]
-pub struct SurfaceMark {
-    pub id: u32,
-    pub frame: u32,
-    pub kind: ItemKind,
-    pub vis: Vis,
-    pub name: String,
+pub(crate) struct SurfaceMark {
+    pub(crate) id: u32,
+    pub(crate) frame: u32,
+    pub(crate) kind: ItemKind,
+    pub(crate) vis: Vis,
+    pub(crate) name: String,
     /// The label its definition plate selects by, for the URL.
-    pub label: String,
+    pub(crate) label: String,
     /// The defining file, relative to the workspace root.
-    pub path: String,
-    pub line: u32,
+    pub(crate) path: String,
+    pub(crate) line: u32,
     /// How its own declaration differs from the diff base.
-    pub delta: Delta,
+    pub(crate) delta: Delta,
     /// The base had it, the working copy does not: a ghost, drawn dashed from
     /// the base edition.
-    pub ghost: bool,
+    pub(crate) ghost: bool,
     /// Fields — a function's parameters — quoted as written in declaration
     /// order, every one of them, and every one of them drawn.
-    pub fields: Vec<FieldRow>,
+    pub(crate) fields: Vec<FieldRow>,
     /// An enum's variants as written — payloads and discriminants included —
     /// quoted as rows (the row text in `decl`, `name` empty), all of them, and
     /// all of them drawn: a sum type is its variant list.
-    pub variants: Vec<FieldRow>,
+    pub(crate) variants: Vec<FieldRow>,
     /// The second band: the methods that clear the door, quoted as written
     /// signatures in the survey's order. The row text is in `decl` and the
     /// method's own name in `name`, which is what its edges and its callers
     /// are filed under. The band draws the whole list; only the door decides
     /// which rows are in it.
-    pub methods: Vec<FieldRow>,
+    pub(crate) methods: Vec<FieldRow>,
     /// A static's declared type or a function's return type, as written.
-    pub ty: String,
+    pub(crate) ty: String,
     /// The workspace type that type reaches, if it reaches one — the run of
     /// `ty` drawn in full ink, as a field row's `target` is. Empty where the
     /// walk found nothing on this chart to hold, which is exactly when the
     /// line draws no holds edge: `GlobalSignal<Option<Viewport>>` names a
     /// type from a dependency, and a dependency has no mark to point at.
-    pub ty_target: String,
+    pub(crate) ty_target: String,
     /// References into it the chart cannot draw a line for, summed: the ones
     /// leaving a mark the visibility setting or the budget folded, or an item
     /// with no mark of its own.
@@ -283,33 +283,33 @@ pub struct SurfaceMark {
     /// — and the difference between "nothing uses it" and "nothing the chart
     /// draws uses it", which a reviewer deciding whether code is dead must
     /// never have to guess at.
-    pub unseen_users: u32,
+    pub(crate) unseen_users: u32,
     /// The same residue on the way out: references from its own body that
     /// land where the chart draws no mark.
-    pub unseen_uses: u32,
+    pub(crate) unseen_uses: u32,
     /// Incoming holds edges folded to a count: how many types hold this one.
     /// Zero when they are all drawn.
-    pub held_by: u32,
+    pub(crate) held_by: u32,
     /// The other half of the same fold: how many signatures name this type.
     /// A function keeps nothing, so it is counted apart from the holders.
-    pub named_by: u32,
+    pub(crate) named_by: u32,
 }
 
 impl SurfaceMark {
     /// A static is state no type holds — the chart's other kind of mark.
-    pub fn is_static(&self) -> bool {
+    pub(crate) fn is_static(&self) -> bool {
         self.kind == ItemKind::Static
     }
 
     /// A free function: a contract rather than a shape. Nothing holds it, its
     /// rows are its parameters, and its `ty` is what it hands back.
-    pub fn is_fn(&self) -> bool {
+    pub(crate) fn is_fn(&self) -> bool {
         self.kind == ItemKind::Fn
     }
 
     /// Where it is written: `src/views/codemap/model.rs:278`. A ghost's line
     /// is the base edition's, and says so.
-    pub fn locator(&self) -> String {
+    pub(crate) fn locator(&self) -> String {
         if self.ghost {
             format!("{}:{} (base)", self.path, self.line)
         } else {
@@ -320,7 +320,7 @@ impl SurfaceMark {
     /// The letter the mark wears, in git's own alphabet: `A`dded since the
     /// base, `D` for a ghost, `M` for a rewritten declaration. `None` where
     /// the base wrote it exactly as it stands — whatever its file did.
-    pub fn letter(&self) -> Option<&'static str> {
+    pub(crate) fn letter(&self) -> Option<&'static str> {
         if self.ghost {
             return Some("D");
         }
@@ -336,29 +336,29 @@ impl SurfaceMark {
 /// the held type to its holder, so the arrowhead rests on the holder — the way
 /// a shape change travels.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Hold {
-    pub held: Anchor,
-    pub holder: Anchor,
-    pub kind: HoldKind,
+pub(crate) struct Hold {
+    pub(crate) held: Anchor,
+    pub(crate) holder: Anchor,
+    pub(crate) kind: HoldKind,
     /// The strongest wrapper on the walk, in its own word. Empty for a plain
     /// hold, which needs none.
-    pub via: String,
+    pub(crate) via: String,
     /// Rows drawing this edge.
-    pub fields: u32,
+    pub(crate) fields: u32,
     /// The rows are the holder's *methods*: its API names the held mark
     /// rather than keeping one of it. Never true of a function mark, whose
     /// whole block is a signature already.
-    pub from_method: bool,
+    pub(crate) from_method: bool,
     /// Drawn at rest. A folded edge stays in the set and inks in the moment the
     /// reader hovers either of its ends.
-    pub rest: bool,
+    pub(crate) rest: bool,
     /// The relation against the diff base. Diff ink never folds: an edge with
     /// an event always rests.
-    pub event: Option<HoldEvent>,
+    pub(crate) event: Option<HoldEvent>,
 }
 
 impl Hold {
-    pub fn key(&self) -> String {
+    pub(crate) fn key(&self) -> String {
         format!(
             "{:?}>{:?}:{:?}:{}:{}:{:?}",
             self.held, self.holder, self.kind, self.via, self.from_method, self.event
@@ -378,7 +378,7 @@ type HoldKey = (Anchor, Anchor, HoldKind, String, bool, Option<HoldEvent>);
 /// drawn — but the walk ends there: a row is a count, not a type with holders
 /// of its own. So does a function: nothing holds one, so nothing is upstream
 /// of it.
-pub fn upstream(pairs: &[(Anchor, Anchor)], from: Anchor) -> HashSet<Anchor> {
+pub(crate) fn upstream(pairs: &[(Anchor, Anchor)], from: Anchor) -> HashSet<Anchor> {
     let mut seen: HashSet<Anchor> = HashSet::new();
     let mut queue: Vec<Anchor> = vec![from];
     while let Some(at) = queue.pop() {
@@ -400,89 +400,89 @@ pub fn upstream(pairs: &[(Anchor, Anchor)], from: Anchor) -> HashSet<Anchor> {
 /// in. Drawn dashed, and the arrowhead rests on the user — the dependent — as
 /// it does in every family at every altitude.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Tie {
-    pub def: Anchor,
-    pub user: Anchor,
-    pub count: u32,
+pub(crate) struct Tie {
+    pub(crate) def: Anchor,
+    pub(crate) user: Anchor,
+    pub(crate) count: u32,
     /// Which of the def's drawn method rows this leans on, heaviest first —
     /// the part of the API being used, where the survey resolved the call to
     /// a method rather than to the block as a whole. Empty when it reaches
     /// the mark itself, or a row the door folded.
-    pub rows: Vec<(String, u32)>,
+    pub(crate) rows: Vec<(String, u32)>,
     /// Drawn at rest under the current reading.
-    pub rest: bool,
+    pub(crate) rest: bool,
     /// Heavy enough among the resting ties to carry its count on the paper.
-    pub labeled: bool,
+    pub(crate) labeled: bool,
 }
 
 impl Tie {
-    pub fn key(&self) -> String {
+    pub(crate) fn key(&self) -> String {
         format!("{:?}~{:?}", self.def, self.user)
     }
 }
 
 /// Everything one build of the surface chart reads out of the survey.
 #[derive(Clone, PartialEq, Debug)]
-pub struct SurfaceModel {
-    pub frames: Vec<Frame>,
+pub(crate) struct SurfaceModel {
+    pub(crate) frames: Vec<Frame>,
     /// Drawn marks, in the survey's (file, source) order.
-    pub marks: Vec<SurfaceMark>,
-    pub holds: Vec<Hold>,
-    pub ties: Vec<Tie>,
+    pub(crate) marks: Vec<SurfaceMark>,
+    pub(crate) holds: Vec<Hold>,
+    pub(crate) ties: Vec<Tie>,
     /// More than one crate in the survey: crate frames earn their names.
-    pub multi_crate: bool,
+    pub(crate) multi_crate: bool,
     /// The reading this model was built at, so the chart and the sheet word
     /// their visibility fold rows in the same breath the fold was decided.
-    pub doors: Doors,
+    pub(crate) doors: Doors,
     // ---- Facts for the cartouche. ----
-    pub structs: usize,
-    pub enums: usize,
+    pub(crate) structs: usize,
+    pub(crate) enums: usize,
     /// Drawn free functions: the surface the chart reads as contracts.
-    pub fns: usize,
+    pub(crate) fns: usize,
     /// Drawn traits: contracts with nothing but clauses.
-    pub traits: usize,
+    pub(crate) traits: usize,
     /// Drawn consts and type aliases: contracts one line long.
-    pub consts: usize,
-    pub aliases: usize,
+    pub(crate) consts: usize,
+    pub(crate) aliases: usize,
     /// Method rows drawn on type blocks — the rest of the published surface,
     /// which is not marks and would otherwise go uncounted.
-    pub methods: usize,
+    pub(crate) methods: usize,
     /// Drawn uses edges: how much of the workspace's coupling is one body
     /// leaning on another contract rather than a published surface naming it.
-    pub uses: usize,
+    pub(crate) uses: usize,
     /// Statics, plus every drawn type no other type holds. A function is not
     /// one: nothing can hold a function, so counting it would say nothing.
-    pub roots: usize,
+    pub(crate) roots: usize,
     /// The structural diff's counts over the drawn marks.
-    pub added: usize,
-    pub removed: usize,
-    pub changed: usize,
+    pub(crate) added: usize,
+    pub(crate) removed: usize,
+    pub(crate) changed: usize,
     /// The modules holding a diff-touched contract, each named by its whole
     /// path (`views::surface`), in name order.
-    pub changed_modules: Vec<String>,
+    pub(crate) changed_modules: Vec<String>,
 }
 
 /// What the cartouche and the legend state about the survey. Small enough to
 /// hand the furniture without carrying the whole chart along with it.
 #[derive(Clone, PartialEq, Debug)]
-pub struct SurfaceFacts {
-    pub structs: usize,
-    pub enums: usize,
-    pub fns: usize,
-    pub traits: usize,
-    pub consts: usize,
-    pub aliases: usize,
-    pub added: usize,
-    pub removed: usize,
-    pub changed: usize,
-    pub changed_modules: Vec<String>,
+pub(crate) struct SurfaceFacts {
+    pub(crate) structs: usize,
+    pub(crate) enums: usize,
+    pub(crate) fns: usize,
+    pub(crate) traits: usize,
+    pub(crate) consts: usize,
+    pub(crate) aliases: usize,
+    pub(crate) added: usize,
+    pub(crate) removed: usize,
+    pub(crate) changed: usize,
+    pub(crate) changed_modules: Vec<String>,
     /// Names the survey could not resolve, straight from the wire model.
-    pub unresolved: u32,
+    pub(crate) unresolved: u32,
 }
 
 impl SurfaceModel {
     /// The facts, lifted off the model for the furniture that states them.
-    pub fn facts(&self, unresolved: u32) -> SurfaceFacts {
+    pub(crate) fn facts(&self, unresolved: u32) -> SurfaceFacts {
         SurfaceFacts {
             structs: self.structs,
             enums: self.enums,
@@ -611,15 +611,17 @@ fn subtree_size(anchor: Anchor, seated: &HashMap<Anchor, Vec<u32>>) -> usize {
     })
 }
 
-/// Grow one seat and everything seated under it.
-fn seat_of(anchor: Anchor, seated: &HashMap<Anchor, Vec<u32>>) -> Seat {
-    Seat {
-        anchor,
-        children: seated.get(&anchor).map_or_else(Vec::new, |kids| {
-            kids.iter()
-                .map(|&kid| seat_of(Anchor::Mark(kid), seated))
-                .collect()
-        }),
+impl Seat {
+    /// Grow one seat and everything seated under it.
+    fn of(anchor: Anchor, seated: &HashMap<Anchor, Vec<u32>>) -> Self {
+        Seat {
+            anchor,
+            children: seated.get(&anchor).map_or_else(Vec::new, |kids| {
+                kids.iter()
+                    .map(|&kid| Seat::of(Anchor::Mark(kid), seated))
+                    .collect()
+            }),
+        }
     }
 }
 
@@ -641,7 +643,7 @@ fn would_cycle(child: u32, candidate: Anchor, parents: &HashMap<u32, Anchor>) ->
 }
 
 impl SurfaceModel {
-    pub fn build(graph: &CodeGraph, ref_dir: RefDir, doors: Doors, folds: &Folds) -> Self {
+    pub(crate) fn build(graph: &CodeGraph, ref_dir: RefDir, doors: Doors, folds: &Folds) -> Self {
         // Ghosts share the marks' id space, continuing after `items`.
         let ghost_of = |id: u32| -> Option<&GhostMark> {
             (id as usize)
@@ -1200,7 +1202,7 @@ impl SurfaceModel {
             }
             let mut forest: Vec<Seat> = Vec::new();
             let place = |forest: &mut Vec<Seat>, m: u32| {
-                forest.push(seat_of(Anchor::Mark(m), &seated));
+                forest.push(Seat::of(Anchor::Mark(m), &seated));
                 for &f in beside.get(&m).into_iter().flatten() {
                     forest.push(Seat::leaf(Anchor::Mark(f)));
                 }
@@ -1216,7 +1218,7 @@ impl SurfaceModel {
             }
             forest.extend(band.into_iter().map(|m| Seat::leaf(Anchor::Mark(m))));
             if frame.private > 0 {
-                forest.push(seat_of(Anchor::Private(frame.id), &seated));
+                forest.push(Seat::of(Anchor::Private(frame.id), &seated));
             }
             frame.forest = forest;
         }

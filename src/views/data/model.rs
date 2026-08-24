@@ -38,13 +38,13 @@ use crate::views::surface::model::{
 /// would misread the rest, and its fan-in drawn in full is a star burst.
 const HELD_CAP: usize = 3;
 /// Resting uses edges whose counts are engraved, as on the surface chart.
-pub const TIE_LABELS: usize = 12;
+pub(crate) const TIE_LABELS: usize = 12;
 /// Uses edges one mark rests in an anchored reading.
 const TIES_PER_MARK: usize = 2;
 
 /// Where a drawn mark stands in the holding order — the chart's one verdict.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Tier {
+pub(crate) enum Tier {
     /// Top-level data: a static, or a type no other type keeps in a field
     /// (`Owns` or `Shares`). State code reaches directly, where every chain
     /// of holding begins.
@@ -59,7 +59,7 @@ pub enum Tier {
 
 /// Why a held type stands instead of nesting.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Stand {
+pub(crate) enum Stand {
     /// A shared handle holds it (`Arc`, `Rc`, a signal): sharing has no
     /// single container, so every holder keeps a drawn line.
     Shared,
@@ -79,71 +79,71 @@ pub enum Stand {
 /// and a link to its code (2026-08-23, user); only the paper keeps them to a
 /// count.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Unseen {
+pub(crate) struct Unseen {
     /// Its [`ItemMark`] id: the row's words, and where the link lands.
-    pub item: u32,
+    pub(crate) item: u32,
     /// References across this pair, summed.
-    pub count: u32,
+    pub(crate) count: u32,
 }
 
 /// One shape or static with a block on the paper.
 #[derive(Clone, PartialEq, Debug)]
-pub struct DataMark {
-    pub id: u32,
-    pub frame: u32,
-    pub kind: ItemKind,
-    pub vis: crate::api::Vis,
-    pub name: String,
+pub(crate) struct DataMark {
+    pub(crate) id: u32,
+    pub(crate) frame: u32,
+    pub(crate) kind: ItemKind,
+    pub(crate) vis: crate::api::Vis,
+    pub(crate) name: String,
     /// The label its definition plate selects by, for the URL.
-    pub label: String,
-    pub path: String,
-    pub line: u32,
-    pub delta: Delta,
+    pub(crate) label: String,
+    pub(crate) path: String,
+    pub(crate) line: u32,
+    pub(crate) delta: Delta,
     /// The base had it, the working copy does not: drawn dashed from the base.
-    pub ghost: bool,
+    pub(crate) ghost: bool,
     /// Fields quoted as written, every one of them — this chart's whole
     /// quotation. Methods are the surface chart's ink and are not here.
-    pub fields: Vec<FieldRow>,
+    pub(crate) fields: Vec<FieldRow>,
     /// An enum's variants as written, all of them.
-    pub variants: Vec<FieldRow>,
+    pub(crate) variants: Vec<FieldRow>,
     /// A static's declared type, as written.
-    pub ty: String,
+    pub(crate) ty: String,
     /// The workspace type that type reaches, drawn in full ink. Empty where
     /// it reaches nothing this chart draws.
-    pub ty_target: String,
-    pub tier: Tier,
+    pub(crate) ty_target: String,
+    pub(crate) tier: Tier,
     /// The marks nested inside this block, in the survey's order.
-    pub kids: Vec<u32>,
+    pub(crate) kids: Vec<u32>,
     /// Distinct contracts whose declared surface names it — free functions,
     /// method rows, consts, aliases, trait clauses. None of them has a block
     /// here, so the count is the ink the chart will not draw.
-    pub named_by: u32,
+    pub(crate) named_by: u32,
     /// The bodies with no block here that reach it — function bodies,
     /// mostly. The other half of the same undrawn ink, kept as ends and not
     /// as a number, because the sheet lists every one of them; heaviest
     /// first. The paper says only how many.
-    pub used_by: Vec<Unseen>,
+    pub(crate) used_by: Vec<Unseen>,
     /// Where its own impls reach code the chart draws no mark for, the same
     /// way round. Said on the sheet, never on the paper.
-    pub unseen_uses: Vec<Unseen>,
+    pub(crate) unseen_uses: Vec<Unseen>,
     /// Structural holders folded to a count: nonzero only on vocabulary
     /// marks, whose incoming holds rest folded.
-    pub held_by: u32,
+    pub(crate) held_by: u32,
 }
 
 impl DataMark {
-    pub fn is_static(&self) -> bool {
+    pub(crate) fn is_static(&self) -> bool {
         self.kind == ItemKind::Static
     }
 
     /// A root wears the gate's 2.5px ink left edge — the static's own mark,
     /// widened to every block a chain of holding begins at.
-    pub fn is_root(&self) -> bool {
+    pub(crate) fn is_root(&self) -> bool {
         matches!(self.tier, Tier::Root)
     }
 
     /// Where it is written; a ghost's line is the base edition's.
-    pub fn locator(&self) -> String {
+    pub(crate) fn locator(&self) -> String {
         if self.ghost {
             format!("{}:{} (base)", self.path, self.line)
         } else {
@@ -152,7 +152,7 @@ impl DataMark {
     }
 
     /// The letter the mark wears, in git's own alphabet.
-    pub fn letter(&self) -> Option<&'static str> {
+    pub(crate) fn letter(&self) -> Option<&'static str> {
         if self.ghost {
             return Some("D");
         }
@@ -170,21 +170,21 @@ impl DataMark {
 /// diff's added and removed relations. Drawn held → holder; the arrowhead
 /// rests on the holder, the way a shape change travels.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Hold {
-    pub held: Anchor,
-    pub holder: Anchor,
-    pub kind: HoldKind,
+pub(crate) struct Hold {
+    pub(crate) held: Anchor,
+    pub(crate) holder: Anchor,
+    pub(crate) kind: HoldKind,
     /// The strongest wrapper on the walk, in its own word.
-    pub via: String,
+    pub(crate) via: String,
     /// Rows drawing this edge.
-    pub fields: u32,
+    pub(crate) fields: u32,
     /// Drawn at rest. A folded edge inks in when either end is hovered.
-    pub rest: bool,
-    pub event: Option<HoldEvent>,
+    pub(crate) rest: bool,
+    pub(crate) event: Option<HoldEvent>,
 }
 
 impl Hold {
-    pub fn key(&self) -> String {
+    pub(crate) fn key(&self) -> String {
         format!(
             "{:?}>{:?}:{:?}:{}:{:?}",
             self.held, self.holder, self.kind, self.via, self.event
@@ -196,20 +196,20 @@ impl Hold {
 /// lean on another type. Same dashed family as the surface chart's, same
 /// direction — the arrowhead rests on the user.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Tie {
-    pub def: Anchor,
-    pub user: Anchor,
-    pub count: u32,
+pub(crate) struct Tie {
+    pub(crate) def: Anchor,
+    pub(crate) user: Anchor,
+    pub(crate) count: u32,
     /// Which of the def's methods the references name, heaviest first, for
     /// the sheet. The rows are not drawn here — methods are the surface
     /// chart's — but which clause a body leans on is still the answer.
-    pub rows: Vec<(String, u32)>,
-    pub rest: bool,
-    pub labeled: bool,
+    pub(crate) rows: Vec<(String, u32)>,
+    pub(crate) rest: bool,
+    pub(crate) labeled: bool,
 }
 
 impl Tie {
-    pub fn key(&self) -> String {
+    pub(crate) fn key(&self) -> String {
         format!("{:?}~{:?}", self.def, self.user)
     }
 }
@@ -217,63 +217,63 @@ impl Tie {
 /// One undrawn naming: a contract whose declared surface names a drawn type.
 /// The sheet's rows and the foot's `named by n signatures` both read this.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Naming {
+pub(crate) struct Naming {
     /// The named type's mark.
-    pub ty: u32,
+    pub(crate) ty: u32,
     /// The naming contract's mark in the survey — a free fn, const, alias,
     /// or, for a method row, the type whose API says the word.
-    pub namer: u32,
+    pub(crate) namer: u32,
     /// The namer is a method row of a type rather than a free contract.
-    pub from_method: bool,
-    pub event: Option<HoldEvent>,
+    pub(crate) from_method: bool,
+    pub(crate) event: Option<HoldEvent>,
 }
 
 /// What the cartouche and the legend state about the survey.
 #[derive(Clone, PartialEq, Debug)]
-pub struct DataFacts {
-    pub structs: usize,
-    pub enums: usize,
-    pub unions: usize,
-    pub statics: usize,
-    pub added: usize,
-    pub removed: usize,
-    pub changed: usize,
-    pub changed_modules: Vec<String>,
-    pub unresolved: u32,
+pub(crate) struct DataFacts {
+    pub(crate) structs: usize,
+    pub(crate) enums: usize,
+    pub(crate) unions: usize,
+    pub(crate) statics: usize,
+    pub(crate) added: usize,
+    pub(crate) removed: usize,
+    pub(crate) changed: usize,
+    pub(crate) changed_modules: Vec<String>,
+    pub(crate) unresolved: u32,
 }
 
 /// Everything one build of the data chart reads out of the survey.
 #[derive(Clone, PartialEq, Debug)]
-pub struct DataModel {
-    pub frames: Vec<Frame>,
+pub(crate) struct DataModel {
+    pub(crate) frames: Vec<Frame>,
     /// Drawn marks, in the survey's (file, source) order.
-    pub marks: Vec<DataMark>,
+    pub(crate) marks: Vec<DataMark>,
     /// The drawn holding edges — everything but the nesting.
-    pub holds: Vec<Hold>,
+    pub(crate) holds: Vec<Hold>,
     /// Every current structural relation as (held, holder), the nesting
     /// included: the blast radius walks all of it, drawn or seated.
-    pub pairs: Vec<(Anchor, Anchor)>,
-    pub ties: Vec<Tie>,
+    pub(crate) pairs: Vec<(Anchor, Anchor)>,
+    pub(crate) ties: Vec<Tie>,
     /// The undrawn naming ink, for the sheet's rows.
-    pub naming: Vec<Naming>,
-    pub multi_crate: bool,
+    pub(crate) naming: Vec<Naming>,
+    pub(crate) multi_crate: bool,
     // ---- Facts for the cartouche. ----
-    pub structs: usize,
-    pub enums: usize,
-    pub unions: usize,
-    pub statics: usize,
-    pub roots: usize,
-    pub nested: usize,
-    pub standing: usize,
-    pub added: usize,
-    pub removed: usize,
-    pub changed: usize,
-    pub changed_modules: Vec<String>,
+    pub(crate) structs: usize,
+    pub(crate) enums: usize,
+    pub(crate) unions: usize,
+    pub(crate) statics: usize,
+    pub(crate) roots: usize,
+    pub(crate) nested: usize,
+    pub(crate) standing: usize,
+    pub(crate) added: usize,
+    pub(crate) removed: usize,
+    pub(crate) changed: usize,
+    pub(crate) changed_modules: Vec<String>,
 }
 
 impl DataModel {
     /// The facts, lifted off the model for the furniture that states them.
-    pub fn facts(&self, unresolved: u32) -> DataFacts {
+    pub(crate) fn facts(&self, unresolved: u32) -> DataFacts {
         DataFacts {
             structs: self.structs,
             enums: self.enums,
@@ -332,7 +332,7 @@ fn contained(id: u32, kids: &HashMap<u32, Vec<u32>>) -> usize {
 }
 
 impl DataModel {
-    pub fn build(graph: &CodeGraph, ref_dir: RefDir, folds: &Folds) -> Self {
+    pub(crate) fn build(graph: &CodeGraph, ref_dir: RefDir, folds: &Folds) -> Self {
         // Ghosts share the marks' id space, continuing after `items`.
         let ghost_of = |id: u32| -> Option<&GhostMark> {
             (id as usize)

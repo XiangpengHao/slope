@@ -164,200 +164,202 @@ fn base_methods(file: &ast::SourceFile) -> HashMap<String, Vec<(String, String)>
     out
 }
 
-/// Every charted declaration in one base edition, in source order.
-fn base_decls(text: &str) -> Vec<BaseDecl> {
-    let parse = ra_ap_syntax::SourceFile::parse(text, ra_ap_syntax::Edition::CURRENT);
-    let mut methods = base_methods(&parse.tree());
-    let mut out = Vec::new();
-    for node in parse.tree().syntax().descendants() {
-        let kind = match node.kind() {
-            SyntaxKind::STRUCT => ItemKind::Struct,
-            SyntaxKind::ENUM => ItemKind::Enum,
-            SyntaxKind::UNION => ItemKind::Union,
-            SyntaxKind::STATIC => ItemKind::Static,
-            SyntaxKind::TRAIT => ItemKind::Trait,
-            SyntaxKind::FN => ItemKind::Fn,
-            SyntaxKind::CONST => ItemKind::Const,
-            SyntaxKind::TYPE_ALIAS => ItemKind::TypeAlias,
-            _ => continue,
-        };
-        let Some(prefix) = module_prefix(&node) else {
-            continue;
-        };
-        let range = node.text_range();
-        let (name, vis, field_rows, variants, ty, own_rows) = match kind {
-            ItemKind::Struct => {
-                let Some(s) = ast::Struct::cast(node.clone()) else {
-                    continue;
-                };
-                let Some(name) = s.name() else { continue };
-                let vis = super::code::vis_kind(s.visibility());
-                (
-                    name.text().to_string(),
-                    vis,
-                    base_fields(s.field_list()),
-                    Vec::new(),
-                    String::new(),
-                    Vec::new(),
-                )
-            }
-            ItemKind::Union => {
-                let Some(u) = ast::Union::cast(node.clone()) else {
-                    continue;
-                };
-                let Some(name) = u.name() else { continue };
-                let vis = super::code::vis_kind(u.visibility());
-                (
-                    name.text().to_string(),
-                    vis,
-                    base_fields(u.record_field_list().map(ast::FieldList::RecordFieldList)),
-                    Vec::new(),
-                    String::new(),
-                    Vec::new(),
-                )
-            }
-            ItemKind::Enum => {
-                let Some(e) = ast::Enum::cast(node.clone()) else {
-                    continue;
-                };
-                let Some(name) = e.name() else { continue };
-                let vis = super::code::vis_kind(e.visibility());
-                let variants = e
-                    .variant_list()
-                    .into_iter()
-                    .flat_map(|l| l.variants())
-                    .filter_map(|v| {
-                        let name = v.name()?.text().to_string();
-                        Some(super::data::variant_text(&v, &name))
-                    })
-                    .collect();
-                (
-                    name.text().to_string(),
-                    vis,
-                    Vec::new(),
-                    variants,
-                    String::new(),
-                    Vec::new(),
-                )
-            }
-            ItemKind::Static => {
-                let Some(s) = ast::Static::cast(node.clone()) else {
-                    continue;
-                };
-                let Some(name) = s.name() else { continue };
-                let vis = super::code::vis_kind(s.visibility());
-                (
-                    name.text().to_string(),
-                    vis,
-                    Vec::new(),
-                    Vec::new(),
-                    super::data::type_text(s.ty()),
-                    Vec::new(),
-                )
-            }
-            // A trait's band is written inside its own declaration, so the
-            // base reads it where it stands — no impl block to find, and no
-            // same-file limit on it.
-            ItemKind::Trait => {
-                let Some(t) = ast::Trait::cast(node.clone()) else {
-                    continue;
-                };
-                let Some(name) = t.name() else { continue };
-                let rows = t
-                    .assoc_item_list()
-                    .into_iter()
-                    .flat_map(|list| list.assoc_items())
-                    .filter_map(|item| {
-                        let (name, node) = match &item {
-                            ast::AssocItem::Fn(f) => (f.name()?, f.syntax()),
-                            ast::AssocItem::TypeAlias(a) => (a.name()?, a.syntax()),
-                            ast::AssocItem::Const(c) => (c.name()?, c.syntax()),
-                            _ => return None,
-                        };
-                        Some((name.text().to_string(), super::data::decl_text(node)))
-                    })
-                    .collect();
-                (
-                    name.text().to_string(),
-                    super::code::vis_kind(t.visibility()),
-                    Vec::new(),
-                    Vec::new(),
-                    String::new(),
-                    rows,
-                )
-            }
-            // A contract one line long: what it names stands in the slot a
-            // static's declared type uses.
-            ItemKind::Const => {
-                let Some(c) = ast::Const::cast(node.clone()) else {
-                    continue;
-                };
-                let Some(name) = c.name() else { continue };
-                (
-                    name.text().to_string(),
-                    super::code::vis_kind(c.visibility()),
-                    Vec::new(),
-                    Vec::new(),
-                    super::data::type_text(c.ty()),
-                    Vec::new(),
-                )
-            }
-            ItemKind::TypeAlias => {
-                let Some(a) = ast::TypeAlias::cast(node.clone()) else {
-                    continue;
-                };
-                let Some(name) = a.name() else { continue };
-                (
-                    name.text().to_string(),
-                    super::code::vis_kind(a.visibility()),
-                    Vec::new(),
-                    Vec::new(),
-                    super::data::type_text(a.ty()),
-                    Vec::new(),
-                )
-            }
-            ItemKind::Fn => {
-                let Some(f) = ast::Fn::cast(node.clone()) else {
-                    continue;
-                };
-                let Some(name) = f.name() else { continue };
-                let vis = super::code::vis_kind(f.visibility());
-                // A function that hands nothing back quotes no return line,
-                // at the base as in the working copy.
-                let ret = super::data::type_text(f.ret_type().and_then(|r| r.ty()));
-                (
-                    name.text().to_string(),
-                    vis,
-                    base_params(f.param_list()),
-                    Vec::new(),
-                    if ret == "()" { String::new() } else { ret },
-                    Vec::new(),
-                )
-            }
-            _ => continue,
-        };
-        let name = format!("{prefix}{name}");
-        let method_rows = match kind {
-            ItemKind::Struct | ItemKind::Enum | ItemKind::Union => {
-                methods.remove(&name).unwrap_or_default()
-            }
-            // A trait's clauses stand inside its own declaration.
-            ItemKind::Trait => own_rows,
-            _ => Vec::new(),
-        };
-        out.push(BaseDecl {
-            name,
-            kind,
-            vis,
-            line: line_of(text, usize::from(range.start())),
-            text: collapsed(&node.text().to_string()),
-            field_rows,
-            variants,
-            ty,
-            method_rows,
-        });
+impl BaseDecl {
+    /// Every charted declaration in one base edition, in source order.
+    fn scan(text: &str) -> Vec<Self> {
+        let parse = ra_ap_syntax::SourceFile::parse(text, ra_ap_syntax::Edition::CURRENT);
+        let mut methods = base_methods(&parse.tree());
+        let mut out = Vec::new();
+        for node in parse.tree().syntax().descendants() {
+            let kind = match node.kind() {
+                SyntaxKind::STRUCT => ItemKind::Struct,
+                SyntaxKind::ENUM => ItemKind::Enum,
+                SyntaxKind::UNION => ItemKind::Union,
+                SyntaxKind::STATIC => ItemKind::Static,
+                SyntaxKind::TRAIT => ItemKind::Trait,
+                SyntaxKind::FN => ItemKind::Fn,
+                SyntaxKind::CONST => ItemKind::Const,
+                SyntaxKind::TYPE_ALIAS => ItemKind::TypeAlias,
+                _ => continue,
+            };
+            let Some(prefix) = module_prefix(&node) else {
+                continue;
+            };
+            let range = node.text_range();
+            let (name, vis, field_rows, variants, ty, own_rows) = match kind {
+                ItemKind::Struct => {
+                    let Some(s) = ast::Struct::cast(node.clone()) else {
+                        continue;
+                    };
+                    let Some(name) = s.name() else { continue };
+                    let vis = super::code::vis_kind(s.visibility());
+                    (
+                        name.text().to_string(),
+                        vis,
+                        base_fields(s.field_list()),
+                        Vec::new(),
+                        String::new(),
+                        Vec::new(),
+                    )
+                }
+                ItemKind::Union => {
+                    let Some(u) = ast::Union::cast(node.clone()) else {
+                        continue;
+                    };
+                    let Some(name) = u.name() else { continue };
+                    let vis = super::code::vis_kind(u.visibility());
+                    (
+                        name.text().to_string(),
+                        vis,
+                        base_fields(u.record_field_list().map(ast::FieldList::RecordFieldList)),
+                        Vec::new(),
+                        String::new(),
+                        Vec::new(),
+                    )
+                }
+                ItemKind::Enum => {
+                    let Some(e) = ast::Enum::cast(node.clone()) else {
+                        continue;
+                    };
+                    let Some(name) = e.name() else { continue };
+                    let vis = super::code::vis_kind(e.visibility());
+                    let variants = e
+                        .variant_list()
+                        .into_iter()
+                        .flat_map(|l| l.variants())
+                        .filter_map(|v| {
+                            let name = v.name()?.text().to_string();
+                            Some(super::data::variant_text(&v, &name))
+                        })
+                        .collect();
+                    (
+                        name.text().to_string(),
+                        vis,
+                        Vec::new(),
+                        variants,
+                        String::new(),
+                        Vec::new(),
+                    )
+                }
+                ItemKind::Static => {
+                    let Some(s) = ast::Static::cast(node.clone()) else {
+                        continue;
+                    };
+                    let Some(name) = s.name() else { continue };
+                    let vis = super::code::vis_kind(s.visibility());
+                    (
+                        name.text().to_string(),
+                        vis,
+                        Vec::new(),
+                        Vec::new(),
+                        super::data::type_text(s.ty()),
+                        Vec::new(),
+                    )
+                }
+                // A trait's band is written inside its own declaration, so the
+                // base reads it where it stands — no impl block to find, and no
+                // same-file limit on it.
+                ItemKind::Trait => {
+                    let Some(t) = ast::Trait::cast(node.clone()) else {
+                        continue;
+                    };
+                    let Some(name) = t.name() else { continue };
+                    let rows = t
+                        .assoc_item_list()
+                        .into_iter()
+                        .flat_map(|list| list.assoc_items())
+                        .filter_map(|item| {
+                            let (name, node) = match &item {
+                                ast::AssocItem::Fn(f) => (f.name()?, f.syntax()),
+                                ast::AssocItem::TypeAlias(a) => (a.name()?, a.syntax()),
+                                ast::AssocItem::Const(c) => (c.name()?, c.syntax()),
+                                _ => return None,
+                            };
+                            Some((name.text().to_string(), super::data::decl_text(node)))
+                        })
+                        .collect();
+                    (
+                        name.text().to_string(),
+                        super::code::vis_kind(t.visibility()),
+                        Vec::new(),
+                        Vec::new(),
+                        String::new(),
+                        rows,
+                    )
+                }
+                // A contract one line long: what it names stands in the slot a
+                // static's declared type uses.
+                ItemKind::Const => {
+                    let Some(c) = ast::Const::cast(node.clone()) else {
+                        continue;
+                    };
+                    let Some(name) = c.name() else { continue };
+                    (
+                        name.text().to_string(),
+                        super::code::vis_kind(c.visibility()),
+                        Vec::new(),
+                        Vec::new(),
+                        super::data::type_text(c.ty()),
+                        Vec::new(),
+                    )
+                }
+                ItemKind::TypeAlias => {
+                    let Some(a) = ast::TypeAlias::cast(node.clone()) else {
+                        continue;
+                    };
+                    let Some(name) = a.name() else { continue };
+                    (
+                        name.text().to_string(),
+                        super::code::vis_kind(a.visibility()),
+                        Vec::new(),
+                        Vec::new(),
+                        super::data::type_text(a.ty()),
+                        Vec::new(),
+                    )
+                }
+                ItemKind::Fn => {
+                    let Some(f) = ast::Fn::cast(node.clone()) else {
+                        continue;
+                    };
+                    let Some(name) = f.name() else { continue };
+                    let vis = super::code::vis_kind(f.visibility());
+                    // A function that hands nothing back quotes no return line,
+                    // at the base as in the working copy.
+                    let ret = super::data::type_text(f.ret_type().and_then(|r| r.ty()));
+                    (
+                        name.text().to_string(),
+                        vis,
+                        base_params(f.param_list()),
+                        Vec::new(),
+                        if ret == "()" { String::new() } else { ret },
+                        Vec::new(),
+                    )
+                }
+                _ => continue,
+            };
+            let name = format!("{prefix}{name}");
+            let method_rows = match kind {
+                ItemKind::Struct | ItemKind::Enum | ItemKind::Union => {
+                    methods.remove(&name).unwrap_or_default()
+                }
+                // A trait's clauses stand inside its own declaration.
+                ItemKind::Trait => own_rows,
+                _ => Vec::new(),
+            };
+            out.push(BaseDecl {
+                name,
+                kind,
+                vis,
+                line: line_of(text, usize::from(range.start())),
+                text: collapsed(&node.text().to_string()),
+                field_rows,
+                variants,
+                ty,
+                method_rows,
+            });
+        }
+        out
     }
-    out
 }
 
 /// The last segment of a written path: `fmt::Display` is `Display`, which is
@@ -600,7 +602,7 @@ pub(super) fn apply(
             continue;
         }
         let base = file_at_base(dir, diff, path)
-            .map(|text| base_decls(&text))
+            .map(|text| BaseDecl::scan(&text))
             .unwrap_or_default();
         let mut base_of: HashMap<(ItemKind, &str), &BaseDecl> = base
             .iter()
@@ -1037,7 +1039,7 @@ impl Wire {
     pub fn id(&self) -> u32 { self.id }
 }
 "#;
-        let decls = base_decls(text);
+        let decls = BaseDecl::scan(text);
         let names: Vec<&str> = decls.iter().map(|d| d.name.as_str()).collect();
         // A free function is a declaration at this altitude; a method is its
         // type's, and a type declared in a body has no mark in either edition.
@@ -1106,7 +1108,7 @@ mod tests {
     }
 }
 "#;
-        let decls = base_decls(text);
+        let decls = BaseDecl::scan(text);
         let rows = |name: &str| {
             decls
                 .iter()

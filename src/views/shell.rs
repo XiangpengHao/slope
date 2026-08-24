@@ -21,7 +21,7 @@ type GraphResource = Resource<Result<WorkspaceGraph, ServerFnError>>;
 
 /// The loaded graph, for route components. `None` only while the shell is
 /// still showing the survey or error state, which never renders an Outlet.
-pub fn use_graph() -> Option<WorkspaceGraph> {
+pub(crate) fn use_graph() -> Option<WorkspaceGraph> {
     let res = use_context::<GraphResource>();
     let state = res.read();
     state.as_ref().and_then(|r| r.as_ref().ok()).cloned()
@@ -33,7 +33,7 @@ pub fn use_graph() -> Option<WorkspaceGraph> {
 type TrailStep = Option<String>;
 
 /// The ring index a trail step selects, if it is a ring step.
-pub fn step_ring(step: &str) -> Option<u32> {
+pub(crate) fn step_ring(step: &str) -> Option<u32> {
     step.strip_prefix("ring:")?.parse().ok()
 }
 
@@ -41,7 +41,7 @@ pub fn step_ring(step: &str) -> Option<u32> {
 /// always drawn regardless. Defaults to dependencies only: the compact
 /// reading; the other two readings are one toggle away.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum DirFilter {
+pub(crate) enum DirFilter {
     /// What the selection depends on.
     #[default]
     Deps,
@@ -55,16 +55,16 @@ pub enum DirFilter {
 /// The review trail, kept in step with the browser history. Every selection
 /// is a URL; back retraces the review, forward replays it.
 #[derive(Clone, Default, PartialEq)]
-pub struct Trail {
-    pub steps: Vec<TrailStep>,
+pub(crate) struct Trail {
+    pub(crate) steps: Vec<TrailStep>,
     /// Where in `steps` the current route sits.
-    pub at: usize,
+    pub(crate) at: usize,
 }
 
 impl Trail {
     /// Record a route change, telling a back/forward retrace apart from a
     /// new step by comparing against the recorded neighbors.
-    pub fn note(&mut self, step: TrailStep) {
+    pub(crate) fn note(&mut self, step: TrailStep) {
         if self.steps.is_empty() {
             self.steps.push(step);
             self.at = 0;
@@ -87,13 +87,13 @@ impl Trail {
     }
 
     /// The crate the current route focuses, if any.
-    pub fn current_focus(&self) -> Option<String> {
+    pub(crate) fn current_focus(&self) -> Option<String> {
         self.steps.get(self.at).cloned().flatten()
     }
 
     /// The crates this stretch of the trail walked through since it last
     /// passed the whole chart, in visiting order — the review's breadcrumb.
-    pub fn walked(&self) -> Vec<String> {
+    pub(crate) fn walked(&self) -> Vec<String> {
         if self.steps.is_empty() {
             return Vec::new();
         }
@@ -121,16 +121,16 @@ impl Trail {
 /// so the trail outlives the route-component remounts, and every app
 /// instance (a test's `VirtualDom` included) owns its own copy.
 #[derive(Clone, Copy)]
-pub struct AtlasState {
-    pub trail: Signal<Trail>,
-    pub visited: Signal<HashSet<String>>,
-    pub announce: Signal<String>,
+pub(crate) struct AtlasState {
+    pub(crate) trail: Signal<Trail>,
+    pub(crate) visited: Signal<HashSet<String>>,
+    pub(crate) announce: Signal<String>,
     /// Which direction of the selection's edges the chart draws.
-    pub dir: Signal<DirFilter>,
+    pub(crate) dir: Signal<DirFilter>,
     /// The current selection, materialized to crate names (a ring step
     /// resolves to every name on that ring; the overview resolves to the
     /// center). Written by the chart; read by modifier-clicks to toggle.
-    pub selected: Signal<Vec<String>>,
+    pub(crate) selected: Signal<Vec<String>>,
 }
 
 impl AtlasState {
@@ -145,12 +145,12 @@ impl AtlasState {
     }
 }
 
-pub fn use_atlas() -> AtlasState {
+pub(crate) fn use_atlas() -> AtlasState {
     use_context()
 }
 
 /// The browser's back button, from code: one step back along the trail.
-pub fn history_back() {
+pub(crate) fn history_back() {
     #[cfg(target_arch = "wasm32")]
     if let Some(window) = web_sys::window()
         && let Ok(history) = window.history()
@@ -178,7 +178,7 @@ if (!window.__slopeNavKeys) {
 
 /// Wraps every page.
 #[component]
-pub fn AtlasShell() -> Element {
+pub(crate) fn AtlasShell() -> Element {
     let resource: GraphResource = use_resource(workspace_graph);
     use_context_provider(|| resource);
 

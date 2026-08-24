@@ -39,28 +39,28 @@ const MIN_FRAME_W: f64 = 160.0;
 /// What the layout must be told about what it seats. Measuring belongs with the
 /// drawing — the layout only places what it is handed.
 #[derive(Clone, PartialEq, Debug, Default)]
-pub struct Sizes {
+pub(crate) struct Sizes {
     /// Every drawn mark's block, by mark id.
-    pub marks: HashMap<u32, (f64, f64)>,
+    pub(crate) marks: HashMap<u32, (f64, f64)>,
     /// Every counted fold row, by the anchor it carries.
-    pub rows: HashMap<Anchor, (f64, f64)>,
+    pub(crate) rows: HashMap<Anchor, (f64, f64)>,
     /// The width each frame's engraved label needs on its border.
-    pub labels: HashMap<u32, f64>,
+    pub(crate) labels: HashMap<u32, f64>,
 }
 
 /// The whole chart, placed and centered on the flow origin.
 #[derive(Clone, PartialEq, Debug, Default)]
-pub struct SurfaceLayout {
-    pub marks: HashMap<u32, Placed>,
-    pub rows: HashMap<Anchor, Placed>,
+pub(crate) struct SurfaceLayout {
+    pub(crate) marks: HashMap<u32, Placed>,
+    pub(crate) rows: HashMap<Anchor, Placed>,
     /// Outermost first, so a nested tint lays over its parent's.
-    pub frames: Vec<(u32, Placed)>,
-    pub size: (f64, f64),
+    pub(crate) frames: Vec<(u32, Placed)>,
+    pub(crate) size: (f64, f64),
 }
 
 impl SurfaceLayout {
     /// Where an edge's end is, whichever kind of anchor it landed on.
-    pub fn rect(&self, anchor: Anchor) -> Option<Placed> {
+    pub(crate) fn rect(&self, anchor: Anchor) -> Option<Placed> {
         match anchor {
             Anchor::Mark(id) => self.marks.get(&id).copied(),
             other => self.rows.get(&other).copied(),
@@ -84,18 +84,20 @@ struct Packed {
     frames: Vec<(u32, Placed)>,
 }
 
-fn shift(packed: Packed, dx: f64, dy: f64) -> Packed {
-    let at = |p: Placed| Placed {
-        x: p.x + dx,
-        y: p.y + dy,
-        ..p
-    };
-    Packed {
-        w: packed.w,
-        h: packed.h,
-        marks: packed.marks.into_iter().map(|(k, p)| (k, at(p))).collect(),
-        rows: packed.rows.into_iter().map(|(k, p)| (k, at(p))).collect(),
-        frames: packed.frames.into_iter().map(|(k, p)| (k, at(p))).collect(),
+impl Packed {
+    fn shift(self, dx: f64, dy: f64) -> Self {
+        let at = |p: Placed| Placed {
+            x: p.x + dx,
+            y: p.y + dy,
+            ..p
+        };
+        Packed {
+            w: self.w,
+            h: self.h,
+            marks: self.marks.into_iter().map(|(k, p)| (k, at(p))).collect(),
+            rows: self.rows.into_iter().map(|(k, p)| (k, at(p))).collect(),
+            frames: self.frames.into_iter().map(|(k, p)| (k, at(p))).collect(),
+        }
     }
 }
 
@@ -180,13 +182,13 @@ fn shelve(kids: Vec<(Kid, f64, f64)>, label_w: f64) -> Packed {
     for ((kid, w, h), (x, y)) in kids.into_iter().zip(at) {
         match kid {
             Kid::Tree(packed) => {
-                let inner = shift(packed, x, y);
+                let inner = packed.shift(x, y);
                 out.marks.extend(inner.marks);
                 out.rows.extend(inner.rows);
             }
             Kid::Frame(id, packed) => {
                 out.frames.push((id, Placed { x, y, w, h }));
-                let inner = shift(packed, x, y);
+                let inner = packed.shift(x, y);
                 out.marks.extend(inner.marks);
                 out.rows.extend(inner.rows);
                 out.frames.extend(inner.frames);
@@ -201,16 +203,13 @@ fn shelve(kids: Vec<(Kid, f64, f64)>, label_w: f64) -> Packed {
         .max(label_w + PAD * 2.0)
         .max(MIN_FRAME_W);
     let h = content_h + PAD * 2.0 + LABEL_H;
-    let inner = shift(
-        Packed {
-            marks: out.marks,
-            rows: out.rows,
-            frames: out.frames,
-            ..Default::default()
-        },
-        PAD,
-        PAD + LABEL_H,
-    );
+    let inner = Packed {
+        marks: out.marks,
+        rows: out.rows,
+        frames: out.frames,
+        ..Default::default()
+    }
+    .shift(PAD, PAD + LABEL_H);
     Packed {
         w,
         h,
@@ -263,7 +262,7 @@ fn pack_tree(seat: &Seat, sizes: &Sizes) -> Packed {
     let mut x = (w - kids_w) / 2.0;
     for kid in kids {
         let step = kid.w + GAP;
-        let placed = shift(kid, x, own_h + LAYER_GAP);
+        let placed = kid.shift(x, own_h + LAYER_GAP);
         out.marks.extend(placed.marks);
         out.rows.extend(placed.rows);
         x += step;
@@ -290,53 +289,55 @@ fn kids_of(frame: &Frame, frames: &[Frame], sizes: &Sizes) -> Vec<(Kid, f64, f64
     kids
 }
 
-/// Lay every frame and every mark, centered on the flow origin.
-pub fn layout(frames: &[Frame], sizes: &Sizes) -> SurfaceLayout {
-    // The crate frames, side by side on the sheet.
-    let sheet: Vec<(Kid, f64, f64)> = frames
-        .iter()
-        .filter(|f| f.parent.is_none())
-        .map(|frame| {
-            let packed = shelve(
-                kids_of(frame, frames, sizes),
-                sizes.labels.get(&frame.id).copied().unwrap_or(0.0),
-            );
-            let (w, h) = (packed.w, packed.h);
-            (Kid::Frame(frame.id, packed), w, h)
-        })
-        .collect();
+impl SurfaceLayout {
+    /// Lay every frame and every mark, centered on the flow origin.
+    pub(crate) fn build(frames: &[Frame], sizes: &Sizes) -> Self {
+        // The crate frames, side by side on the sheet.
+        let sheet: Vec<(Kid, f64, f64)> = frames
+            .iter()
+            .filter(|f| f.parent.is_none())
+            .map(|frame| {
+                let packed = shelve(
+                    kids_of(frame, frames, sizes),
+                    sizes.labels.get(&frame.id).copied().unwrap_or(0.0),
+                );
+                let (w, h) = (packed.w, packed.h);
+                (Kid::Frame(frame.id, packed), w, h)
+            })
+            .collect();
 
-    // The sheet itself has no frame of its own: seat the crates, then take the
-    // bounds they actually used.
-    let mut out = Packed::default();
-    let widest = sheet.iter().map(|(_, w, _)| *w).fold(0.0, f64::max);
-    let area: f64 = sheet.iter().map(|(_, w, h)| (w + GAP) * (h + GAP)).sum();
-    let target = widest.max((area * LANDSCAPE).sqrt());
-    let (mut x, mut y, mut row_h, mut content_w) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
-    for (kid, w, h) in sheet {
-        if x > 0.0 && x + w > target {
-            y += row_h + GAP;
-            x = 0.0;
-            row_h = 0.0;
+        // The sheet itself has no frame of its own: seat the crates, then take the
+        // bounds they actually used.
+        let mut out = Packed::default();
+        let widest = sheet.iter().map(|(_, w, _)| *w).fold(0.0, f64::max);
+        let area: f64 = sheet.iter().map(|(_, w, h)| (w + GAP) * (h + GAP)).sum();
+        let target = widest.max((area * LANDSCAPE).sqrt());
+        let (mut x, mut y, mut row_h, mut content_w) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+        for (kid, w, h) in sheet {
+            if x > 0.0 && x + w > target {
+                y += row_h + GAP;
+                x = 0.0;
+                row_h = 0.0;
+            }
+            if let Kid::Frame(id, packed) = kid {
+                out.frames.push((id, Placed { x, y, w, h }));
+                let inner = packed.shift(x, y);
+                out.marks.extend(inner.marks);
+                out.rows.extend(inner.rows);
+                out.frames.extend(inner.frames);
+            }
+            x += w + GAP;
+            content_w = content_w.max(x - GAP);
+            row_h = row_h.max(h);
         }
-        if let Kid::Frame(id, packed) = kid {
-            out.frames.push((id, Placed { x, y, w, h }));
-            let inner = shift(packed, x, y);
-            out.marks.extend(inner.marks);
-            out.rows.extend(inner.rows);
-            out.frames.extend(inner.frames);
+        let (w, h) = (content_w, y + row_h);
+        let placed = out.shift(-w / 2.0, -h / 2.0);
+        SurfaceLayout {
+            marks: placed.marks.into_iter().collect(),
+            rows: placed.rows.into_iter().collect(),
+            frames: placed.frames,
+            size: (w, h),
         }
-        x += w + GAP;
-        content_w = content_w.max(x - GAP);
-        row_h = row_h.max(h);
-    }
-    let (w, h) = (content_w, y + row_h);
-    let placed = shift(out, -w / 2.0, -h / 2.0);
-    SurfaceLayout {
-        marks: placed.marks.into_iter().collect(),
-        rows: placed.rows.into_iter().collect(),
-        frames: placed.frames,
-        size: (w, h),
     }
 }
 
@@ -400,7 +401,7 @@ mod tests {
             api,
             frame(2, &["views"], Some(0), &[3, 4]),
         ];
-        let placed = layout(&frames, &sizes(&[0, 1, 2, 3, 4, 9]));
+        let placed = SurfaceLayout::build(&frames, &sizes(&[0, 1, 2, 3, 4, 9]));
 
         let boxes: Vec<Placed> = placed.marks.values().copied().collect();
         for (i, a) in boxes.iter().enumerate() {
@@ -427,7 +428,7 @@ mod tests {
     fn a_child_seats_one_layer_under_the_parent_that_owns_it() {
         let mut api = frame(0, &["api"], None, &[0, 1, 2]);
         api.forest = vec![seat(0, &[1, 2])];
-        let placed = layout(&[api], &sizes(&[0, 1, 2]));
+        let placed = SurfaceLayout::build(&[api], &sizes(&[0, 1, 2]));
         let (root, left, right) = (placed.marks[&0], placed.marks[&1], placed.marks[&2]);
 
         // One layer down, with room between them for the owns edge.
@@ -450,7 +451,7 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        let placed = layout(&[api], &sizes);
+        let placed = SurfaceLayout::build(&[api], &sizes);
         let (root, kid) = (placed.marks[&0], placed.marks[&1]);
         assert!((root.x + root.w / 2.0 - (kid.x + kid.w / 2.0)).abs() < 0.001);
         assert!(kid.x > root.x);
@@ -465,8 +466,8 @@ mod tests {
             api,
             frame(2, &["views"], Some(0), &[2]),
         ];
-        let a = layout(&frames, &sizes(&[0, 1, 2]));
-        let b = layout(&frames, &sizes(&[0, 1, 2]));
+        let a = SurfaceLayout::build(&frames, &sizes(&[0, 1, 2]));
+        let b = SurfaceLayout::build(&frames, &sizes(&[0, 1, 2]));
         assert_eq!(a, b);
     }
 
@@ -481,7 +482,7 @@ mod tests {
             frame(2, &["views", "surface"], Some(1), &[1]),
             frame(3, &["views", "surface", "wire"], Some(2), &[2]),
         ];
-        let placed = layout(&frames, &sizes(&[0, 1, 2]));
+        let placed = SurfaceLayout::build(&frames, &sizes(&[0, 1, 2]));
         let of = |id: u32| placed.frames.iter().find(|(f, _)| *f == id).unwrap().1;
         let (root, views, surface, wire) = (of(0), of(1), of(2), of(3));
         assert!(contains(&root, &views));

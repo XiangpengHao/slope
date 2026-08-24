@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
-use crate::views::radial::{DEFAULT_CAP, radial_layout};
+use crate::views::radial::{DEFAULT_CAP, RadialLayout};
 use crate::views::shell::{DirFilter, step_ring, use_atlas};
 use crate::views::star::StarMark;
 
@@ -49,7 +49,10 @@ fn plural(n: usize, word: &str) -> String {
 /// is, which epoch it is charted against, and every crate that changed in
 /// it. One plate, because the epoch and its changes are one thought.
 #[component]
-pub fn TitleBlock(graph: WorkspaceGraph, #[props(default = true)] changes_open: bool) -> Element {
+pub(crate) fn TitleBlock(
+    graph: WorkspaceGraph,
+    #[props(default = true)] changes_open: bool,
+) -> Element {
     let atlas = use_atlas();
     let members = graph.crates.iter().filter(|c| c.is_member).count();
     let externals = graph
@@ -234,7 +237,7 @@ fn RingsSample() -> Element {
 /// The key. Every state the chart can draw, named in words — and every
 /// gesture the chart answers to, taught in the same plate.
 #[component]
-pub fn Legend(#[props(default = true)] start_open: bool, center: String) -> Element {
+pub(crate) fn Legend(#[props(default = true)] start_open: bool, center: String) -> Element {
     let changed = CrateInfo {
         changed: true,
         changed_files: 3,
@@ -356,7 +359,7 @@ pub fn Legend(#[props(default = true)] start_open: bool, center: String) -> Elem
 /// Search: find a crate by name and focus it. Arrows walk the hits, Enter
 /// opens the marked one, Escape clears.
 #[component]
-pub fn SearchBox(graph: WorkspaceGraph) -> Element {
+pub(crate) fn SearchBox(graph: WorkspaceGraph) -> Element {
     let mut query = use_signal(String::new);
     let mut active = use_signal(|| 0usize);
     let nav = use_navigator();
@@ -563,39 +566,41 @@ fn CrateList(rows: Vec<(CrateInfo, DepKind, Option<DepEvent>)>) -> Element {
     }
 }
 
-/// Where a crate lives off the plate. A crate resolved from crates.io always
-/// has a registry page and a docs.rs build, even when its manifest names
-/// neither; everything else is only as good as what the manifest declared.
-fn out_links(info: &CrateInfo) -> Vec<(&'static str, String)> {
-    let url = |s: &Option<String>| {
-        s.as_deref()
-            .filter(|u| u.starts_with("http"))
-            .map(str::to_string)
-    };
-    let mut links: Vec<(&'static str, String)> = Vec::new();
-    if let Some(repo) = url(&info.repository) {
-        links.push(("repo", repo));
+impl CrateInfo {
+    /// Where a crate lives off the plate. A crate resolved from crates.io always
+    /// has a registry page and a docs.rs build, even when its manifest names
+    /// neither; everything else is only as good as what the manifest declared.
+    fn out_links(&self) -> Vec<(&'static str, String)> {
+        let url = |s: &Option<String>| {
+            s.as_deref()
+                .filter(|u| u.starts_with("http"))
+                .map(str::to_string)
+        };
+        let mut links: Vec<(&'static str, String)> = Vec::new();
+        if let Some(repo) = url(&self.repository) {
+            links.push(("repo", repo));
+        }
+        if self.crates_io {
+            links.push((
+                "crates.io",
+                format!("https://crates.io/crates/{}", self.name),
+            ));
+        }
+        match url(&self.documentation) {
+            Some(docs) => links.push(("docs", docs)),
+            None if self.crates_io => links.push((
+                "docs.rs",
+                format!("https://docs.rs/{}/{}", self.name, self.version),
+            )),
+            None => {}
+        }
+        if let Some(home) = url(&self.homepage)
+            && !links.iter().any(|(_, u)| *u == home)
+        {
+            links.push(("homepage", home));
+        }
+        links
     }
-    if info.crates_io {
-        links.push((
-            "crates.io",
-            format!("https://crates.io/crates/{}", info.name),
-        ));
-    }
-    match url(&info.documentation) {
-        Some(docs) => links.push(("docs", docs)),
-        None if info.crates_io => links.push((
-            "docs.rs",
-            format!("https://docs.rs/{}/{}", info.name, info.version),
-        )),
-        None => {}
-    }
-    if let Some(home) = url(&info.homepage)
-        && !links.iter().any(|(_, u)| *u == home)
-    {
-        links.push(("homepage", home));
-    }
-    links
 }
 
 /// One labelled fact in a crate's fact sheet.
@@ -631,7 +636,7 @@ fn OutLink(label: &'static str, href: String) -> Element {
 /// it sits on disk, and every page it has elsewhere.
 #[component]
 fn CrateFacts(info: CrateInfo) -> Element {
-    let links = out_links(&info);
+    let links = info.out_links();
     if info.description.is_none()
         && info.license.is_none()
         && info.rel_path.is_none()
@@ -723,7 +728,7 @@ fn Breadcrumb() -> Element {
 /// The focused crate's fact sheet: the trail, identity, state, and both
 /// directions of its neighborhood as clickable lists.
 #[component]
-pub fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
+pub(crate) fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
     let Some(focal) = graph
         .crates
         .iter()
@@ -859,7 +864,7 @@ pub fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
 /// The multi-selection roster: every selected crate, each removable, and
 /// what the union is drawing. Refine on the chart with ctrl-click, or here.
 #[component]
-pub fn MultiPanel(graph: WorkspaceGraph, joined: String) -> Element {
+pub(crate) fn MultiPanel(graph: WorkspaceGraph, joined: String) -> Element {
     let names: Vec<String> = joined.split('+').map(str::to_string).collect();
     let sel: HashSet<&str> = names.iter().map(String::as_str).collect();
     let sel_ids: HashSet<&str> = graph
@@ -936,13 +941,13 @@ pub fn MultiPanel(graph: WorkspaceGraph, joined: String) -> Element {
 /// One ring's roster: every crate at that dependency distance. The chart is
 /// drawing all of their edges (in the toggled direction).
 #[component]
-pub fn RingPanel(graph: WorkspaceGraph, hop: u32) -> Element {
+pub(crate) fn RingPanel(graph: WorkspaceGraph, hop: u32) -> Element {
     // Same cap the chart uses for this route, so the roster matches the
     // drawn ring exactly — including the collapsed "N+" band.
     let cap = hop.max(DEFAULT_CAP);
     let layout = use_memo({
         let graph = graph.clone();
-        move || radial_layout(&graph, cap)
+        move || RadialLayout::build(&graph, cap)
     });
     let collapsed = hop == cap && layout.read().max_hops > cap;
     let mut all = use_signal(|| false);

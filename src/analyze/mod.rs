@@ -2,7 +2,7 @@
 //! the detected VCS for the diff, manifest comparison for dependency events.
 
 mod basediff;
-pub mod code;
+pub(crate) mod code;
 mod data;
 mod manifest;
 mod vcs;
@@ -22,7 +22,7 @@ pub(crate) fn workspace_dir() -> PathBuf {
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
 }
 
-pub fn analyze() -> Result<WorkspaceGraph, String> {
+pub(crate) fn analyze() -> Result<WorkspaceGraph, String> {
     let dir = workspace_dir();
     let manifest = dir.join("Cargo.toml");
     if !manifest.exists() {
@@ -99,7 +99,7 @@ pub fn analyze() -> Result<WorkspaceGraph, String> {
     }
 
     // The diff: changed files between the epoch base and the working copy.
-    let diff = vcs::detect_diff(&root);
+    let diff = vcs::Diff::detect(&root);
 
     // Map changed files to members by the longest matching crate directory,
     // so nested members claim their own files.
@@ -142,7 +142,7 @@ pub fn analyze() -> Result<WorkspaceGraph, String> {
         let Ok(new) = std::fs::read_to_string(pkg.manifest_path.as_std_path()) else {
             continue;
         };
-        let events = manifest::diff_manifests(&old, &new);
+        let events = manifest::ManifestEvent::diff(&old, &new);
         let from_id = node_id[id].clone();
         for ev in events {
             match ev.event {

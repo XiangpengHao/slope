@@ -18,14 +18,14 @@ use crate::api::{CodeGraph, ItemMark, Vis};
 /// The lowest container the reader can see: a file's block, or the gate of a
 /// folded directory standing in for everything inside it.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
-pub enum Territory {
+pub(crate) enum Territory {
     File(u32),
     Dir(u32),
 }
 
 /// Where a reference lands once it has been lifted to what is visible.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Lifted {
+pub(crate) enum Lifted {
     /// The item itself may be drawn.
     Item(u32),
     /// Private the whole way up: the reference belongs to this file's edge,
@@ -39,7 +39,7 @@ const MAX_DEPTH: usize = 8;
 
 /// The containment tree, indexed by item mark.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Containment {
+pub(crate) struct Containment {
     /// The outermost ancestor of every mark — the item the file itself holds.
     root: Vec<u32>,
     /// The file that root lives in: where the mark's territory is.
@@ -49,7 +49,7 @@ pub struct Containment {
 }
 
 impl Containment {
-    pub fn build(graph: &CodeGraph) -> Self {
+    pub(crate) fn build(graph: &CodeGraph) -> Self {
         let marks = &graph.items;
         let mut root = vec![0u32; marks.len()];
         let mut home = vec![0u32; marks.len()];
@@ -74,23 +74,23 @@ impl Containment {
     }
 
     /// The item the file holds directly — a method's type, a type itself.
-    pub fn root(&self, mark: u32) -> u32 {
+    pub(crate) fn root(&self, mark: u32) -> u32 {
         self.root.get(mark as usize).copied().unwrap_or(mark)
     }
 
     /// The file whose block draws this mark. For a method written in another
     /// file's impl block, that is the type's file: an impl is attribution,
     /// not geometry.
-    pub fn home(&self, mark: u32) -> u32 {
+    pub(crate) fn home(&self, mark: u32) -> u32 {
         self.home.get(mark as usize).copied().unwrap_or(0)
     }
 
-    pub fn kids(&self, mark: u32) -> &[u32] {
+    pub(crate) fn kids(&self, mark: u32) -> &[u32] {
         self.kids.get(&mark).map(Vec::as_slice).unwrap_or(&[])
     }
 
     /// Every mark inside `mark`, itself included.
-    pub fn inside(&self, mark: u32, out: &mut Vec<u32>) {
+    pub(crate) fn inside(&self, mark: u32, out: &mut Vec<u32>) {
         out.push(mark);
         for &kid in self.kids(mark) {
             self.inside(kid, out);
@@ -98,7 +98,7 @@ impl Containment {
     }
 
     /// True when `mark` is `center` or sits inside it.
-    pub fn within(&self, marks: &[ItemMark], center: u32, mark: u32) -> bool {
+    pub(crate) fn within(&self, marks: &[ItemMark], center: u32, mark: u32) -> bool {
         let mut cur = mark;
         for _ in 0..MAX_DEPTH {
             if cur == center {
@@ -115,7 +115,7 @@ impl Containment {
     /// Lift a reference to the lowest ancestor that may be drawn. A private
     /// method lifts to its type; a private top-level item lifts to its file
     /// and shows there as a counted, unnamed line.
-    pub fn lift(&self, marks: &[ItemMark], mark: u32) -> Lifted {
+    pub(crate) fn lift(&self, marks: &[ItemMark], mark: u32) -> Lifted {
         let mut cur = mark;
         for _ in 0..MAX_DEPTH {
             let Some(m) = marks.get(cur as usize) else {
@@ -148,7 +148,7 @@ const BLOCK_CAP: usize = 7;
 ///
 // TODO: `changed` is file-level. Item-level epoch ticks need the diff's hunks
 // against item line ranges; the survey does not read hunks yet.
-pub fn interest(mark: &ItemMark, changed: bool) -> u32 {
+pub(crate) fn interest(mark: &ItemMark, changed: bool) -> u32 {
     if mark.vis == Vis::Private {
         return 0;
     }
@@ -157,7 +157,7 @@ pub fn interest(mark: &ItemMark, changed: bool) -> u32 {
 
 /// The engraved weight of a landmark: three tiers by fan-in, so the eye reads
 /// magnitude before it reads names.
-pub fn tier(fan_in: u32) -> u8 {
+pub(crate) fn tier(fan_in: u32) -> u8 {
     match fan_in {
         0..=2 => 3,
         3..=9 => 2,
@@ -167,14 +167,14 @@ pub fn tier(fan_in: u32) -> u8 {
 
 /// What one file block engraves, and what it says it hides.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Block {
-    pub file: u32,
+pub(crate) struct Block {
+    pub(crate) file: u32,
     /// Landmark marks, in source order.
-    pub rows: Vec<u32>,
+    pub(crate) rows: Vec<u32>,
     /// Items wide enough to draw that this altitude still folded away.
-    pub quiet: u32,
+    pub(crate) quiet: u32,
     /// Private items, folded for good; their outside references lift here.
-    pub private: u32,
+    pub(crate) private: u32,
 }
 
 impl Block {
@@ -183,7 +183,7 @@ impl Block {
     /// sentence explaining what "pub" means here, and where a private item's
     /// references go, belongs to the legend, said once, not to fifteen blocks
     /// saying it at each other.
-    pub fn fold_words(&self) -> Option<String> {
+    pub(crate) fn fold_words(&self) -> Option<String> {
         match (self.quiet, self.private) {
             (0, 0) => None,
             (q, 0) => Some(format!("+ {q} pub")),
@@ -193,79 +193,81 @@ impl Block {
     }
 }
 
-/// Choose the landmarks for every visible file. The bar is the altitude's,
-/// not the file's: the loudest items across the whole map are engraved until
-/// the budget is spent, and every block still names its loudest item so no
-/// block goes mute.
-pub fn blocks(graph: &CodeGraph, visible: &[u32], containment: &Containment) -> Vec<Block> {
-    let changed: Vec<bool> = graph.files.iter().map(|f| f.changed).collect();
+impl Block {
+    /// Choose the landmarks for every visible file. The bar is the altitude's,
+    /// not the file's: the loudest items across the whole map are engraved until
+    /// the budget is spent, and every block still names its loudest item so no
+    /// block goes mute.
+    pub(crate) fn all(graph: &CodeGraph, visible: &[u32], containment: &Containment) -> Vec<Self> {
+        let changed: Vec<bool> = graph.files.iter().map(|f| f.changed).collect();
 
-    // Candidates are the items a file holds directly; methods and fields live
-    // on their type's plate, one altitude down.
-    let mut per_file: HashMap<u32, Vec<u32>> = HashMap::new();
-    let mut private: HashMap<u32, u32> = HashMap::new();
-    for (i, mark) in graph.items.iter().enumerate() {
-        if mark.parent.is_some() || containment.root(i as u32) != i as u32 {
-            continue;
+        // Candidates are the items a file holds directly; methods and fields live
+        // on their type's plate, one altitude down.
+        let mut per_file: HashMap<u32, Vec<u32>> = HashMap::new();
+        let mut private: HashMap<u32, u32> = HashMap::new();
+        for (i, mark) in graph.items.iter().enumerate() {
+            if mark.parent.is_some() || containment.root(i as u32) != i as u32 {
+                continue;
+            }
+            let file = mark.file;
+            if mark.vis == Vis::Private {
+                *private.entry(file).or_default() += 1;
+                continue;
+            }
+            per_file.entry(file).or_default().push(i as u32);
         }
-        let file = mark.file;
-        if mark.vis == Vis::Private {
-            *private.entry(file).or_default() += 1;
-            continue;
+
+        // Each file's shortlist: loudest first, capped, so one enormous file
+        // cannot spend the whole map's budget.
+        let mut shortlists: Vec<(u32, Vec<u32>, usize)> = Vec::new();
+        for &file in visible {
+            let mut cands = per_file.remove(&file).unwrap_or_default();
+            let touched = changed.get(file as usize).copied().unwrap_or(false);
+            cands.sort_by_key(|&m| {
+                let mark = &graph.items[m as usize];
+                (
+                    std::cmp::Reverse(interest(mark, touched)),
+                    mark.line,
+                    mark.name.clone(),
+                )
+            });
+            let total = cands.len();
+            cands.truncate(BLOCK_CAP);
+            shortlists.push((file, cands, total));
         }
-        per_file.entry(file).or_default().push(i as u32);
-    }
 
-    // Each file's shortlist: loudest first, capped, so one enormous file
-    // cannot spend the whole map's budget.
-    let mut shortlists: Vec<(u32, Vec<u32>, usize)> = Vec::new();
-    for &file in visible {
-        let mut cands = per_file.remove(&file).unwrap_or_default();
-        let touched = changed.get(file as usize).copied().unwrap_or(false);
-        cands.sort_by_key(|&m| {
-            let mark = &graph.items[m as usize];
-            (
-                std::cmp::Reverse(interest(mark, touched)),
-                mark.line,
-                mark.name.clone(),
-            )
-        });
-        let total = cands.len();
-        cands.truncate(BLOCK_CAP);
-        shortlists.push((file, cands, total));
-    }
-
-    // The bar: the lowest interest the budget can afford across every block.
-    let mut weights: Vec<u32> = shortlists
-        .iter()
-        .flat_map(|(file, rows, _)| {
-            let touched = changed.get(*file as usize).copied().unwrap_or(false);
-            rows.iter()
-                .map(move |&m| interest(&graph.items[m as usize], touched))
-        })
-        .collect();
-    weights.sort_unstable_by(|a, b| b.cmp(a));
-    let bar = weights.get(LANDMARK_BUDGET).copied().unwrap_or(0);
-
-    let mut out: Vec<Block> = Vec::with_capacity(shortlists.len());
-    for (file, cands, total) in shortlists {
-        let touched = changed.get(file as usize).copied().unwrap_or(false);
-        let mut rows: Vec<u32> = cands
+        // The bar: the lowest interest the budget can afford across every block.
+        let mut weights: Vec<u32> = shortlists
             .iter()
-            .enumerate()
-            .filter(|&(i, &m)| i == 0 || interest(&graph.items[m as usize], touched) > bar)
-            .map(|(_, &m)| m)
+            .flat_map(|(file, rows, _)| {
+                let touched = changed.get(*file as usize).copied().unwrap_or(false);
+                rows.iter()
+                    .map(move |&m| interest(&graph.items[m as usize], touched))
+            })
             .collect();
-        rows.sort_by_key(|&m| graph.items[m as usize].line);
-        out.push(Block {
-            file,
-            quiet: (total - rows.len()) as u32,
-            private: private.get(&file).copied().unwrap_or(0),
-            rows,
-        });
+        weights.sort_unstable_by(|a, b| b.cmp(a));
+        let bar = weights.get(LANDMARK_BUDGET).copied().unwrap_or(0);
+
+        let mut out: Vec<Block> = Vec::with_capacity(shortlists.len());
+        for (file, cands, total) in shortlists {
+            let touched = changed.get(file as usize).copied().unwrap_or(false);
+            let mut rows: Vec<u32> = cands
+                .iter()
+                .enumerate()
+                .filter(|&(i, &m)| i == 0 || interest(&graph.items[m as usize], touched) > bar)
+                .map(|(_, &m)| m)
+                .collect();
+            rows.sort_by_key(|&m| graph.items[m as usize].line);
+            out.push(Block {
+                file,
+                quiet: (total - rows.len()) as u32,
+                private: private.get(&file).copied().unwrap_or(0),
+                rows,
+            });
+        }
+        out.sort_by_key(|b| b.file);
+        out
     }
-    out.sort_by_key(|b| b.file);
-    out
 }
 
 // ---------------------------------------------------------------------------
@@ -275,18 +277,18 @@ pub fn blocks(graph: &CodeGraph, visible: &[u32], containment: &Containment) -> 
 /// Every reference between two territories, summed. The arrowhead rests on
 /// the user — the way change travels.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Tie {
+pub(crate) struct Tie {
     /// Where the definition lives.
-    pub def: Territory,
+    pub(crate) def: Territory,
     /// Where the reference is written.
-    pub user: Territory,
-    pub count: u32,
+    pub(crate) user: Territory,
+    pub(crate) count: u32,
 }
 
 /// Aggregate every item-level reference into ties between the territories
 /// currently on the paper. `territory` answers where a file is drawn right
 /// now — its own block, or the gate of the folded directory holding it.
-pub fn ties(
+pub(crate) fn ties(
     graph: &CodeGraph,
     containment: &Containment,
     territory: impl Fn(u32) -> Option<Territory>,
@@ -327,14 +329,14 @@ pub fn ties(
 
 /// What the focus plate centers on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Center {
+pub(crate) enum Center {
     File(u32),
     Item(u32),
 }
 
 /// Which way a focus column reads.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Dir {
+pub(crate) enum Dir {
     /// Who leans on the selection.
     UsedBy,
     /// What the selection reaches for.
@@ -344,18 +346,18 @@ pub enum Dir {
 /// One row of a focus column: a named item, or the counted line standing in
 /// for a file's folded private items.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Row {
+pub(crate) struct ColumnRow {
     /// `None` for the lifted-private line.
-    pub mark: Option<u32>,
-    pub count: u32,
+    pub(crate) mark: Option<u32>,
+    pub(crate) count: u32,
 }
 
 /// One container's rows, with the container's own total.
 #[derive(Clone, PartialEq, Debug)]
-pub struct Group {
-    pub file: u32,
-    pub total: u32,
-    pub rows: Vec<Row>,
+pub(crate) struct Group {
+    pub(crate) file: u32,
+    pub(crate) total: u32,
+    pub(crate) rows: Vec<ColumnRow>,
 }
 
 /// Group one hop of the selection's references by container: heaviest group
@@ -365,7 +367,7 @@ pub struct Group {
 /// the file detail knows those, the global edges do not — as already-resolved
 /// far-side marks. They are grouped by the same rules, so the plate owes its
 /// own neighbors the reading it gives the rest of the workspace.
-pub fn groups(
+pub(crate) fn groups(
     graph: &CodeGraph,
     containment: &Containment,
     center: Center,
@@ -411,45 +413,50 @@ pub fn groups(
         };
         *acc.entry(key).or_default() += count;
     }
-    collect_groups(graph, acc)
+    Group::collect(graph, acc)
 }
 
-fn collect_groups(graph: &CodeGraph, acc: HashMap<(u32, Option<u32>), u32>) -> Vec<Group> {
-    let mut by_file: HashMap<u32, Vec<Row>> = HashMap::new();
-    for ((file, mark), count) in acc {
-        by_file.entry(file).or_default().push(Row { mark, count });
+impl Group {
+    fn collect(graph: &CodeGraph, acc: HashMap<(u32, Option<u32>), u32>) -> Vec<Self> {
+        let mut by_file: HashMap<u32, Vec<ColumnRow>> = HashMap::new();
+        for ((file, mark), count) in acc {
+            by_file
+                .entry(file)
+                .or_default()
+                .push(ColumnRow { mark, count });
+        }
+        let mut groups: Vec<Group> = by_file
+            .into_iter()
+            .map(|(file, mut rows)| {
+                rows.sort_by_key(|r| {
+                    (
+                        std::cmp::Reverse(r.count),
+                        // The lifted-private line rests at the foot of its group.
+                        r.mark.is_none(),
+                        r.mark
+                            .map(|m| graph.items[m as usize].name.clone())
+                            .unwrap_or_default(),
+                    )
+                });
+                Group {
+                    total: rows.iter().map(|r| r.count).sum(),
+                    file,
+                    rows,
+                }
+            })
+            .collect();
+        groups.sort_by_key(|g| {
+            (
+                std::cmp::Reverse(g.total),
+                graph
+                    .files
+                    .get(g.file as usize)
+                    .map(|f| f.path.clone())
+                    .unwrap_or_default(),
+            )
+        });
+        groups
     }
-    let mut groups: Vec<Group> = by_file
-        .into_iter()
-        .map(|(file, mut rows)| {
-            rows.sort_by_key(|r| {
-                (
-                    std::cmp::Reverse(r.count),
-                    // The lifted-private line rests at the foot of its group.
-                    r.mark.is_none(),
-                    r.mark
-                        .map(|m| graph.items[m as usize].name.clone())
-                        .unwrap_or_default(),
-                )
-            });
-            Group {
-                total: rows.iter().map(|r| r.count).sum(),
-                file,
-                rows,
-            }
-        })
-        .collect();
-    groups.sort_by_key(|g| {
-        (
-            std::cmp::Reverse(g.total),
-            graph
-                .files
-                .get(g.file as usize)
-                .map(|f| f.path.clone())
-                .unwrap_or_default(),
-        )
-    });
-    groups
 }
 
 #[cfg(test)]
@@ -604,7 +611,7 @@ mod tests {
     fn a_block_states_what_it_hides() {
         let g = graph();
         let c = Containment::build(&g);
-        let blocks = blocks(&g, &[0, 1], &c);
+        let blocks = Block::all(&g, &[0, 1], &c);
         let draw = blocks.iter().find(|b| b.file == 1).unwrap();
         assert_eq!(draw.rows, vec![2]);
         assert_eq!(draw.private, 1);

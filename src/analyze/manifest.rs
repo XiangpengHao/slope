@@ -4,13 +4,13 @@
 use crate::api::{DepEvent, DepKind};
 use std::collections::HashMap;
 
-pub struct ManifestEvent {
+pub(crate) struct ManifestEvent {
     /// Dependency name as declared (the table key).
-    pub name: String,
-    pub kind: DepKind,
-    pub event: DepEvent,
+    pub(crate) name: String,
+    pub(crate) kind: DepKind,
+    pub(crate) event: DepEvent,
     /// For removals: the old requirement, for the ghost's caption.
-    pub detail: Option<String>,
+    pub(crate) detail: Option<String>,
 }
 
 /// One dependency table flattened to `name -> requirement`.
@@ -64,43 +64,45 @@ fn deps_of_kind(doc: &toml::Table, kind: DepKind) -> DepMap {
     map
 }
 
-pub fn diff_manifests(old: &str, new: &str) -> Vec<ManifestEvent> {
-    let (Ok(old), Ok(new)) = (old.parse::<toml::Table>(), new.parse::<toml::Table>()) else {
-        return Vec::new();
-    };
+impl ManifestEvent {
+    pub(crate) fn diff(old: &str, new: &str) -> Vec<Self> {
+        let (Ok(old), Ok(new)) = (old.parse::<toml::Table>(), new.parse::<toml::Table>()) else {
+            return Vec::new();
+        };
 
-    let mut events = Vec::new();
-    for kind in [DepKind::Normal, DepKind::Dev, DepKind::Build] {
-        let before = deps_of_kind(&old, kind);
-        let after = deps_of_kind(&new, kind);
+        let mut events = Vec::new();
+        for kind in [DepKind::Normal, DepKind::Dev, DepKind::Build] {
+            let before = deps_of_kind(&old, kind);
+            let after = deps_of_kind(&new, kind);
 
-        for (name, req) in &after {
-            match before.get(name) {
-                None => events.push(ManifestEvent {
-                    name: name.clone(),
-                    kind,
-                    event: DepEvent::Added,
-                    detail: None,
-                }),
-                Some(old_req) if old_req != req => events.push(ManifestEvent {
-                    name: name.clone(),
-                    kind,
-                    event: DepEvent::Bumped(old_req.clone(), req.clone()),
-                    detail: None,
-                }),
-                _ => {}
+            for (name, req) in &after {
+                match before.get(name) {
+                    None => events.push(ManifestEvent {
+                        name: name.clone(),
+                        kind,
+                        event: DepEvent::Added,
+                        detail: None,
+                    }),
+                    Some(old_req) if old_req != req => events.push(ManifestEvent {
+                        name: name.clone(),
+                        kind,
+                        event: DepEvent::Bumped(old_req.clone(), req.clone()),
+                        detail: None,
+                    }),
+                    _ => {}
+                }
+            }
+            for (name, old_req) in &before {
+                if !after.contains_key(name) {
+                    events.push(ManifestEvent {
+                        name: name.clone(),
+                        kind,
+                        event: DepEvent::Removed,
+                        detail: Some(old_req.clone()),
+                    });
+                }
             }
         }
-        for (name, old_req) in &before {
-            if !after.contains_key(name) {
-                events.push(ManifestEvent {
-                    name: name.clone(),
-                    kind,
-                    event: DepEvent::Removed,
-                    detail: Some(old_req.clone()),
-                });
-            }
-        }
+        events
     }
-    events
 }

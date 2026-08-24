@@ -12,25 +12,25 @@ use crate::views::shell::use_atlas;
 
 /// Payload carried by chart nodes: one crate's star on the rings.
 #[derive(Clone, PartialEq)]
-pub struct StarData {
-    pub info: CrateInfo,
+pub(crate) struct StarData {
+    pub(crate) info: CrateInfo,
     /// Dependency distance from the chart's center.
-    pub ring: u32,
+    pub(crate) ring: u32,
     /// Unit direction from the chart center, so the label seats on the
     /// side facing away from the center's crowd.
-    pub ux: f64,
-    pub uy: f64,
+    pub(crate) ux: f64,
+    pub(crate) uy: f64,
     /// The selected crate: the one whose edges the chart is drawing.
-    pub focal: bool,
+    pub(crate) focal: bool,
     /// Label engraved at rest; unnamed stars reveal theirs on hover/focus.
-    pub named: bool,
+    pub(crate) named: bool,
     /// Another version of this same crate is on the chart, so the label has
     /// to carry the version or the two stars read as one crate drawn twice.
-    pub versioned: bool,
+    pub(crate) versioned: bool,
 }
 
 /// Star radius from magnitude (how many crates depend on this one).
-pub fn star_radius(dependents: u32) -> f64 {
+pub(crate) fn star_radius(dependents: u32) -> f64 {
     (4.0 + (dependents as f64).sqrt() * 1.3).min(11.0)
 }
 
@@ -40,7 +40,7 @@ const MARK_OVERHANG: f64 = 11.0;
 
 /// The square node box for one crate's star, from its magnitude. Constant
 /// per crate so selection never moves a star.
-pub fn star_box(info: &CrateInfo) -> f64 {
+pub(crate) fn star_box(info: &CrateInfo) -> f64 {
     2.0 * (star_radius(info.dependents) + MARK_OVERHANG)
 }
 
@@ -71,7 +71,11 @@ fn state_words(info: &CrateInfo) -> Option<String> {
 /// The engraved star mark for one crate, reused by the chart nodes and the
 /// legend so the key and the chart can never drift apart.
 #[component]
-pub fn StarMark(info: CrateInfo, focal: bool, #[props(default = 32.0)] box_px: f64) -> Element {
+pub(crate) fn StarMark(
+    info: CrateInfo,
+    focal: bool,
+    #[props(default = 32.0)] box_px: f64,
+) -> Element {
     let changed = info.changed;
     let affected = info.affected_dist.filter(|_| !changed);
     // Everything drawn outside the core circle must still fit the box.
@@ -203,7 +207,7 @@ pub fn StarMark(info: CrateInfo, focal: bool, #[props(default = 32.0)] box_px: f
 /// it and draws its edges; clicking the selected star steps back to the
 /// whole chart.
 #[component]
-pub fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
+pub(crate) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
     let StarData {
         info,
         ring,
