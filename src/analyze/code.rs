@@ -725,10 +725,11 @@ fn survey_attached(
         })
         .collect();
 
-    // Two lists, because a legend should state the limits of the ink its own
-    // chart draws: references are the code map's whole subject and the dashed
-    // ink at the two altitudes above it, while the holds walk is theirs alone.
-    // Said once here, in the survey's own words, so no legend paraphrases it.
+    // Two lists, because each cartouche's survey fold should state the limits
+    // of the ink its own chart draws: references are the code map's whole
+    // subject and the dashed ink at the two altitudes above it, while the
+    // holds walk is theirs alone. Said once here, in the survey's own words,
+    // so no chrome paraphrases it.
     let mut notes = vec![
         "rust-analyzer resolves every reference; only references between \
          workspace files are charted"

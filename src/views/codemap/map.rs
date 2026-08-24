@@ -103,6 +103,9 @@ struct TieView {
     def: Territory,
     user: Territory,
     count: u32,
+    /// The tie said as a sentence — "map.rs uses model.rs · 12 references" —
+    /// its hover words, so the drawn count always has a findable subject.
+    words: String,
     from: Point,
     to: Point,
     width: f64,
@@ -544,6 +547,17 @@ impl CodeDrawing {
             counts.sort_unstable_by(|a, b| b.cmp(a));
             counts.get(TIE_LABELS).copied().unwrap_or(0).max(2)
         };
+        // A territory's name, for the tie's own hover words.
+        let name_of = |t: Territory| -> String {
+            match t {
+                Territory::File(f) => graph
+                    .files
+                    .get(f as usize)
+                    .map(|f| file_name(&f.path).to_string())
+                    .unwrap_or_default(),
+                Territory::Dir(d) => format!("{}/", tree.dirs[d as usize].name),
+            }
+        };
         let ties: Vec<TieView> = kept
             .iter()
             .enumerate()
@@ -556,6 +570,15 @@ impl CodeDrawing {
                     def: tie.def,
                     user: tie.user,
                     count: tie.count,
+                    // The tie's own sentence, on hover: it names both ends the
+                    // way the arrow reads them, so the count on the paper is
+                    // never a number without a subject.
+                    words: format!(
+                        "{} uses {} · {}",
+                        name_of(tie.user),
+                        name_of(tie.def),
+                        plural(tie.count as usize, "reference")
+                    ),
                     from,
                     to,
                     width: (0.55 + tie.count as f64 * 0.13).min(2.8),
@@ -664,7 +687,12 @@ fn BlockPlate(
                 }
             }
             if let Some(fold) = fold {
-                p { class: "cb-fold", style: "height: {fold_h}px;", "{fold}" }
+                p {
+                    class: "cb-fold",
+                    style: "height: {fold_h}px;",
+                    title: "the file's quieter items, folded — open the file to read them",
+                    "{fold}"
+                }
             }
         }
     }
@@ -840,6 +868,7 @@ fn TieLayer(ties: Vec<TieView>, hot: Signal<Option<Territory>>) -> Element {
                             class: if !tie.rest { "is-folded" },
                             class: if !tie.labeled { "is-quiet" },
                             class: if is_hot { "is-hot" },
+                            title { "{tie.words}" }
                             path {
                                 class: "tie-path",
                                 d,

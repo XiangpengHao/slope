@@ -241,7 +241,8 @@ impl DepDrawing {
                     .id(format!("{to}->{from}"))
                     .style(edge_style(role, kind, &event));
                 edge.marker_end = MarkerKind::None;
-                // The role class colors the arrowhead; the legend names each.
+                // The role class colors the arrowhead; the active reading on
+                // the panel's dependencies toggle names what is drawn.
                 edge = match (&event, role) {
                     (Some(ev), _) => edge.label(event_label(ev)).class("evented"),
                     (None, Role::Dep) => edge.class("dep"),
@@ -483,6 +484,27 @@ fn RingCircles(
                     }
                     circle { class: "ring-guide-hit", cx: "0", cy: "0", r: "{r}" }
                     circle { class: "ring-guide-line", cx: "0", cy: "0", r: "{r}" }
+                    // The ring names its own distance, the way an atlas
+                    // captions a parallel — so the chart needs no key to say
+                    // that one ring out is one dependency hop. Positioned by
+                    // transform, the one property that glides with the
+                    // circle's radius when the outer band expands; sized to
+                    // its ring the way a region name is sized to its frame,
+                    // so the caption stays a glance's read at the fit zoom.
+                    text {
+                        class: "ring-caption",
+                        x: "0",
+                        y: "0",
+                        text_anchor: "middle",
+                        style: "transform: translateY({-(r + 8.0)}px); font-size: {(r * 0.045).clamp(12.0, 26.0)}px;",
+                        if collapsed && k == last {
+                            "{k}+ hops"
+                        } else if k == 1 {
+                            "1 hop"
+                        } else {
+                            "{k} hops"
+                        }
+                    }
                 }
             }
             if let Some(name) = &hub {
@@ -604,10 +626,11 @@ impl DepDrawing {
     }
 }
 
-/// The keyboard surface, taught in the legend: `/` finds, `n`/`p` walk the
-/// changed crates, `f` refits, Escape steps back. Typing fields keep their
-/// keys. Rebinds on every mount so the listener always feeds the living
-/// channel, not a dropped one.
+/// The keyboard surface, taught where each key acts: `/` in the search
+/// placeholder, `n`/`p` beside the changes list they walk, `f` on the fit
+/// control; Escape steps back. Typing fields keep their keys. Rebinds on
+/// every mount so the listener always feeds the living channel, not a
+/// dropped one.
 const KEYS_JS: &str = r#"
 if (window.__slopeKeys) {
     document.removeEventListener('keydown', window.__slopeKeys);

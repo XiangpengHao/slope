@@ -72,8 +72,11 @@ Frontend (`src/views/`): one living chart that blooms.
   previous changed crate, `f` refit, Esc un-bloom, `←`/`→` browser back /
   forward on every route. every star, queue row,
   and search hit is a real link (middle-click works). route changes are
-  announced to screen readers. the legend teaches all of this in a
-  "using this chart" section.
+  announced to screen readers. there is no legend (retired 2026-08-24):
+  each key is taught where it acts — `/` in the search placeholder,
+  `n · p walk` beside the changes list, `f` on the fit control — and
+  every mark carries its own hover words (a ring captions its hops, a
+  star says its state and `ctrl-click adds it to the selection`).
 - the full resolved graph is never drawn at once, and every
   simplification is written in words on the plates.
 - design: light theme, ink on paper, per spec/dependency-viewer.md.

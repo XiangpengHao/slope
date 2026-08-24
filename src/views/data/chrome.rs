@@ -1,12 +1,15 @@
-//! Data-altitude furniture: the cartouche, the selection sheet, and the
-//! legend — the same engraved plates the other three altitudes wear.
+//! Data-altitude furniture: the cartouche and the selection sheet — the same
+//! engraved plates the other altitudes wear. There is no legend: the chart
+//! states itself — the tier is the paper's own nesting, every block and wire
+//! carries its words on hover, and the survey's limits rest behind one fold
+//! at the cartouche's foot.
 
 use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{CodeGraph, Delta, HoldEvent, HoldKind, ItemMark};
 use crate::views::codemap::chrome::{
-    Altitude, AltitudeSwitch, Gestures, SurveyLimits, UsageRow, decl_words, kind_words, plural,
+    Altitude, AltitudeSwitch, SurveyLimits, decl_words, kind_words, plural,
 };
 use crate::views::codemap::{RefDir, item_route, use_code};
 use crate::views::data::model::{
@@ -48,11 +51,17 @@ fn diff_words(facts: &DataFacts) -> String {
 /// It states no tier counts and no edge counts (2026-08-21, distill): `55
 /// roots · 63 nested · 16 standing` and `209 body dependences · 127 at rest`
 /// were the model's own bookkeeping in four invented words, and no reviewer
-/// decides anything on them. The tier is what the paper draws and the legend
-/// teaches; the edges are what the chart shows. No doors toggle either: state
-/// does not fold at a door, so every datum is drawn whatever its `pub`.
+/// decides anything on them. The tier is what the paper draws and a root's
+/// own hover words teach; the edges are what the chart shows. No doors toggle
+/// either: state does not fold at a door, so every datum is drawn whatever
+/// its `pub`.
 #[component]
-pub(super) fn DataCartouche(facts: DataFacts, workspace: String, diff_line: String) -> Element {
+pub(super) fn DataCartouche(
+    facts: DataFacts,
+    workspace: String,
+    diff_line: String,
+    notes: Vec<String>,
+) -> Element {
     let insight = insight(&facts.changed_modules);
     let kinds = {
         let mut parts = vec![
@@ -86,6 +95,7 @@ pub(super) fn DataCartouche(facts: DataFacts, workspace: String, diff_line: Stri
                 }
             }
             RefToggle {}
+            SurveyLimits { notes }
         }
     }
 }
@@ -832,205 +842,6 @@ pub(super) fn DataSearch(graph: CodeGraph) -> Element {
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-/// One drawn edge sample for the legend, off the chart's own classes.
-#[component]
-fn WireSample(
-    dash: &'static str,
-    #[props(default = 1.1)] width: f64,
-    #[props(default = "")] label: &'static str,
-) -> Element {
-    rsx! {
-        svg {
-            class: "mt-0.5 shrink-0",
-            width: "46",
-            height: "14",
-            view_box: "0 0 46 14",
-            "aria-hidden": "true",
-            g { class: "data-wire {dash}",
-                path {
-                    class: "wire-path",
-                    d: "M1,10 Q22,5 40,9",
-                    fill: "none",
-                    style: "stroke-width: {width}px;",
-                }
-                path { class: "wire-head", d: "M45,9.2 L38.4,6.2 L38.8,11.6 Z" }
-                if !label.is_empty() {
-                    text {
-                        class: "wire-label",
-                        x: "21",
-                        y: "5",
-                        text_anchor: "middle",
-                        "{label}"
-                    }
-                }
-            }
-        }
-    }
-}
-
-/// The key: the tier's two moves, the two inks, the kind colors, the diff, the
-/// gestures — and the survey's own limits behind a fold.
-///
-/// Cut from about six hundred words to a key (2026-08-21, distill). What came
-/// off: the paragraph explaining the references toggle, which restated its
-/// three button titles; the sentences the sheet says the moment a block is
-/// picked; the walk's method, which the survey now states in its own words
-/// behind the fold at the foot; and every clause that announced the absence of
-/// a fold. What stays is what the drawing draws and cannot say — and the marks
-/// stand as a key strip, sample beside word, because at 224px of plate a
-/// sentence per mark cost five lines each and ran the plate off the page.
-#[component]
-pub(super) fn DataLegend(
-    facts: DataFacts,
-    notes: Vec<String>,
-    #[props(default = true)] start_open: bool,
-) -> Element {
-    rsx! {
-        details {
-            class: "plate fold legend-plate pointer-events-auto flex min-h-0 w-full flex-col open:pb-3 sm:w-64",
-            open: start_open,
-            summary { class: "cursor-pointer select-none px-4 py-2 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
-                "Reading this chart"
-            }
-            div { class: "legend-scroll min-h-0 flex-1 space-y-2.5 px-4 font-data text-[10px] leading-snug text-ink max-h-[42dvh] sm:max-h-none",
-                div { class: "space-y-1",
-                    div { class: "flex items-center gap-2",
-                        svg {
-                            class: "shrink-0",
-                            width: "46",
-                            height: "14",
-                            view_box: "0 0 46 14",
-                            "aria-hidden": "true",
-                            rect {
-                                x: "1",
-                                y: "1",
-                                width: "44",
-                                height: "12",
-                                fill: "var(--color-paper)",
-                                stroke: "var(--color-ink-line)",
-                            }
-                            rect {
-                                x: "1",
-                                y: "1",
-                                width: "2.5",
-                                height: "12",
-                                fill: "var(--color-ink)",
-                            }
-                        }
-                        span { class: "text-ink", "top-level data" }
-                    }
-                    div { class: "flex items-center gap-2",
-                        svg {
-                            class: "shrink-0",
-                            width: "46",
-                            height: "18",
-                            view_box: "0 0 46 18",
-                            "aria-hidden": "true",
-                            rect {
-                                x: "1",
-                                y: "1",
-                                width: "44",
-                                height: "16",
-                                fill: "var(--color-paper)",
-                                stroke: "var(--color-ink-line)",
-                            }
-                            rect {
-                                x: "1",
-                                y: "1",
-                                width: "2.5",
-                                height: "16",
-                                fill: "var(--color-ink)",
-                            }
-                            rect {
-                                x: "7",
-                                y: "8",
-                                width: "16",
-                                height: "7",
-                                fill: "var(--color-paper)",
-                                stroke: "var(--color-ink-line)",
-                            }
-                        }
-                        span { class: "text-ink", "secondary data" }
-                    }
-                    p { class: "pt-1 text-ink-soft",
-                        "the ink edge is a root: a static, or a type nothing keeps in a field. everything else nests inside its heaviest owner — the nesting is the ownership, and no line restates it. a type that fits under no one holder stands at module level with its lines drawn: shared handles, cross-module owners, rings, widely held vocabulary."
-                    }
-                }
-                div { class: "space-y-1 border-t border-ink-line pt-2.5",
-                    div { class: "flex items-center gap-2",
-                        WireSample { dash: "data-hold is-shares", width: 1.3, label: "Arc" }
-                        span { class: "text-ink", "holding" }
-                    }
-                    div { class: "flex items-center gap-2",
-                        WireSample { dash: "is-ref", width: 1.6, label: "4" }
-                        span { class: "text-ink", "uses" }
-                    }
-                    p { class: "pt-1 text-ink-soft",
-                        "the arrow rests on the dependent. a word on a solid line is the wrapper; no word is plain ownership, and a borrow is a view — a type only borrowed is still a root. each block rests its two heaviest dashed lines, and hover inks in the rest."
-                    }
-                }
-                div { class: "space-y-1 border-t border-ink-line pt-2.5",
-                    p {
-                        span { class: "dm-nm", "Struct" }
-                        span { class: "text-ink-soft", " · " }
-                        span { class: "dm-nm is-sum", "Enum" }
-                        span { class: "text-ink-soft",
-                            " — the kind, said again in color. the bold run in a row is the type it reaches."
-                        }
-                    }
-                    p { class: "text-ink-soft",
-                        "no methods, and no doors: a block is state only, drawn whatever its "
-                        span { class: "text-ink", "pub" }
-                        span { class: "text-ink-soft", "." }
-                    }
-                }
-                // The diff's key only where there is a diff: a key for marks
-                // the chart is not drawing is the same dead weight as a count
-                // for nothing hidden (2026-08-21, distill).
-                if !diff_words(&facts).is_empty() {
-                    div { class: "border-t border-ink-line pt-2.5",
-                        p { class: "text-ink-soft",
-                            span { class: "text-flare", "A" }
-                            " added · "
-                            span { class: "text-flare", "M" }
-                            " changed · "
-                            span { class: "text-flare", "D" }
-                            " removed, a dashed ghost quoting the base. "
-                            span { class: "text-flare", "+" }
-                            " and "
-                            span { class: "text-flare", "−" }
-                            " mark a row. while the diff speaks, untouched blocks rest lighter."
-                        }
-                    }
-                }
-                Gestures {
-                    UsageRow { gesture: "click", effect: "select a block; its sheet opens" }
-                    UsageRow { gesture: "−", effect: "fold a module to one counted row" }
-                    UsageRow { gesture: "hover", effect: "every line of one block" }
-                    UsageRow { gesture: "/ · f", effect: "find a datum · refit" }
-                    UsageRow { gesture: "← · → · esc", effect: "back · forward · deselect" }
-                }
-                div { class: "space-y-1 border-t border-ink-line pt-2.5 text-ink-soft",
-                    p {
-                        "below reading zoom each block draws its name alone; descend, or select, and the rows return. a selected boundary bundles its crossing lines, one per far module."
-                    }
-                    p {
-                        "nothing is cut, only counted: a block\u{2019}s hover words say "
-                        span { class: "text-ink", "named by n signatures · used by n bodies" }
-                        ", and the sheet lists both. a "
-                        span { class: "text-ink", "dyn Trait" }
-                        " field names a contract one rung up, so no line is drawn."
-                    }
-                    if facts.unresolved > 0 {
-                        p { "{plural(facts.unresolved as usize, \"name\")} the survey could not resolve." }
-                    }
-                }
-                SurveyLimits { notes }
             }
         }
     }

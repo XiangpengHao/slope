@@ -25,8 +25,9 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::CodeGraph;
+use crate::views::codemap::chrome::plural;
 use crate::views::codemap::use_code;
-use crate::views::data::chrome::{DataCartouche, DataLegend, DataSearch, DataSheet};
+use crate::views::data::chrome::{DataCartouche, DataSearch, DataSheet};
 use crate::views::data::map::DataChart;
 use crate::views::data::model::{DataModel, Folds};
 use crate::views::survey::use_code_graph;
@@ -136,28 +137,42 @@ pub(crate) fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) 
     let facts = use_memo(use_reactive((&graph,), move |(graph,)| {
         DataModel::build(&graph, *code.ref_dir.peek(), &data.folds.read()).facts(graph.unresolved)
     }));
-    // The walk's limits first, then the references' — this chart draws both
-    // inks, and the holding line is the one it is about.
-    let limits: Vec<String> = [graph.walk_notes.clone(), graph.notes.clone()].concat();
+    // The survey's own limits, for the cartouche's fold: the unresolved
+    // census first, then the walk's notes, then the references' — this chart
+    // draws both inks, and the holding line is the one it is about.
+    let limits: Vec<String> = {
+        let mut notes = Vec::new();
+        if graph.unresolved > 0 {
+            notes.push(format!(
+                "{} the survey could not resolve.",
+                plural(graph.unresolved as usize, "name")
+            ));
+        }
+        notes.extend(graph.walk_notes.iter().cloned());
+        notes.extend(graph.notes.iter().cloned());
+        notes
+    };
 
     rsx! {
         DataChart { graph: graph.clone(), sel }
         Outlet::<Route> {}
-        div { class: "pointer-events-none absolute bottom-3 left-3 top-3 z-10 hidden w-64 flex-col gap-2 sm:flex",
+        div { class: "pointer-events-none absolute left-3 top-3 z-10 hidden w-64 sm:block",
             DataCartouche {
                 facts: facts(),
                 workspace: workspace.clone(),
                 diff_line: diff_line.clone(),
+                notes: limits.clone(),
             }
-            DataLegend { facts: facts(), notes: limits.clone(), start_open: true }
         }
         // Narrow viewports are a serviceable fallback, not a composition.
         div { class: "pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-col gap-2 sm:hidden",
-            DataCartouche { facts: facts(), workspace, diff_line }
+            DataCartouche {
+                facts: facts(),
+                workspace,
+                diff_line,
+                notes: limits,
+            }
             DataSearch { graph: graph.clone() }
-        }
-        div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
-            DataLegend { facts: facts(), notes: limits, start_open: false }
         }
         // Search top-right, the choreography every altitude keeps. Wide, so
         // a hit's `src/analyze/manifest.rs:67` never squeezes the name.

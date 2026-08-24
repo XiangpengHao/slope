@@ -1,5 +1,7 @@
-//! Chart furniture: the title block, the key, search, and the selection
-//! panels. All of it is drawn in the same engraved ink as the chart itself.
+//! Chart furniture: the title block, search, and the selection panels. All of
+//! it is drawn in the same engraved ink as the chart itself. There is no
+//! legend: the chart states itself — hop captions on the ring guides, state
+//! words under the stars, and every mark's own hover words.
 
 use std::collections::HashSet;
 
@@ -10,32 +12,6 @@ use crate::api::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
 use crate::views::dep::model::{DEFAULT_CAP, RadialLayout};
 use crate::views::dep::star::StarMark;
 use crate::views::dep::{DirFilter, step_ring, use_dep};
-
-/// A synthetic crate for legend samples, so the key is drawn by the exact
-/// same code as the chart and can never drift from it.
-fn sample(dependents: u32, is_member: bool) -> CrateInfo {
-    CrateInfo {
-        id: String::new(),
-        name: String::new(),
-        version: String::new(),
-        is_member,
-        changed: false,
-        changed_files: 0,
-        manifest_changed: false,
-        affected_dist: None,
-        dependents,
-        direct_deps: 0,
-        external_deps: 0,
-        ghost: false,
-        description: None,
-        license: None,
-        repository: None,
-        homepage: None,
-        documentation: None,
-        crates_io: false,
-        rel_path: None,
-    }
-}
 
 fn plural(n: usize, word: &str) -> String {
     if n == 1 {
@@ -135,9 +111,17 @@ pub(super) fn TitleBlock(
                             }
                         }
                     }
-                    p { class: "mx-4 mt-2 border-t border-ink-line pt-2 font-data text-[9.5px] tracking-[0.1em] uppercase text-ink",
-                        if seen == total { "all {total} seen" } else { "{seen} of {total} seen" }
-                        span { class: "text-ink-soft", " · {affected} downstream" }
+                    p { class: "mx-4 mt-2 flex flex-wrap items-baseline gap-x-2 border-t border-ink-line pt-2 font-data text-[9.5px] tracking-[0.1em] uppercase text-ink",
+                        span {
+                            if seen == total { "all {total} seen" } else { "{seen} of {total} seen" }
+                            span { class: "text-ink-soft", " · {affected} downstream" }
+                        }
+                        // The keys that walk this very list, taught beside it.
+                        span {
+                            class: "ml-auto text-ink-soft",
+                            title: "n selects the next changed crate, p the previous",
+                            "n · p walk"
+                        }
                     }
                 }
             }
@@ -184,172 +168,6 @@ fn DirectionToggle() -> Element {
                         "what depends on the selection, and what depends on those, all the way to the root — cargo tree -i",
                         DirFilter::PathToRoot,
                     )
-                }
-            }
-        }
-    }
-}
-
-/// One line sample for the legend's edge key.
-#[component]
-fn LineSample(
-    dasharray: &'static str,
-    stroke: &'static str,
-    #[props(default = 1.2)] width: f64,
-) -> Element {
-    rsx! {
-        svg { width: "34", height: "8", view_box: "0 0 34 8", class: "shrink-0", "aria-hidden": "true",
-            line {
-                x1: "0",
-                y1: "4",
-                x2: "32",
-                y2: "4",
-                stroke,
-                stroke_width: "{width}",
-                stroke_dasharray: "{dasharray}",
-            }
-            path {
-                d: "M27.5 1.4 L32.5 4 L27.5 6.6",
-                fill: "none",
-                stroke,
-                stroke_width: "1.1",
-                stroke_linecap: "round",
-                stroke_linejoin: "round",
-            }
-        }
-    }
-}
-
-/// The legend's tiny rings sample: the chart's shape in miniature.
-#[component]
-fn RingsSample() -> Element {
-    rsx! {
-        svg { width: "30", height: "30", view_box: "0 0 30 30", class: "shrink-0", "aria-hidden": "true",
-            circle { cx: "15", cy: "15", r: "6", fill: "none", stroke: "var(--color-ink-line)", stroke_width: "0.8" }
-            circle { cx: "15", cy: "15", r: "11", fill: "none", stroke: "var(--color-ink-line)", stroke_width: "0.8" }
-            circle { cx: "15", cy: "15", r: "2.4", fill: "var(--color-ink)" }
-            circle { cx: "19.2", cy: "10.8", r: "1.7", fill: "var(--color-ink)" }
-            circle { cx: "7.2", cy: "22.8", r: "1.4", fill: "var(--color-paper)", stroke: "var(--color-ink)", stroke_width: "0.9" }
-        }
-    }
-}
-
-/// The key. Every state the chart can draw, named in words — and every
-/// gesture the chart answers to, taught in the same plate.
-#[component]
-pub(super) fn Legend(#[props(default = true)] start_open: bool, center: String) -> Element {
-    let changed = CrateInfo {
-        changed: true,
-        changed_files: 3,
-        ..sample(4, true)
-    };
-    let affected = CrateInfo {
-        affected_dist: Some(1),
-        ..sample(4, true)
-    };
-    let ghost = CrateInfo {
-        ghost: true,
-        ..sample(0, false)
-    };
-
-    rsx! {
-        details {
-            class: "plate fold pointer-events-auto w-full open:pb-3 sm:flex sm:max-h-full sm:w-64 sm:flex-col",
-            open: start_open,
-            summary {
-                class: "shrink-0 cursor-pointer select-none px-4 py-2 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
-                "Reading this chart"
-            }
-            div { class: "max-h-[60dvh] space-y-2.5 overflow-y-auto px-4 font-data text-[10px] leading-snug text-ink sm:max-h-none sm:min-h-0",
-                div { class: "flex items-center gap-2",
-                    RingsSample {}
-                    span {
-                        span { class: "font-medium", "{center}" }
-                        " sits at the center; each ring outward is one dependency hop — the outermost gathers everything farther, and expands as you select into it"
-                    }
-                }
-                div { class: "space-y-1.5 border-t border-ink-line pt-2.5",
-                    div { class: "flex items-baseline gap-2",
-                        span { class: "shrink-0 font-data text-[9.5px] tracking-[0.1em] uppercase text-ink",
-                            "ctrl-click"
-                        }
-                        span { class: "text-ink-soft", "add or remove a star from the selection" }
-                    }
-                    div { class: "flex flex-wrap items-baseline gap-x-3 gap-y-1",
-                        for (key , what) in [
-                            ("/", "find"),
-                            ("n p", "walk changes"),
-                            ("f", "refit"),
-                            ("esc", "deselect"),
-                            ("← →", "back · forward"),
-                        ]
-                        {
-                            span { key: "{key}", class: "whitespace-nowrap",
-                                span { class: "font-medium uppercase tracking-[0.1em] text-ink", "{key}" }
-                                span { class: "text-ink-soft", " {what}" }
-                            }
-                        }
-                    }
-                }
-                div { class: "flex items-center gap-2 border-t border-ink-line pt-2.5",
-                    div { class: "flex items-end",
-                        StarMark { info: sample(0, true), focal: false, box_px: 18.0 }
-                        StarMark { info: sample(9, true), focal: false, box_px: 22.0 }
-                        StarMark { info: sample(60, true), focal: false, box_px: 28.0 }
-                    }
-                    span { "size — how many crates depend on it" }
-                }
-                div { class: "flex items-center gap-2",
-                    StarMark { info: sample(4, true), focal: false, box_px: 20.0 }
-                    span { "workspace member — solid ink" }
-                }
-                div { class: "flex items-center gap-2",
-                    StarMark { info: sample(4, false), focal: false, box_px: 20.0 }
-                    span { "external crate — open circle" }
-                }
-                div { class: "border-t border-ink-line pt-2.5 space-y-2",
-                    div { class: "flex items-center gap-2",
-                        StarMark { info: changed, focal: false, box_px: 26.0 }
-                        span {
-                            span { class: "font-medium text-flare", "changed" }
-                            " — files under it changed since the diff base"
-                        }
-                    }
-                    div { class: "flex items-center gap-2",
-                        StarMark { info: affected, focal: false, box_px: 26.0 }
-                        span {
-                            span { class: "font-medium", "downstream" }
-                            " — it depends on a changed crate; the halo fades with distance"
-                        }
-                    }
-                    div { class: "flex items-center gap-2",
-                        StarMark { info: ghost, focal: false, box_px: 20.0 }
-                        span {
-                            span { class: "font-medium", "removed" }
-                            " — a dependency the diff deleted"
-                        }
-                    }
-                }
-                div { class: "border-t border-ink-line pt-2.5 space-y-1.5",
-                    div { class: "flex items-center gap-2",
-                        LineSample { dasharray: "", stroke: "var(--color-ink)", width: 1.25 }
-                        span { "ink: the selected crate depends on it" }
-                    }
-                    div { class: "flex items-center gap-2",
-                        LineSample { dasharray: "", stroke: "var(--color-ink-line)", width: 1.1 }
-                        span { "hairline: it depends on the selected crate" }
-                    }
-                    div { class: "flex items-center gap-2",
-                        LineSample { dasharray: "6 4", stroke: "var(--color-ink-line)" }
-                        span { "dev-dependencies — dashed · build-dependencies — dotted" }
-                    }
-                    div { class: "flex items-center gap-2",
-                        LineSample { dasharray: "", stroke: "var(--color-flare)", width: 1.4 }
-                        span { "manifest event — added, removed, or bumped" }
-                    }
-                    p { class: "pt-1 text-ink-soft",
-                        "only the selection's edges are drawn; arrows point the way change travels"
-                    }
                 }
             }
         }

@@ -7,8 +7,10 @@ focus plate now quotes the item's own source instead of describing it, and
 every invented label was replaced by the word rust, cargo, or the VCS already
 uses. **Distilled 2026-08-19**: a count is drawn only where something is
 hidden, the ambient tie layer became a reading with a per-block bar, and the
-legend stopped restating what the drawing already says. The second altitude of
-the review ladder: crates → **files → items**.
+legend stopped restating what the drawing already says. **Legend retired
+2026-08-24**: the map teaches itself — ties, folds and gates carry their own
+hover words — and the survey's limits fold at the cartouche's foot. The second
+altitude of the review ladder: crates → **files → items**.
 
 ## Job and audience
 
@@ -73,9 +75,9 @@ mode: **Operate**.
    and every block still names its loudest item so no block goes mute.
    Everything else folds into a counted line — "+ 27 private", "+ 14 pub",
    "+ 9 pub · 5 private". Counts only, in rust's own word: a fold that does not
-   count what it hides is a lie by omission, but the sentence saying what "pub"
-   means here, and where a private item's references went, is the legend's, said
-   once, not repeated by fifteen blocks.
+   count what it hides is a lie by omission, but the sentence saying where the
+   folded items went is the fold's own hover words', said once at the fold, not
+   repeated by fifteen blocks.
    **Count only what is hidden** (distilled 2026-08-19): a fold counts, and
    nothing else does. A block's header carries its name and its `M`, never a
    `254 lines · 31 items` that competed with the name for width and won — the
@@ -99,7 +101,8 @@ mode: **Operate**.
    the two heaviest files it leans on, under `used by` the two heaviest that
    lean on it, and `both` draws every tie unthinned. Nothing is cut: a folded
    tie stays in the set and inks in, with its count, when the reader hovers
-   either of its ends, and the legend says so. The heaviest dozen *resting*
+   either of its ends; every tie's hover words name both ends and the count
+   ("map.rs uses model.rs · 12 references"). The heaviest dozen *resting*
    ties carry their count on the paper; the rest keep it until hovered. A
    selected crate is already an anchor, so its boundary set draws whole in the
    reading's direction — a tie is the crate's when its file block belongs to the
@@ -154,8 +157,8 @@ mode: **Operate**.
 
 ## The definition plate
 
-- Replaces the map for `/code/file/...`; the map's cartouche and legend go
-  with it, search stays.
+- Replaces the map for `/code/file/...`; the map's cartouche goes with it,
+  search stays.
 - An item focus quotes the item. `item_source(file, item)` returns the item's
   own source text, lexed into per-line coloured runs; the plate renders it at
   12px mono with a sticky, non-selectable line-number gutter, no wrapping,
@@ -304,16 +307,17 @@ mode: **Operate**.
   spurious removals to report. Never a silent cut: the survey writes
   `n test-only declarations, and everything written inside them, are not
   surveyed — set SLOPE_TESTS=1 to chart them` into `CodeGraph::notes`, where
-  every legend's `what the survey cannot read` fold prints it.
-- Honesty: unresolved names are counted and written on the legend, never
-  guessed. `CodeGraph` carries two lists, so a legend states the limits of the
-  ink its own chart draws (2026-08-21, distill): `notes` is about references —
-  the code map's whole subject, and the dashed ink at the two altitudes above
-  it — and `walk_notes` is about the holds walk, which is theirs alone. Both
-  print in the survey's own words behind each legend's `what the survey cannot
-  read` fold; no legend paraphrases them in prose. Derive-macro output is not counted; a type's derives stand in its
+  every cartouche's `what the survey cannot read` fold prints it.
+- Honesty: unresolved names are counted and written in the cartouche's survey
+  fold, never guessed. `CodeGraph` carries two lists, so each fold states the
+  limits of the ink its own chart draws (2026-08-21, distill): `notes` is
+  about references — the code map's whole subject, and the dashed ink at the
+  two altitudes above it — and `walk_notes` is about the holds walk, which is
+  theirs alone. Both print in the survey's own words behind each cartouche's
+  `what the survey cannot read` fold; no chrome paraphrases them in prose.
+  Derive-macro output is not counted; a type's derives stand in its
   own source, on its plate. One reference the survey cannot place, and says so
-  on the legend: a name written inside a string a macro rewrites — an `rsx!`
+  in the fold: a name written inside a string a macro rewrites — an `rsx!`
   text node's `"{words(x)}"` — has no name token on the tree, and the expansion
   keeps no trail from the rewritten expression back into the literal, so there
   is nothing to resolve and nothing to link.

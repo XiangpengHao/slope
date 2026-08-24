@@ -133,10 +133,12 @@ own legibility floor. The fixes, all user-directed:
 
 - Cartouche: workspace name; `n structs · n enums · n statics` (unions when
   present); the four-rung ladder; the diff line, flare counts, insight line.
-  One toggle: `references`. No visibility toggle — the legend states why.
-  The tier counts and the edge counts came off (2026-08-21, distill): four
-  invented terms defined only in legend prose, and no decision rides on
-  them. The tier is what the paper draws; the legend teaches the word.
+  One toggle: `references`. No visibility toggle — state does not fold at
+  a door. The tier counts and the edge counts came off (2026-08-21,
+  distill): four invented terms defined only in chrome prose, and no
+  decision rides on them. The tier is what the paper draws; a root's own
+  hover words teach it (`a root — no type holds it`), and the sheet's
+  tier line says it in a sentence.
 - Sheet (mark selection): header, locator, **the tier in one sentence**
   ("top-level data: no type holds it — a root." / "secondary data — drawn
   inside its holder's block." / the standing reasons — the nested line does
@@ -148,15 +150,13 @@ own legibility floor. The fixes, all user-directed:
   upstream, and 9 signatures name what it reaches."), `Holds`, `Used by` /
   `Uses` with the undrawn-residue lines, and `open its definition →` — the
   code plate stays the only place source is quoted whole.
-- Legend (cut to a key 2026-08-21, distill — about six hundred words to
-  ~170): a key strip first (the root's left edge and the nested sample, drawn
-  with the chart's own classes; then the two inks), one paragraph of grammar
-  per family, the kind colors, the no-methods/no-doors line, the diff key
-  *only while the diff has something to say*, the gestures on a two-column
-  grid, the far-edition and counted-residue lines — and the survey's own
-  limits behind a nested `what the survey cannot read` fold, printed from
-  `walk_notes` + `notes` in the survey's words rather than paraphrased. The
-  references-toggle paragraph came off: it restated the three button titles.
+- No legend (retired 2026-08-24; it had already been cut from ~600 words
+  to a key on 2026-08-21). The chart teaches itself: the tier is the
+  paper's own nesting, a root's hover words say what its ink edge draws,
+  the diff letters carry their git meaning in their own tooltips, and the
+  wires write their words on the line. The survey's own limits — the
+  unresolved census, then `walk_notes` + `notes` in the survey's words —
+  rest behind the cartouche's `what the survey cannot read` fold.
 
 ## Implementation notes
 

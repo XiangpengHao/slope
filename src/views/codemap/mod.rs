@@ -18,7 +18,7 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{CodeGraph, FileDetail, ItemSource};
-use crate::views::codemap::chrome::{CodeCartouche, CodeLegend, CodeSearch, CratePanel};
+use crate::views::codemap::chrome::{CodeCartouche, CodeSearch, CratePanel};
 use crate::views::codemap::ego::EgoPlate;
 use crate::views::codemap::map::CodeChart;
 use crate::views::survey::use_code_graph;
@@ -136,9 +136,8 @@ pub(crate) fn CodeShell(graph: CodeGraph, workspace: String, diff_line: String) 
     let route = use_route::<Route>();
     let sel = CodeSel::from(&route);
     // A file or item focus replaces the map with its own plate; the map's
-    // cartouche and legend are map furniture and go with it.
+    // cartouche is map furniture and goes with it.
     let focused = matches!(sel, CodeSel::File(_, _));
-    let changed = graph.files.iter().any(|f| f.changed);
 
     rsx! {
         if !focused {
@@ -150,18 +149,12 @@ pub(crate) fn CodeShell(graph: CodeGraph, workspace: String, diff_line: String) 
         }
         Outlet::<Route> {}
         if !focused {
-            div { class: "pointer-events-none absolute bottom-3 left-3 top-3 z-10 hidden w-64 flex-col gap-2 sm:flex",
+            div { class: "pointer-events-none absolute left-3 top-3 z-10 hidden w-64 sm:block",
                 CodeCartouche {
                     graph: graph.clone(),
                     workspace: workspace.clone(),
                     diff_line: diff_line.clone(),
-                }
-                // Directly under the cartouche: one stack, not a plate at each
-                // end of 480px of empty paper.
-                CodeLegend {
                     notes: graph.notes.clone(),
-                    changed,
-                    start_open: true,
                 }
             }
             // Phone: everything stacks under the cartouche.
@@ -170,15 +163,9 @@ pub(crate) fn CodeShell(graph: CodeGraph, workspace: String, diff_line: String) 
                     graph: graph.clone(),
                     workspace: workspace.clone(),
                     diff_line,
+                    notes: graph.notes.clone(),
                 }
                 CodeSearch { graph: graph.clone() }
-            }
-            div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
-                CodeLegend {
-                notes: graph.notes.clone(),
-                changed,
-                start_open: false,
-            }
             }
         }
         // Wider than the dependency chart's search: an item hit carries

@@ -176,6 +176,34 @@ details.fold:not([open]) > summary::after {
   stroke-width: 3px;
 }
 
+/* Each ring captions its own dependency distance, the way an atlas captions
+   a parallel — `1 hop`, `2 hops`, `4+ hops` — so the chart carries the rings'
+   meaning itself. The data voice, soft ink, a paper halo where lines cross;
+   the size rides inline, scaled to the ring the way a region name is scaled
+   to its frame. Positioned by transform so the caption glides on the same
+   beat as the circle's radius when the outer band expands; never a pointer
+   target — the hairline underneath is the control. */
+.slope .ring-caption {
+  font-family: var(--font-data);
+  fill: var(--color-ink-soft);
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 3.5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+  transition: transform 400ms cubic-bezier(0.65, 0, 0.35, 1);
+}
+.slope .ring-guide:hover .ring-caption,
+.slope .ring-guide:focus-visible .ring-caption,
+.slope .ring-guide.is-selected .ring-caption {
+  fill: var(--color-ink);
+}
+@media (prefers-reduced-motion: reduce) {
+  .slope .ring-caption {
+    transition: none;
+  }
+}
+
 /* Expanding the outermost band (and folding it back) only ever slides stars
    and guides radially, so the move is drawn instead of jumped — matched to
    the camera's own 400ms ease so plate and camera travel together. */
@@ -1580,38 +1608,6 @@ details.fold:not([open]) > summary::after {
   text-align: right;
   font-size: 9.5px;
   color: var(--color-ink-soft);
-}
-
-/* The legend's fold is drawn, never hidden: a thin ink scrollbar stays
-   visible whenever there is more key below the cut. */
-/* The legend plate takes what the cartouche above it leaves, and scrolls inside
-   itself — so no altitude hand-sets a height that a longer diff line then
-   breaks. The fold's own content box is `::details-content`; unless that box is
-   the flex track, the scroll area under it is unbounded and the plate runs off
-   the page however short the key gets. `flex-basis: auto` so a short key still
-   hugs its own content instead of stretching to the page edge. */
-.slope .legend-plate::details-content {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.slope .legend-scroll {
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-ink-line)
-    color-mix(in srgb, var(--color-ink) 7%, transparent);
-}
-.slope .legend-scroll::-webkit-scrollbar {
-  width: 6px;
-}
-.slope .legend-scroll::-webkit-scrollbar-thumb {
-  background: var(--color-ink-line);
-}
-.slope .legend-scroll::-webkit-scrollbar-track {
-  background: color-mix(in srgb, var(--color-ink) 7%, transparent);
 }
 
 /* ————— The one authored motion: the survey constellation draws itself. ————— */

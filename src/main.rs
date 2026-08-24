@@ -56,7 +56,7 @@ const CONTRACT: &str = "<!--
 THESIS: A cargo workspace charted as an engraved star atlas; refuses the glowing graph-dashboard with sidebar filters.
 OWN-WORLD: Paper #f6f4ed, engraving ink #23303c, hairline constellation lines; EB Garamond spaced caps for chart furniture, JetBrains Mono for crate data; amber #a54c06 exists only as CHANGED and its fading blast halo; double-ruled paper plates for panels.
 STORY: A reviewer opens the chart after an agent session, sees the workspace whole, reads which stars flare, follows the halo to judge blast radius, and descends crate by crate - every focus a URL.
-FIRST VIEWPORT: Full-bleed chart; cartouche top-left with workspace name, epoch, change count; search top-right; legend bottom-left naming every state in words; changed stars flaring amber mid-chart.
+FIRST VIEWPORT: Full-bleed chart; cartouche top-left with workspace name, epoch, change count; search top-right; rings captioning their own hops and every mark carrying its state in words at the mark; changed stars flaring amber mid-chart.
 FORM: Star atlas, candidate 7 of 7 grounded directions, seed 93a80ceb.
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
 -->";

@@ -7,7 +7,8 @@
 //! second rust-analyzer run. The trade is stated, never hidden: added and
 //! removed declarations and rows are exact (declarations match by kind and
 //! name), while a *removed* relation's target is matched by name against the
-//! types the chart knows, and what stays ambiguous is counted on the legend.
+//! types the chart knows, and what stays ambiguous is counted in the
+//! cartouche's "what the survey cannot read" fold.
 //! A full semantic survey of the base would slot in behind the same wire
 //! model; this is the cheap edition, not the final word.
 //!

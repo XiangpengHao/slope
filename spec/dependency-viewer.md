@@ -15,8 +15,8 @@ the geometry, the rings, the edges, or the interactions changed.
   the focus panel reads `Cargo.toml changed — its dependency list`.
 - `EXT` is gone: an external crate carries its version (`v1.0.229`), as
   `cargo tree` prints it. `DEV` / `BUILD` became `(dev)` / `(build)`, again
-  `cargo tree`'s own output, and the legend names the cargo tables that own
-  the dashes: `dev-dependencies — dashed · build-dependencies — dotted`.
+  `cargo tree`'s own output, carried on the focus panel's rows beside the
+  crates they tag.
 - The EDGES toggle is captioned `dependencies`, and its third reading is
   `reverse deps` — it is `cargo tree -i`.
 - The fact sheet's `deps` row is `dependencies`.
@@ -184,7 +184,11 @@ below:
 - every star, queue row, and search hit is a real link; keyboard surface:
   `/` search, `n`/`p` walk changed crates, `f` refit, Esc un-bloom,
   `←`/`→` browser back / forward (global, every route).
-- the legend gained a "using this chart" operations section.
+- the legend is retired (2026-08-24): the rings caption their own hops
+  (`1 hop`, `2 hops`, `4+ hops`), every star's hover words carry its
+  state, fan-in, and the multi-select gesture, and each key is taught at
+  the control it acts on (`/` in the search placeholder, `n · p walk`
+  beside the changes list, `f` on the fit control).
 
 The visual world (engraved atlas, raises 1–5) is unchanged.
 
@@ -217,15 +221,17 @@ plate as its planetarium/field edition).
   (transitive dependents) carries a graded halo that fades with distance.
 - A **cartouche** (chart title block) stamps the workspace name and the
   diff epoch (`base..working`, or the explicit revision range).
-- A **legend** names every state in words: CHANGED / AFFECTED / UNTOUCHED,
-  plus the magnitude scale and edge-kind key.
+- **Every state is written at its mark**: state words under the stars
+  (`3 files changed`, `2 hops downstream`, `removed`), hop captions on the
+  ring guides, and each star's hover words carrying its magnitude
+  (`used by n crates`). No legend stands beside the chart.
 
 Raises the direction must keep (won from the concept round):
 
 1. **One material.** Nodes, edges, labels, panels, controls — everything is
    the same engraved-ink grammar. No foreign UI chrome.
-2. **States named in words.** The legend spells states out; color never
-   carries meaning alone.
+2. **States named in words.** Every state is spelled out beside the mark
+   that has it; color never carries meaning alone.
 3. **Every focus is a URL.** Browser back retraces the exact review trail.
 4. **Color is state.** The chart rests as monochrome ink engraving; only
    the diff and its blast radius take color.
@@ -280,7 +286,7 @@ flaring — orientation and diff in the same first glance.
 ## Interaction and layout
 
 - Full-bleed chart (dioxus-flow `Flow` + custom node views, layered
-  auto-layout). Chart furniture (cartouche, legend, search, locator
+  auto-layout). Chart furniture (cartouche, search, locator
   inset/minimap) drawn in the ink grammar at the edges.
 - Overview: members as named stars, member-to-member edges. External deps
   are summarized per star (faint count/hint), not all rendered.

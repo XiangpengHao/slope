@@ -19,7 +19,7 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::WorkspaceGraph;
-use crate::views::dep::chrome::{Legend, SearchBox, TitleBlock};
+use crate::views::dep::chrome::{SearchBox, TitleBlock};
 use crate::views::dep::map::Chart;
 use crate::views::shell::use_graph;
 
@@ -146,8 +146,8 @@ pub(super) fn use_dep() -> DepState {
 }
 
 /// `/dep` — the whole chart, edges drawn for the center crate. The chart
-/// lives in this altitude's shell and the key names the rings, so this route
-/// adds nothing: the overview is the chart, unobstructed.
+/// lives in this altitude's shell and the rings caption their own hops, so
+/// this route adds nothing: the overview is the chart, unobstructed.
 #[component]
 pub(crate) fn DepOverview() -> Element {
     rsx! {}
@@ -236,38 +236,23 @@ pub(crate) fn DepShell(graph: WorkspaceGraph) -> Element {
         }
     }));
 
-    // What sits at the center of the rings, for the legend's words: the root
-    // crate, or the workspace itself.
-    let center = graph
-        .root_crate
-        .as_ref()
-        .and_then(|id| graph.crates.iter().find(|c| &c.id == id))
-        .map(|c| c.name.clone())
-        .unwrap_or_else(|| graph.name.clone());
-
     rsx! {
         div { class: "sr-only", role: "status", aria_live: "polite", "{dep.announce}" }
         Chart { graph: graph.clone() }
         Outlet::<Route> {}
-        // Desktop: the left column is the reading order of a review — what
-        // this is and what changed, then the key.
-        div { class: "pointer-events-none absolute bottom-3 left-3 top-3 z-10 hidden w-64 flex-col sm:flex",
+        // Desktop: the left column is what this is and what changed. The chart
+        // needs no key beside it — the rings caption their own hops, and every
+        // mark carries its words on hover.
+        div { class: "pointer-events-none absolute left-3 top-3 z-10 hidden w-64 sm:block",
             TitleBlock { graph: graph.clone() }
-            div { class: "mt-auto min-h-0 pt-2",
-                Legend { start_open: true, center: center.clone() }
-            }
         }
         div { class: "pointer-events-none absolute right-3 top-3 z-10 hidden w-56 sm:block",
             SearchBox { graph: graph.clone() }
         }
-        // Phone: the title block stacks over search, its changes folded away;
-        // the key waits at the foot.
+        // Phone: the title block stacks over search, its changes folded away.
         div { class: "pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-col gap-2 sm:hidden",
             TitleBlock { graph: graph.clone(), changes_open: false }
             SearchBox { graph: graph.clone() }
-        }
-        div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
-            Legend { start_open: false, center }
         }
     }
 }

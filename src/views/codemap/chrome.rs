@@ -1,6 +1,8 @@
-//! Code-altitude furniture: the cartouche, search, the legend, the crate
-//! sheet, and the drawn vocabulary the map and the focus plate share. All of
-//! it the same engraved ink.
+//! Code-altitude furniture: the cartouche, search, the crate sheet, and the
+//! drawn vocabulary the map and the focus plate share. All of it the same
+//! engraved ink. There is no legend: the map states itself — every block,
+//! gate, tie and fold carries its own words on hover — and the survey's
+//! limits rest behind one fold at the cartouche's foot.
 
 use std::collections::HashMap;
 
@@ -97,10 +99,16 @@ pub(crate) fn AltitudeSwitch(at: Altitude) -> Element {
 }
 
 /// The code map's title block. It holds the survey's totals — the map itself no
-/// longer repeats them on every frame and every block — and the reading control
-/// for the map's ties, which acts on the whole plate and so belongs here.
+/// longer repeats them on every frame and every block — the reading control
+/// for the map's ties, which acts on the whole plate and so belongs here, and
+/// the survey's own limits behind one fold at the foot.
 #[component]
-pub(super) fn CodeCartouche(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
+pub(super) fn CodeCartouche(
+    graph: CodeGraph,
+    workspace: String,
+    diff_line: String,
+    notes: Vec<String>,
+) -> Element {
     let files = graph.files.len();
     let crates: std::collections::HashSet<&str> =
         graph.files.iter().map(|f| f.krate.as_str()).collect();
@@ -131,6 +139,7 @@ pub(super) fn CodeCartouche(graph: CodeGraph, workspace: String, diff_line: Stri
                 }
             }
             RefDirToggle {}
+            SurveyLimits { notes }
         }
     }
 }
@@ -287,142 +296,20 @@ pub(super) fn CodeSearch(graph: CodeGraph) -> Element {
     }
 }
 
-/// One tie sample for the legend: a hairline with the arrowhead resting on
-/// the user's end.
-#[component]
-fn TieSample(#[props(default = 1.3)] width: f64) -> Element {
-    rsx! {
-        svg {
-            width: "36",
-            height: "8",
-            view_box: "0 0 36 8",
-            class: "shrink-0",
-            "aria-hidden": "true",
-            line {
-                x1: "0",
-                y1: "4",
-                x2: "33",
-                y2: "4",
-                stroke: "var(--color-ink-line)",
-                stroke_width: "{width}",
-            }
-            path {
-                d: "M28.5 1.4 L33.5 4 L28.5 6.6",
-                fill: "none",
-                stroke: "var(--color-ink-line)",
-                stroke_width: "1.1",
-                stroke_linecap: "round",
-                stroke_linejoin: "round",
-            }
-        }
-    }
-}
-
-/// One row of a legend's gesture section: the gesture in tracked caps, what it
-/// does beside it. Shared by all three chart legends — one shape for the whole
-/// ladder, so a reader who learned one legend has learned the others.
-///
-/// It renders two cells, not a row, so the caller can seat them in [`Gestures`]'
-/// grid: at 224px of plate every gesture used to set its own label column, and
-/// the effects came out ragged.
-#[component]
-pub(crate) fn UsageRow(gesture: &'static str, effect: &'static str) -> Element {
-    rsx! {
-        span { class: "font-data text-[9.5px] tracking-[0.1em] uppercase text-ink", "{gesture}" }
-        span { class: "text-ink-soft", "{effect}" }
-    }
-}
-
-/// The gesture rows, on one grid so every label sets in the same column and
-/// every effect starts at the same rule.
-#[component]
-pub(crate) fn Gestures(children: Element) -> Element {
-    rsx! {
-        div { class: "grid grid-cols-[auto_1fr] items-baseline gap-x-2 gap-y-1 border-t border-ink-line pt-2.5",
-            {children}
-        }
-    }
-}
-
-/// The key: every mark the map draws that the map cannot state for itself, the
-/// gestures, and the survey's own limits behind a fold.
-///
-/// It explains no control that carries its own label and tooltip (2026-08-21,
-/// distill): the references toggle had a paragraph here restating its three
-/// button titles word for word. It repeats nothing the drawing already says — a
-/// block is a file, a frame is its directory, a row is written as rust. And it
-/// paraphrases no note: the survey's limits print in the survey's own words,
-/// and only the ones about references, this altitude's whole subject.
-///
-/// The plate takes the column's remainder rather than a hand-set height: the
-/// key is short enough to stand open, and the cartouche above it grows and
-/// shrinks with the diff.
-#[component]
-pub(super) fn CodeLegend(
-    notes: Vec<String>,
-    /// Whether the diff touched anything, so the `M` key is drawn only where
-    /// there is an `M` on the paper.
-    changed: bool,
-    #[props(default = true)] start_open: bool,
-) -> Element {
-    rsx! {
-        details {
-            class: "plate fold legend-plate pointer-events-auto flex min-h-0 w-full flex-col open:pb-3 sm:w-64",
-            open: start_open,
-            summary { class: "cursor-pointer select-none px-4 py-2 font-chart text-[12px] tracking-[0.22em] uppercase text-ink",
-                "Reading this map"
-            }
-            div { class: "legend-scroll min-h-0 flex-1 space-y-2.5 px-4 font-data text-[10px] leading-snug text-ink max-h-[42dvh] sm:max-h-none",
-                div { class: "space-y-1.5",
-                    div { class: "flex items-center gap-2",
-                        TieSample { width: 1.9 }
-                        span { "n references, summed" }
-                    }
-                    p { class: "text-ink-soft",
-                        "the arrow rests on the user — the way change travels."
-                    }
-                    p {
-                        span { class: "font-medium", "+ 4 pub · 5 private" }
-                        span { class: "text-ink-soft",
-                            " — what a block holds back. a folded directory\u{2019}s gate counts the same way, and every reference into what it holds lands on it."
-                        }
-                    }
-                    // Only where there is a diff: a key for a mark the map is
-                    // not drawing is dead weight (2026-08-21, distill).
-                    if changed {
-                        p {
-                            span { class: "text-flare", "M" }
-                            span { class: "text-ink-soft", " — changed since the diff base" }
-                        }
-                    }
-                }
-                Gestures {
-                    UsageRow { gesture: "click", effect: "a directory folds to a counted gate" }
-                    UsageRow { gesture: "hover", effect: "every tie of one block, with its count" }
-                    UsageRow { gesture: "/ · f", effect: "find a file or item · refit" }
-                    UsageRow { gesture: "← · → · esc", effect: "back · forward · step up" }
-                }
-                SurveyLimits { notes }
-            }
-        }
-    }
-}
-
-/// The survey\u{2019}s own limits, folded. They are read once, to trust the chart —
-/// not consulted while reading it — so they rest behind one line instead of
-/// spending a third of the plate at every altitude. Every altitude\u{2019}s legend
-/// closes with this, and the words are the survey\u{2019}s, never a paraphrase.
+/// The survey\u{2019}s own limits, folded at the cartouche's foot. They are read
+/// once, to trust the chart — not consulted while reading it — so they rest
+/// behind one line, and the words are the survey\u{2019}s, never a paraphrase.
 #[component]
 pub(crate) fn SurveyLimits(notes: Vec<String>) -> Element {
     if notes.is_empty() {
         return rsx! {};
     }
     rsx! {
-        details { class: "fold border-t border-ink-line pt-2.5",
-            summary { class: "cursor-pointer select-none font-data text-[9.5px] tracking-[0.1em] uppercase text-ink",
+        details { class: "fold border-t border-ink-line px-4 py-2",
+            summary { class: "cursor-pointer select-none font-data text-[9.5px] tracking-[0.1em] uppercase text-ink-soft hover:text-ink",
                 "what the survey cannot read"
             }
-            div { class: "mt-1.5 space-y-1 text-ink-soft",
+            div { class: "mt-1.5 space-y-1 pb-1 font-data text-[10px] leading-snug text-ink-soft",
                 for (i , note) in notes.iter().enumerate() {
                     p { key: "{i}", "{note}" }
                 }
