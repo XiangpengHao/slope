@@ -28,7 +28,7 @@ pub(crate) fn file_name(path: &str) -> &str {
     path.rsplit_once('/').map(|(_, n)| n).unwrap_or(path)
 }
 
-pub(crate) fn dir_of(path: &str) -> &str {
+pub(super) fn dir_of(path: &str) -> &str {
     path.rsplit_once('/').map(|(d, _)| d).unwrap_or("")
 }
 
@@ -100,7 +100,7 @@ pub(crate) fn AltitudeSwitch(at: Altitude) -> Element {
 /// longer repeats them on every frame and every block — and the reading control
 /// for the map's ties, which acts on the whole plate and so belongs here.
 #[component]
-pub(crate) fn CodeCartouche(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
+pub(super) fn CodeCartouche(graph: CodeGraph, workspace: String, diff_line: String) -> Element {
     let files = graph.files.len();
     let crates: std::collections::HashSet<&str> =
         graph.files.iter().map(|f| f.krate.as_str()).collect();
@@ -152,7 +152,7 @@ enum SearchHit {
 type Rank = (bool, u8, std::cmp::Reverse<u32>, String);
 
 #[component]
-pub(crate) fn CodeSearch(graph: CodeGraph) -> Element {
+pub(super) fn CodeSearch(graph: CodeGraph) -> Element {
     let mut query = use_signal(String::new);
     let mut active = use_signal(|| 0usize);
     let nav = use_navigator();
@@ -358,7 +358,7 @@ pub(crate) fn Gestures(children: Element) -> Element {
 /// key is short enough to stand open, and the cartouche above it grows and
 /// shrinks with the diff.
 #[component]
-pub(crate) fn CodeLegend(
+pub(super) fn CodeLegend(
     notes: Vec<String>,
     /// Whether the diff touched anything, so the `M` key is drawn only where
     /// there is an `M` on the paper.
@@ -508,7 +508,7 @@ fn RefDirToggle() -> Element {
 
 /// One crate's sheet: its files, and what crosses its boundary.
 #[component]
-pub(crate) fn CratePanel(graph: CodeGraph, name: String) -> Element {
+pub(super) fn CratePanel(graph: CodeGraph, name: String) -> Element {
     let mut files: Vec<FileInfo> = graph
         .files
         .iter()

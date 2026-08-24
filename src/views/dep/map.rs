@@ -647,7 +647,7 @@ impl DrawnCap {
 
 /// The rings chart, mounted once for the whole session.
 #[component]
-pub(crate) fn Chart(graph: WorkspaceGraph) -> Element {
+pub(super) fn Chart(graph: WorkspaceGraph) -> Element {
     let dep = use_dep();
     let drawn_cap = use_context::<DrawnCap>().cap;
     let flow = dioxus_flow::use_flow_handle::<StarData>();

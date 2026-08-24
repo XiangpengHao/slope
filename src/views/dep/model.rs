@@ -21,7 +21,7 @@ use crate::api::{DepEvent, WorkspaceGraph};
 /// onto the outermost ring as one "N+ hops" band, so the plate stays
 /// compact. Selecting a crate inside the band expands exact rings down to
 /// its true depth.
-pub(crate) const DEFAULT_CAP: u32 = 4;
+pub(super) const DEFAULT_CAP: u32 = 4;
 
 /// Base gap between rings.
 const RING_GAP: f64 = 150.0;
@@ -47,7 +47,7 @@ pub(crate) struct StarPlace {
 
 /// The whole chart's geometry. The chart center is flow origin (0, 0).
 #[derive(Clone, PartialEq)]
-pub(crate) struct RadialLayout {
+pub(super) struct RadialLayout {
     pub(crate) placed: HashMap<String, StarPlace>,
     /// Radius of each drawn ring, indexed by ring number (`radii[0] == 0`).
     pub(crate) radii: Vec<f64>,

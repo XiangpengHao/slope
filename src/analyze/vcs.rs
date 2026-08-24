@@ -6,7 +6,7 @@ use std::process::Command;
 
 use crate::api::Epoch;
 
-pub(crate) struct Diff {
+pub(super) struct Diff {
     pub(crate) epoch: Epoch,
     /// Paths relative to the workspace root.
     pub(crate) changed_files: Vec<String>,
@@ -46,7 +46,7 @@ fn find_up(start: &Path, marker: &str) -> Option<PathBuf> {
 impl Diff {
     /// Detect the VCS and compute changed files between the base and the working
     /// copy. `SLOPE_BASE` overrides the base revision (a git rev or jj revset).
-    pub(crate) fn detect(workspace_root: &Path) -> Self {
+    pub(super) fn detect(workspace_root: &Path) -> Self {
         let base_override = std::env::var("SLOPE_BASE").ok();
 
         // A colocated jj repo has both markers; git plumbing is the more
@@ -185,7 +185,7 @@ fn jj_diff(workspace_root: &Path, repo: &Path, base_override: Option<&str>) -> O
 }
 
 /// Contents of `rel_path` (relative to the workspace root) at the diff base.
-pub(crate) fn file_at_base(workspace_root: &Path, diff: &Diff, rel_path: &str) -> Option<String> {
+pub(super) fn file_at_base(workspace_root: &Path, diff: &Diff, rel_path: &str) -> Option<String> {
     match diff.base_ref.as_ref()? {
         BaseRef::Git { repo_root, rev } => {
             let abs = workspace_root.join(rel_path);

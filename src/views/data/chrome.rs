@@ -52,7 +52,7 @@ fn diff_words(facts: &DataFacts) -> String {
 /// teaches; the edges are what the chart shows. No doors toggle either: state
 /// does not fold at a door, so every datum is drawn whatever its `pub`.
 #[component]
-pub(crate) fn DataCartouche(facts: DataFacts, workspace: String, diff_line: String) -> Element {
+pub(super) fn DataCartouche(facts: DataFacts, workspace: String, diff_line: String) -> Element {
     let insight = insight(&facts.changed_modules);
     let kinds = {
         let mut parts = vec![
@@ -95,7 +95,7 @@ pub(crate) fn DataCartouche(facts: DataFacts, workspace: String, diff_line: Stri
 /// cartouche because it acts on the whole plate, and it is the same reading
 /// the code map is set to — one reviewer, one question, at either altitude.
 #[component]
-pub(crate) fn RefToggle() -> Element {
+fn RefToggle() -> Element {
     let code = use_code();
     let current = *code.ref_dir.read();
     let seg = |label: &'static str, hint: &'static str, val: RefDir| {
@@ -148,7 +148,7 @@ fn hold_word(kind: HoldKind, via: &str) -> String {
 /// re-centers the selection on it), or a folded module's counted row, which is
 /// words.
 #[derive(Clone, PartialEq)]
-pub(crate) struct HoldRow {
+struct HoldRow {
     pub(crate) to: Option<Route>,
     pub(crate) decl: String,
     pub(crate) name: String,
@@ -161,7 +161,7 @@ pub(crate) struct HoldRow {
 /// One chunked list of relation rows: the first eight, then a typographic
 /// "show all n".
 #[component]
-pub(crate) fn HoldList(rows: Vec<HoldRow>) -> Element {
+fn HoldList(rows: Vec<HoldRow>) -> Element {
     let mut all = use_signal(|| false);
     let total = rows.len();
     let shown = if all() || total <= 8 { total } else { 8 };
@@ -349,7 +349,7 @@ fn tier_line(mark: &DataMark) -> String {
 /// loud, because `named by 12 signatures` is ink this chart refuses to draw
 /// and a reviewer must never mistake for silence.
 #[component]
-pub(crate) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
+pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
     let code = use_code();
     let data = use_data();
     let model = use_memo(use_reactive((&graph,), move |(graph,)| {
@@ -725,7 +725,7 @@ pub(crate) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
 /// statics — ranked the way the code search ranks: a prefix match is what the
 /// reviewer meant, then whatever more of the workspace leans on.
 #[component]
-pub(crate) fn DataSearch(graph: CodeGraph) -> Element {
+pub(super) fn DataSearch(graph: CodeGraph) -> Element {
     let mut query = use_signal(String::new);
     let mut active = use_signal(|| 0usize);
     let nav = use_navigator();
@@ -885,7 +885,7 @@ fn WireSample(
 /// stand as a key strip, sample beside word, because at 224px of plate a
 /// sentence per mark cost five lines each and ran the plate off the page.
 #[component]
-pub(crate) fn DataLegend(
+pub(super) fn DataLegend(
     facts: DataFacts,
     notes: Vec<String>,
     #[props(default = true)] start_open: bool,

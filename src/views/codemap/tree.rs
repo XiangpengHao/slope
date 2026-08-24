@@ -20,11 +20,11 @@ use dioxus_flow::prelude::Point;
 use crate::api::CodeGraph;
 
 /// The root directory's id: always first in [`FileTree::dirs`].
-pub(crate) const ROOT: u32 = 0;
+pub(super) const ROOT: u32 = 0;
 
 /// One directory of the workspace.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct DirNode {
+pub(super) struct DirNode {
     pub(crate) id: u32,
     /// Last path segment; the root keeps the empty string.
     pub(crate) name: String,
@@ -46,7 +46,7 @@ pub(crate) struct DirNode {
 
 /// The workspace's directory tree.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct FileTree {
+pub(super) struct FileTree {
     pub(crate) dirs: Vec<DirNode>,
     /// Directory id for every file id.
     pub(crate) dir_of_file: HashMap<u32, u32>,
@@ -190,13 +190,13 @@ fn common_ancestor(dirs: &[DirNode], mut a: u32, mut b: u32) -> u32 {
 
 /// Marks the first paint budgets for. Beyond it, deep directories start
 /// folded as gates — stated in words on the plate, opened with one click.
-pub(crate) const MARK_BUDGET: usize = 320;
+pub(super) const MARK_BUDGET: usize = 320;
 
 impl FileTree {
     /// The deepest directory level that stays open by default: the largest
     /// depth keeping the visible mark count within the budget. Depth 1 always
     /// opens, so the map never greets the reviewer with a single closed gate.
-    pub(crate) fn default_open_depth(&self, budget: usize) -> u32 {
+    pub(super) fn default_open_depth(&self, budget: usize) -> u32 {
         let max_depth = self.dirs.iter().map(|d| d.depth).max().unwrap_or(0);
         let mut best = 1;
         for depth in 1..=max_depth.max(1) {
@@ -218,7 +218,7 @@ impl FileTree {
     /// Which directories are open, from the default depth and the reviewer's
     /// toggles. A directory under a closed ancestor is not in the set at all —
     /// it is invisible, not merely closed.
-    pub(crate) fn open_dirs(&self, depth: u32, toggled: &HashSet<u32>) -> HashSet<u32> {
+    pub(super) fn open_dirs(&self, depth: u32, toggled: &HashSet<u32>) -> HashSet<u32> {
         let mut open = HashSet::new();
         let mut stack = vec![ROOT];
         while let Some(id) = stack.pop() {
@@ -235,7 +235,7 @@ impl FileTree {
 
     /// A visible directory that is not open: drawn as a gate carrying its
     /// count.
-    pub(crate) fn is_gate(&self, open: &HashSet<u32>, dir: u32) -> bool {
+    pub(super) fn is_gate(&self, open: &HashSet<u32>, dir: u32) -> bool {
         !open.contains(&dir)
             && self.dirs[dir as usize]
                 .parent
@@ -251,25 +251,25 @@ impl FileTree {
 pub(crate) fn file_key(id: u32) -> String {
     format!("f{id}")
 }
-pub(crate) fn dir_key(id: u32) -> String {
+pub(super) fn dir_key(id: u32) -> String {
     format!("d{id}")
 }
 
 /// Block furniture, in flow units — one unit is one CSS pixel at zoom 1. The
 /// layout measures blocks itself, so the drawn plate must be handed exactly
 /// these numbers: a plate taller than its box would stand on its neighbor.
-pub(crate) const BLOCK_HEAD_H: f64 = 25.0;
-pub(crate) const BLOCK_ROW_H: f64 = 17.0;
+pub(super) const BLOCK_HEAD_H: f64 = 25.0;
+pub(super) const BLOCK_ROW_H: f64 = 17.0;
 /// One wrapped line of a fold's words. A fold that clips its own count says
 /// nothing, so the box grows to fit the sentence.
-pub(crate) const BLOCK_FOLD_LINE: f64 = 11.0;
-pub(crate) const BLOCK_PAD_X: f64 = 9.0;
+pub(super) const BLOCK_FOLD_LINE: f64 = 11.0;
+pub(super) const BLOCK_PAD_X: f64 = 9.0;
 /// Slack below the last row, so the frame never crowds the letters.
-pub(crate) const BLOCK_FOOT: f64 = 7.0;
-pub(crate) const BLOCK_MIN_W: f64 = 138.0;
-pub(crate) const BLOCK_MAX_W: f64 = 296.0;
+pub(super) const BLOCK_FOOT: f64 = 7.0;
+pub(super) const BLOCK_MIN_W: f64 = 138.0;
+pub(super) const BLOCK_MAX_W: f64 = 296.0;
 /// A folded directory's gate: one counted line, no rows.
-pub(crate) const GATE_H: f64 = 31.0;
+pub(super) const GATE_H: f64 = 31.0;
 
 /// District furniture: inner padding, the band the engraved label sits in,
 /// and the gap between siblings.
@@ -280,7 +280,7 @@ const GAP: f64 = 11.0;
 /// One em of advance in the data face (JetBrains Mono is monospaced). Every
 /// measured label on the map is data, so this is the only advance the layout
 /// needs.
-pub(crate) const MONO_ADVANCE: f64 = 0.6;
+pub(super) const MONO_ADVANCE: f64 = 0.6;
 
 /// Estimated width of mono text at a given size. The map would rather carry
 /// slack than clip a name.
@@ -291,7 +291,7 @@ pub(crate) fn text_w(text: &str, px: f64) -> f64 {
 /// Estimated width of a tracked run of letters. The engraved labels are
 /// uppercase with heavy letter-spacing, and the tracking is most of what they
 /// measure — leaving it out is what makes a label collide with its neighbor.
-pub(crate) fn tracked_w(text: &str, px: f64, advance: f64, tracking_em: f64) -> f64 {
+pub(super) fn tracked_w(text: &str, px: f64, advance: f64, tracking_em: f64) -> f64 {
     text.chars().count() as f64 * px * (advance + tracking_em)
 }
 
@@ -330,7 +330,7 @@ pub(crate) struct District {
 /// every file block and gate, and the width of every district's engraved
 /// label. Measuring belongs with the drawing, not with the geometry.
 #[derive(Clone, PartialEq, Debug, Default)]
-pub(crate) struct Measures {
+pub(super) struct Measures {
     pub(crate) blocks: HashMap<u32, (f64, f64)>,
     pub(crate) gates: HashMap<u32, (f64, f64)>,
     pub(crate) labels: HashMap<u32, f64>,

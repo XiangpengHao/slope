@@ -33,7 +33,7 @@ use crate::views::survey::use_code_graph;
 
 /// What the route selects on the chart.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) enum DataSel {
+pub(super) enum DataSel {
     /// One datum: the defining file, then the label its definition plate
     /// selects by.
     Mark(String, String),
@@ -54,7 +54,7 @@ impl DataSel {
 }
 
 /// The route that selects one datum on the chart.
-pub(crate) fn mark_route(path: &str, item: &str) -> Route {
+pub(super) fn mark_route(path: &str, item: &str) -> Route {
     Route::DataFocus {
         path: path.split('/').map(str::to_string).collect(),
         item: item.to_string(),
@@ -62,7 +62,7 @@ pub(crate) fn mark_route(path: &str, item: &str) -> Route {
 }
 
 /// The route that selects one module boundary.
-pub(crate) fn mod_route(key: Vec<String>) -> Route {
+pub(super) fn mod_route(key: Vec<String>) -> Route {
     Route::DataModFocus { module: key }
 }
 
@@ -84,7 +84,7 @@ impl DataState {
 }
 
 /// This altitude's state, from the shell's context.
-pub(crate) fn use_data() -> DataState {
+pub(super) fn use_data() -> DataState {
     use_context::<DataState>()
 }
 

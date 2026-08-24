@@ -139,7 +139,7 @@ struct MeasuredBlock {
 
 /// A frame's counted fold row: a module folded by hand.
 #[derive(Clone, PartialEq)]
-pub(crate) struct FoldView {
+struct FoldView {
     anchor: Anchor,
     words: String,
     title: String,
@@ -883,7 +883,7 @@ pub(crate) fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool
 /// carries the route with the name, so every row on the chart is quoted
 /// through this one component.
 #[component]
-pub(crate) fn Quoted(text: String, held: Held) -> Element {
+fn Quoted(text: String, held: Held) -> Element {
     let runs = spans(&text, &held.name);
     rsx! {
         for (j , (class , run , is_held)) in runs.into_iter().enumerate() {
@@ -1529,7 +1529,7 @@ document.addEventListener('keydown', window.__slopeKeys);
 
 /// The data chart, mounted for `/data`.
 #[component]
-pub(crate) fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
+pub(super) fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
     let code = use_code();
     let data = use_data();
     let camera = use_context::<DataCamera>();

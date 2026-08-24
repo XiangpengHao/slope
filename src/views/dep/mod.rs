@@ -29,7 +29,7 @@ use crate::views::shell::use_graph;
 type TrailStep = Option<String>;
 
 /// The ring index a trail step selects, if it is a ring step.
-pub(crate) fn step_ring(step: &str) -> Option<u32> {
+pub(super) fn step_ring(step: &str) -> Option<u32> {
     step.strip_prefix("ring:")?.parse().ok()
 }
 
@@ -37,7 +37,7 @@ pub(crate) fn step_ring(step: &str) -> Option<u32> {
 /// always drawn regardless. Defaults to dependencies only: the compact
 /// reading; the other two readings are one toggle away.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum DirFilter {
+pub(super) enum DirFilter {
     /// What the selection depends on.
     #[default]
     Deps,
@@ -83,7 +83,7 @@ impl Trail {
     }
 
     /// The crate the current route focuses, if any.
-    pub(crate) fn current_focus(&self) -> Option<String> {
+    pub(super) fn current_focus(&self) -> Option<String> {
         self.steps.get(self.at).cloned().flatten()
     }
 
@@ -141,7 +141,7 @@ impl DepState {
     }
 }
 
-pub(crate) fn use_dep() -> DepState {
+pub(super) fn use_dep() -> DepState {
     use_context()
 }
 

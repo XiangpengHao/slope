@@ -993,7 +993,7 @@ document.addEventListener('keydown', window.__slopeKeys);
 
 /// The ambient map, mounted while no file or item holds the focus.
 #[component]
-pub(crate) fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
+pub(super) fn CodeChart(graph: CodeGraph, sel: CodeSel, workspace: String) -> Element {
     let code = use_code();
     let camera = use_context::<CodeCamera>();
     let flow = dioxus_flow::use_flow_handle::<CodeNodeData>();

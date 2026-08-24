@@ -27,7 +27,7 @@ pub(crate) fn use_code_graph() -> Option<CodeGraph> {
 /// whichever altitude the route asks for. Mounted by the app shell for every
 /// `/code` and `/data` route.
 #[component]
-pub(crate) fn SurveyShell(workspace: String, diff_line: String) -> Element {
+pub(super) fn SurveyShell(workspace: String, diff_line: String) -> Element {
     let resource: CodeResource = use_resource(code_graph);
     use_context_provider(|| resource);
 

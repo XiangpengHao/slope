@@ -25,7 +25,7 @@ pub(crate) enum Territory {
 
 /// Where a reference lands once it has been lifted to what is visible.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) enum Lifted {
+enum Lifted {
     /// The item itself may be drawn.
     Item(u32),
     /// Private the whole way up: the reference belongs to this file's edge,
@@ -98,7 +98,7 @@ impl Containment {
     }
 
     /// True when `mark` is `center` or sits inside it.
-    pub(crate) fn within(&self, marks: &[ItemMark], center: u32, mark: u32) -> bool {
+    pub(super) fn within(&self, marks: &[ItemMark], center: u32, mark: u32) -> bool {
         let mut cur = mark;
         for _ in 0..MAX_DEPTH {
             if cur == center {
@@ -115,7 +115,7 @@ impl Containment {
     /// Lift a reference to the lowest ancestor that may be drawn. A private
     /// method lifts to its type; a private top-level item lifts to its file
     /// and shows there as a counted, unnamed line.
-    pub(crate) fn lift(&self, marks: &[ItemMark], mark: u32) -> Lifted {
+    fn lift(&self, marks: &[ItemMark], mark: u32) -> Lifted {
         let mut cur = mark;
         for _ in 0..MAX_DEPTH {
             let Some(m) = marks.get(cur as usize) else {
@@ -148,7 +148,7 @@ const BLOCK_CAP: usize = 7;
 ///
 // TODO: `changed` is file-level. Item-level epoch ticks need the diff's hunks
 // against item line ranges; the survey does not read hunks yet.
-pub(crate) fn interest(mark: &ItemMark, changed: bool) -> u32 {
+fn interest(mark: &ItemMark, changed: bool) -> u32 {
     if mark.vis == Vis::Private {
         return 0;
     }
@@ -167,7 +167,7 @@ pub(crate) fn tier(fan_in: u32) -> u8 {
 
 /// What one file block engraves, and what it says it hides.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct Block {
+pub(super) struct Block {
     pub(crate) file: u32,
     /// Landmark marks, in source order.
     pub(crate) rows: Vec<u32>,
