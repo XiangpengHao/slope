@@ -423,8 +423,10 @@ fn diff_rows(
         .map(|(i, _)| i as u32)
         .collect();
     // Where each dropped base row renders: before its own name's live row if
-    // the name survives (a changed type), else before the next base row that
-    // does, else at the end.
+    // the name survives (a changed type), else in the diff's own idiom — right
+    // after the last base row whose name still lives, so the ghost sits above
+    // the live rows that filled its slot instead of below them — and never
+    // past the seat of the next base row that lives, or the end.
     let mut removed: Vec<(u32, String, String)> = Vec::new();
     let mut before = vec![live.len() as u32; base.len()];
     let mut next = live.len() as u32;
@@ -435,6 +437,15 @@ fn diff_rows(
                 before[bi] = li as u32;
             }
             None => before[bi] = next,
+        }
+    }
+    // The seat just after the last base row that still lives: a vanished row
+    // reads as the line the rows below it replaced, not as their trailer.
+    let mut after = 0;
+    for (bi, (name, _)) in base.iter().enumerate() {
+        match live_of.get(name.as_str()) {
+            Some(&li) => after = li as u32 + 1,
+            None => before[bi] = before[bi].min(after),
         }
     }
     for (bi, (name, decl)) in base.iter().enumerate() {
@@ -1203,6 +1214,27 @@ mod tests {
             vec![
                 (1, "changed".to_string(), "bool".to_string()),
                 (2, "lines".to_string(), "u32".to_string()),
+            ]
+        );
+        // A run of dropped rows keeps its own seat and its own order: the
+        // ghosts sit where the rows sat, above the live rows that took the
+        // slot, never trailing under them.
+        let base = vec![
+            ("id".to_string(), "u32".to_string()),
+            ("changed".to_string(), "bool".to_string()),
+            ("stale".to_string(), "bool".to_string()),
+        ];
+        let live = vec![
+            ("id".to_string(), "u32".to_string()),
+            ("status".to_string(), "FileStatus".to_string()),
+        ];
+        let (added, removed) = diff_rows(&base, &live);
+        assert_eq!(added, vec![1]);
+        assert_eq!(
+            removed,
+            vec![
+                (1, "changed".to_string(), "bool".to_string()),
+                (1, "stale".to_string(), "bool".to_string()),
             ]
         );
     }
