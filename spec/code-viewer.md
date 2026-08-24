@@ -294,6 +294,17 @@ mode: **Operate**.
   deduped `SrcLink` table (target file path + item URL label; empty label =
   the whole file). A run is `SrcRun { text, tok, link }`; nothing is split —
   a name token lexes as exactly one run.
+- **Test-only code is not surveyed** (2026-08-24, user decision). A
+  declaration behind `#[cfg(test)]` — in any of its shapes — or a `#[test]`
+  function is skipped whole, and so is everything written inside it: on this
+  workspace that is 152 of 792 items, and every reference they wrote goes with
+  them — all of it fixtures standing between the reviewer and the code that
+  ships. What the *base*
+  edition reads is skipped by the same rule, so the structural diff has no
+  spurious removals to report. Never a silent cut: the survey writes
+  `n test-only declarations, and everything written inside them, are not
+  surveyed — set SLOPE_TESTS=1 to chart them` into `CodeGraph::notes`, where
+  every legend's `what the survey cannot read` fold prints it.
 - Honesty: unresolved names are counted and written on the legend, never
   guessed. `CodeGraph` carries two lists, so a legend states the limits of the
   ink its own chart draws (2026-08-21, distill): `notes` is about references —

@@ -69,6 +69,12 @@ silently became load-bearing. Visitor mode: **Operate**.
   letter, token-colored quoted rows with the bold run naming the workspace
   type the row reaches. No method band; the locator lives in the hover words
   and on the sheet. A static quotes its declared type under its name.
+- **The bold run is a link to the block it names** (2026-08-24, user): click
+  `ItemKind` in `kind: ItemKind` and the chart selects `ItemKind`, gliding
+  there only if the glass cannot already show it. It underlines under the
+  pointer and carries nothing at rest. A run with no block to reach — inside
+  a hand-folded module, or naming the block it is written in — stays bold text
+  and nothing more.
 - **Nesting**: a hairline rule closes the rows; the owned blocks shelve on
   the clear paper under it, at full block anatomy, recursively. A block grows
   to hold what it contains. The bold run in a field row above is the block

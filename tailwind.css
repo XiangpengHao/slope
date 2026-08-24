@@ -661,9 +661,13 @@ details.fold:not([open]) > summary::after {
 }
 /* A row's own diff marker, in the diff's own idiom. The marker escapes a
    struck row's line-through by being its own inline block. */
+/* The diff's row marker lives in the indent's gutter, so a `+` row and its
+   untouched neighbour start their text on the same column — the alignment is
+   what makes a woven block readable as one declaration. */
 .atlas .dm-mk {
   display: inline-block;
-  width: 9px;
+  margin-left: -12px;
+  width: 12px;
   font-weight: 700;
   color: var(--color-flare);
   text-decoration: none;
@@ -732,6 +736,38 @@ details.fold:not([open]) > summary::after {
   color: var(--color-flare);
   font-weight: 700;
 }
+/* The brackets that make a block read as the declaration it quotes: the
+   opener rides the head, the closer is a line of its own — which is what
+   makes a long block's end findable. Punctuation ink, like every other
+   bracket inside a quotation. A paren belongs against its name, so it eats
+   the head's flex gap; a brace wants the space and keeps it. */
+.atlas .dm-open {
+  flex: none;
+  color: var(--color-tok-punct);
+}
+.atlas .dm-open.is-tight {
+  margin-left: -4px;
+}
+/* Rows stand in from the edge the way rust indents a body; the brace that
+   closes them does not, which is what makes the block's end findable. */
+.atlas .dm-ty,
+.atlas .dm-row,
+.atlas .dm-var,
+.atlas .dm-sig {
+  padding-left: 12px;
+}
+.atlas .dm-close {
+  font-size: 10px;
+  line-height: 15px;
+  color: var(--color-tok-punct);
+  /* A signature's return rides this line and can be long: it wraps, as it
+     did when it stood on a line of its own. */
+  overflow-wrap: anywhere;
+}
+/* A signature's return type rides its closing paren, where rust writes it. */
+.atlas .dm-ret {
+  margin-left: 4px;
+}
 /* A static's declared type, quoted as written. It breaks anywhere, because a
    generic type has no spaces to break at. */
 .atlas .dm-ty {
@@ -758,6 +794,25 @@ details.fold:not([open]) > summary::after {
 }
 .atlas .dm-held {
   font-weight: 600;
+}
+/* A held run whose type has a block on this chart is a link of its own: click
+   the type's name inside a row and the chart goes to that type, instead of
+   hunting the paper for it by eye. The affordance is the one the block's own
+   name already uses — an underline while the pointer is on it — so nothing new
+   has to be learned, and nothing is added at rest: a row whose types were
+   underlined all the time would read as decoration, not as a declaration. */
+.atlas .dm-held.is-link {
+  cursor: pointer;
+}
+.atlas .dm-held.is-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.atlas .dm-held.is-link:focus-visible {
+  outline: 1px solid var(--color-ink);
+  outline-offset: 1px;
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 /* An enum's variants as written, one row each, payloads included. */
 .atlas .dm-var {
@@ -789,6 +844,13 @@ details.fold:not([open]) > summary::after {
   margin-top: 3px;
   padding-top: 2px;
   border-top: 1px solid color-mix(in srgb, var(--color-ink-line) 55%, transparent);
+}
+/* A trait's band is its body, already bracketed by the block's own braces:
+   a rule there would separate the body from nothing. */
+.atlas .dm-band.is-body {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
 }
 .atlas .dm-sig {
   font-size: 10px;
@@ -1210,6 +1272,8 @@ details.fold:not([open]) > summary::after {
 .atlas .data-chart.is-far .dm-ty,
 .atlas .data-chart.is-far .dm-row,
 .atlas .data-chart.is-far .dm-var,
+.atlas .data-chart.is-far .dm-open,
+.atlas .data-chart.is-far .dm-close,
 .atlas .data-chart.is-far .dm-folds,
 .atlas .data-chart.is-far .dm-kids {
   display: none;

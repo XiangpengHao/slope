@@ -26,11 +26,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::api::{CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, ItemMark};
+use crate::api::{CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, ItemMark, Vis};
 use crate::views::codemap::RefDir;
 use crate::views::codemap::model::Containment;
+use crate::views::data::mark_route;
 use crate::views::surface::model::{
-    Anchor, FieldRow, Folds, Frame, RowState, Seat, mod_key, module_path,
+    Anchor, FieldRow, Folds, Frame, Held, RowState, Seat, mod_key, module_path,
 };
 
 /// Structural holders a standing mark draws before folding them to a count on
@@ -108,9 +109,9 @@ pub(crate) struct DataMark {
     pub(crate) variants: Vec<FieldRow>,
     /// A static's declared type, as written.
     pub(crate) ty: String,
-    /// The workspace type that type reaches, drawn in full ink. Empty where
-    /// it reaches nothing this chart draws.
-    pub(crate) ty_target: String,
+    /// The workspace type that type reaches, drawn in full ink — and where
+    /// its own block stands, so the run is a link to it.
+    pub(crate) ty_target: Held,
     pub(crate) tier: Tier,
     /// The marks nested inside this block, in the survey's order.
     pub(crate) kids: Vec<u32>,
@@ -734,19 +735,38 @@ impl DataModel {
                     .map(|g| g.id),
             )
             .collect();
-        let mut target_of: HashMap<(u32, String), String> = HashMap::new();
+        // Where a held type's block stands, by the key its URL uses, so the
+        // bold run naming it is a link to it. A run the chart draws no block
+        // for is bold text and nothing more, and so is a self-hold: the
+        // reader is already standing in that block.
+        let seat_of = |id: u32| -> Option<(String, String)> {
+            match graph.items.get(id as usize) {
+                Some(mark) => Some((
+                    graph.files.get(mark.file as usize)?.path.clone(),
+                    mark.label.clone(),
+                )),
+                None => ghost_of(id).map(|g| (g.path.clone(), g.name.clone())),
+            }
+        };
+        let mut target_of: HashMap<(u32, String), Held> = HashMap::new();
         for edge in &graph.holds {
             if !drawn_set.contains(&edge.from) {
                 continue;
             }
-            let target = name_of(edge.to);
+            let target = Held {
+                name: name_of(edge.to),
+                at: (drawn_set.contains(&edge.to) && edge.to != edge.from)
+                    .then(|| seat_of(edge.to))
+                    .flatten()
+                    .map(|(path, label)| mark_route(&path, &label)),
+            };
             for (name, _) in &edge.fields {
                 target_of
                     .entry((edge.from, name.clone()))
                     .or_insert_with(|| target.clone());
             }
         }
-        let target = |id: u32, name: &str| -> String {
+        let target = |id: u32, name: &str| -> Held {
             target_of
                 .get(&(id, name.to_string()))
                 .cloned()
@@ -770,10 +790,11 @@ impl DataModel {
                 .field_rows
                 .iter()
                 .enumerate()
-                .map(|(at, (name, decl))| FieldRow {
-                    name: name.clone(),
-                    decl: decl.clone(),
-                    target: target(id, name),
+                .map(|(at, row)| FieldRow {
+                    name: row.name.clone(),
+                    decl: row.ty.clone(),
+                    vis: row.vis,
+                    target: target(id, &row.name),
                     state: if mark.fields_added.contains(&(at as u32)) {
                         RowState::Added
                     } else {
@@ -784,13 +805,14 @@ impl DataModel {
             let mut dropped: Vec<(usize, FieldRow)> = mark
                 .fields_removed
                 .iter()
-                .map(|(before, name, decl)| {
+                .map(|(before, row)| {
                     (
                         *before as usize,
                         FieldRow {
-                            name: name.clone(),
-                            decl: decl.clone(),
-                            target: target(id, name),
+                            name: row.name.clone(),
+                            decl: row.ty.clone(),
+                            vis: row.vis,
+                            target: target(id, &row.name),
                             state: RowState::Removed,
                         },
                     )
@@ -807,6 +829,7 @@ impl DataModel {
                 .map(|(at, written)| FieldRow {
                     name: String::new(),
                     decl: written.clone(),
+                    vis: Vis::Private,
                     target: target(id, &vname(written)),
                     state: if mark.variants_added.contains(&(at as u32)) {
                         RowState::Added
@@ -824,6 +847,7 @@ impl DataModel {
                         FieldRow {
                             name: String::new(),
                             decl: written.clone(),
+                            vis: Vis::Private,
                             target: target(id, &vname(written)),
                             state: RowState::Removed,
                         },
@@ -892,10 +916,11 @@ impl DataModel {
                 fields: ghost
                     .field_rows
                     .iter()
-                    .map(|(name, decl)| FieldRow {
-                        name: name.clone(),
-                        decl: decl.clone(),
-                        target: target(ghost.id, name),
+                    .map(|row| FieldRow {
+                        name: row.name.clone(),
+                        decl: row.ty.clone(),
+                        vis: row.vis,
+                        target: target(ghost.id, &row.name),
                         state: RowState::Same,
                     })
                     .collect(),
@@ -905,6 +930,7 @@ impl DataModel {
                     .map(|written| FieldRow {
                         name: String::new(),
                         decl: written.clone(),
+                        vis: Vis::Private,
                         target: target(ghost.id, &vname(written)),
                         state: RowState::Same,
                     })
@@ -1126,7 +1152,7 @@ impl DataModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{FileInfo, HoldEdge, MarkRef, Vis};
+    use crate::api::{DeclRow, FileInfo, HoldEdge, MarkRef, Vis};
 
     fn file(id: u32, path: &str) -> FileInfo {
         FileInfo {
@@ -1220,6 +1246,42 @@ mod tests {
         assert!(model.holds.is_empty());
         // The blast radius still walks it.
         assert_eq!(model.pairs, vec![(Anchor::Mark(1), Anchor::Mark(0))]);
+    }
+
+    /// The run naming a held type carries the route to that type's block, so
+    /// the run is a link: the reader who meets `field: Vec<Nut>` clicks `Nut`
+    /// and the chart selects `Nut`, wherever on the paper it stands. A run
+    /// naming the block it is written in carries none.
+    #[test]
+    fn a_held_run_carries_the_route_to_the_block_it_names() {
+        let mut g = graph(
+            vec![
+                mark(0, 0, "Wire", ItemKind::Struct),
+                mark(1, 1, "Nut", ItemKind::Struct),
+            ],
+            vec![owns(0, 1)],
+        );
+        g.items[0].field_rows = vec![DeclRow {
+            name: "field".into(),
+            ty: "Vec<Nut>".into(),
+            vis: Vis::Private,
+        }];
+        let model = build(&g);
+        let held = by_name(&model, "Wire").fields[0].target.clone();
+        assert_eq!(held.name, "Nut");
+        assert_eq!(held.at, Some(mark_route("src/views/atlas.rs", "Nut")));
+
+        // A shape that holds itself: the link would go where the reader is.
+        let mut g = graph(vec![mark(0, 0, "Node", ItemKind::Struct)], vec![owns(0, 0)]);
+        g.items[0].field_rows = vec![DeclRow {
+            name: "field".into(),
+            ty: "Option<Box<Node>>".into(),
+            vis: Vis::Private,
+        }];
+        let model = build(&g);
+        let held = by_name(&model, "Node").fields[0].target.clone();
+        assert_eq!(held.name, "Node");
+        assert_eq!(held.at, None);
     }
 
     #[test]

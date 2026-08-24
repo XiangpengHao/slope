@@ -31,7 +31,7 @@ use crate::views::codemap::tree::{Placed, text_w};
 use crate::views::codemap::use_code;
 use crate::views::surface::layout::{Sizes, SurfaceLayout};
 use crate::views::surface::model::{
-    Anchor, FieldRow, RowState, SurfaceMark, SurfaceModel, upstream,
+    Anchor, FieldRow, Held, SurfaceMark, SurfaceModel, brackets, upstream,
 };
 use crate::views::surface::{SurfaceSel, mark_route, mod_route};
 
@@ -46,6 +46,11 @@ const PAD_TOP: f64 = 6.0;
 const PAD_BOTTOM: f64 = 5.0;
 /// Border plus side padding, both sides.
 const PAD_X: f64 = 16.0;
+/// How far a bracketed row stands in from its block's edge — rust's own
+/// indent, narrowed to what a 10px quotation can spare. A row's diff marker
+/// sits in this gutter, so `+`, `−` and unmarked rows all start their text on
+/// the same column.
+const ROW_INDENT: f64 = 12.0;
 const HEAD_H: f64 = 16.0;
 const ROW_H: f64 = 15.0;
 /// One wrapped line of a static's declared type.
@@ -111,6 +116,14 @@ struct MeasuredMark {
     /// A free function: its rows are parameters and its `ty` line is what it
     /// returns, so that line reads under them instead of over them.
     is_fn: bool,
+    /// A trait's band *is* its body, so its brace closes after the band
+    /// rather than before it, and the band opens on no rule of its own.
+    is_trait: bool,
+    /// What the head opens with and the line that closes the quotation:
+    /// braces around a shape's rows, parens around a signature's parameters,
+    /// nothing around a declaration with no rows to bracket.
+    open: &'static str,
+    close: &'static str,
     /// Every field, quoted as written — and every one of them drawn.
     fields: Vec<FieldRow>,
     /// A static's declared type, or a function's return type with the arrow
@@ -118,7 +131,7 @@ struct MeasuredMark {
     ty: String,
     /// The workspace type that type holds, drawn in full ink. Empty where it
     /// holds nothing this chart draws.
-    ty_target: String,
+    ty_target: Held,
     /// An enum's variants as written, one row each (the row text in `decl`).
     variants: Vec<FieldRow>,
     /// The methods the door draws, quoted as written — the block's second
@@ -232,6 +245,10 @@ struct SurfaceDrawing {
     /// Which frame every drawn anchor is seated in — a mark's module, a
     /// counted row's own frame. A module reading is read off this.
     homes: HashMap<Anchor, u32>,
+    /// Every drawn mark's box, and the URL's (path, item) key for it: what a
+    /// selection off the glass is found by, and glided to.
+    rects: HashMap<Anchor, Placed>,
+    locate: HashMap<(String, String), Anchor>,
     frame: Option<Rect>,
     /// The diff touched this chart: untouched marks rest at lighter pressure.
     dirty: bool,
@@ -252,7 +269,8 @@ struct ModHome {
 /// reach, walking holds edges holder-ward (the blast radius); what it directly
 /// holds, one hop the other way; and the marks its body leans on or that lean
 /// on it. While a selection stands the rest of the chart recedes to a lighter
-/// pressure — a reading, never a re-layout, and the camera does not move.
+/// pressure — a reading, never a re-layout, and the camera moves only for a
+/// selection the glass cannot show (2026-08-24; see `READ_ZOOM`).
 ///
 /// A module boundary reads the same way one altitude out: everything inside it
 /// keeps full ink, whatever crosses it reads a step behind, and the other
@@ -459,36 +477,41 @@ impl From<&SurfaceMark> for MeasuredMark {
         };
         let folds = fold_words(mark);
 
-        let mut widest = text_w(&head, 10.5) + if letter.is_some() { 12.0 } else { 0.0 };
+        let is_trait = mark.kind == ItemKind::Trait;
+        // A trait's clauses are its body; every other block's band is an
+        // `impl`, which stands outside the shape's own braces.
+        let body_rows = match mark.kind {
+            ItemKind::Trait => mark.methods.len(),
+            ItemKind::Static | ItemKind::Const | ItemKind::TypeAlias => usize::from(!ty.is_empty()),
+            _ => mark.fields.len() + mark.variants.len(),
+        };
+        let (open, close) = brackets(mark.kind, body_rows);
+        let mut widest = text_w(&head, 10.5)
+            + if letter.is_some() { 12.0 } else { 0.0 }
+            + if open.is_empty() {
+                0.0
+            } else {
+                text_w(open, 10.5) + 4.0
+            };
         // A long row clips at the block's own maximum rather than stretching it
         // past the paper's patience. A marked row carries its `+`/`−` in front.
         let wrapping = MARK_MAX_W - PAD_X;
-        let marker_w = |row: &FieldRow| {
-            if row.state == RowState::Same {
-                0.0
-            } else {
-                11.0
-            }
-        };
         for fold in &folds {
             // Browsers round each glyph up at this size; measured with the font's
             // exact advance the last characters clip. Carry slack.
             widest = widest.max(text_w(fold, 9.0) * META_SLACK);
         }
         for row in &mark.fields {
-            widest = widest.max(
-                (text_w(&format!("{}: {}", row.name, row.decl), 10.0) + marker_w(row))
-                    .min(wrapping),
-            );
+            widest = widest.max((text_w(&row.written(), 10.0) + ROW_INDENT).min(wrapping));
         }
         for row in mark.variants.iter().chain(&mark.methods) {
-            widest = widest.max((text_w(&row.decl, 10.0) + marker_w(row)).min(wrapping));
+            widest = widest.max((text_w(&row.decl, 10.0) + ROW_INDENT).min(wrapping));
         }
         for fold in &folds {
             widest = widest.max(text_w(fold, 9.0));
         }
         if !ty.is_empty() {
-            widest = widest.max(text_w(&ty, 9.5).min(wrapping));
+            widest = widest.max((text_w(&ty, 9.5) + ROW_INDENT).min(wrapping));
         }
         let w = (widest + PAD_X).clamp(MARK_MIN_W, MARK_MAX_W);
         let usable = w - PAD_X;
@@ -496,25 +519,36 @@ impl From<&SurfaceMark> for MeasuredMark {
         let ty_lines = if ty.is_empty() {
             0.0
         } else {
-            wrapped(&ty, 9.5, usable)
+            wrapped(&ty, 9.5, usable - ROW_INDENT)
         };
         let fold_block = if folds.is_empty() {
             0.0
         } else {
             FOLDS_TOP + folds.len() as f64 * FOLD_H
         };
-        // The band opens on a rule of its own, so the shape reads before the API.
-        let band = if mark.methods.is_empty() {
-            0.0
-        } else {
-            BAND_TOP + mark.methods.len() as f64 * ROW_H
+        // The band opens on a rule of its own, so the shape reads before the
+        // API — except on a trait, where the band is the body the braces
+        // already bracket and a rule would separate nothing.
+        let band = match (mark.methods.is_empty(), is_trait) {
+            (true, _) => 0.0,
+            (false, true) => mark.methods.len() as f64 * ROW_H,
+            (false, false) => BAND_TOP + mark.methods.len() as f64 * ROW_H,
+        };
+        // A function's return rides its closing paren, so it costs no line of
+        // its own; every other closer is one plain line.
+        let carries_ty = mark.is_fn() && !close.is_empty();
+        let closer = match (close.is_empty(), carries_ty) {
+            (true, _) => 0.0,
+            (false, true) => (ty_lines * TY_H).max(ROW_H),
+            (false, false) => ROW_H,
         };
         let h = PAD_TOP
             + HEAD_H
-            + ty_lines * TY_H
+            + if carries_ty { 0.0 } else { ty_lines * TY_H }
             + mark.fields.len() as f64 * ROW_H
             + mark.variants.len() as f64 * ROW_H
             + band
+            + closer
             + fold_block
             + PAD_BOTTOM;
 
@@ -527,6 +561,9 @@ impl From<&SurfaceMark> for MeasuredMark {
             is_static: mark.is_static(),
             is_enum: mark.kind == ItemKind::Enum,
             is_fn: mark.is_fn(),
+            is_trait,
+            open,
+            close,
             fields: mark.fields.clone(),
             ty,
             ty_target: mark.ty_target.clone(),
@@ -763,12 +800,27 @@ impl From<&SurfaceModel> for SurfaceDrawing {
                 .map(|f| Rect::new(f.at.x, f.at.y, f.at.w, f.at.h))
         });
 
+        // Every mark by its URL key, and its box: a selection can arrive from
+        // a row's own link as easily as from the paper, and one that lands
+        // off the glass has to be brought into view.
+        let mut locate: HashMap<(String, String), Anchor> = HashMap::new();
+        let mut rects: HashMap<Anchor, Placed> = HashMap::new();
+        for mark in &model.marks {
+            let anchor = Anchor::Mark(mark.id);
+            locate.insert((mark.path.clone(), mark.label.clone()), anchor);
+            if let Some(at) = placed.rect(anchor) {
+                rects.insert(anchor, at);
+            }
+        }
+
         SurfaceDrawing {
             nodes,
             frames,
             holds,
             ties,
             homes,
+            rects,
+            locate,
             frame,
             dirty: model.marks.iter().any(|m| m.letter().is_some()),
         }
@@ -826,6 +878,74 @@ pub(crate) fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool
         }
     }
     out
+}
+
+/// One quoted declaration, drawn as its token runs — and where the run that
+/// names a workspace type has a block on this chart, that run is a link
+/// straight to it (2026-08-24, user): a reader who meets `kind: ItemKind`
+/// inside a block should not have to go find `ItemKind` on the paper by eye.
+/// The link is the same focus the block's own click is, so what follows it is
+/// the chart's ordinary selection — the sheet, the inked blast radius, and a
+/// camera that glides only where the block is not already legible. The row
+/// carries the route with the name, so both charts quote their rows through
+/// this one component.
+#[component]
+pub(crate) fn Quoted(text: String, held: Held) -> Element {
+    let runs = spans(&text, &held.name);
+    rsx! {
+        for (j , (class , run , is_held)) in runs.into_iter().enumerate() {
+            if let (true, Some(to)) = (is_held, held.at.clone()) {
+                HeldRun {
+                    key: "{j}",
+                    class: class.to_string(),
+                    run,
+                    to,
+                }
+            } else {
+                span {
+                    key: "{j}",
+                    class: if !class.is_empty() { "{class}" },
+                    class: if is_held { "dm-held" },
+                    "{run}"
+                }
+            }
+        }
+    }
+}
+
+/// The run that names a held type, as its own link inside the row: a span and
+/// not an anchor, because the block around it is already one at this altitude
+/// and an anchor cannot nest. Its own component so the route can be cloned
+/// into the gesture without the row's loop carrying a second copy of it.
+#[component]
+fn HeldRun(class: String, run: String, to: Route) -> Element {
+    let nav = use_navigator();
+    let push = to.clone();
+    let pressed = to.clone();
+    rsx! {
+        span {
+            class: if !class.is_empty() { "{class}" },
+            class: "dm-held is-link",
+            role: "link",
+            tabindex: "0",
+            title: "{run} — go to its block",
+            // The block around this run is a link to itself, and its own
+            // default navigation is the anchor's: a run naming another block
+            // must not select the one it is written in on the way out.
+            onclick: move |e: Event<MouseData>| {
+                e.prevent_default();
+                e.stop_propagation();
+                nav.push(push.clone());
+            },
+            onkeydown: move |e: Event<KeyboardData>| {
+                if e.key() == Key::Enter {
+                    e.stop_propagation();
+                    nav.push(pressed.clone());
+                }
+            },
+            "{run}"
+        }
+    }
 }
 
 /// One type's block: what it is, what it holds, and where it is written. The
@@ -895,19 +1015,19 @@ fn MarkPlate(view: MeasuredMark, selected: bool) -> Element {
                         "{letter}"
                     }
                 }
+                if !view.open.is_empty() {
+                    span {
+                        class: "dm-open",
+                        class: if view.open.starts_with(['(', ':']) { "is-tight" },
+                        "{view.open}"
+                    }
+                }
             }
             // A static's declared type stands under its name; a function's
             // return type stands under its parameters, where rust writes it.
             if !view.ty.is_empty() && !view.is_fn {
                 p { class: "dm-ty",
-                    for (j , (class , run , held)) in spans(&view.ty, &view.ty_target).into_iter().enumerate() {
-                        span {
-                            key: "{j}",
-                            class: if !class.is_empty() { "{class}" },
-                            class: if held { "dm-held" },
-                            "{run}"
-                        }
-                    }
+                    Quoted { text: view.ty.clone(), held: view.ty_target.clone() }
                 }
             }
             for (i , row) in view.fields.iter().enumerate() {
@@ -916,27 +1036,21 @@ fn MarkPlate(view: MeasuredMark, selected: bool) -> Element {
                     if let Some(mk) = row.state.marker() {
                         span { class: "dm-mk", "{mk}" }
                     }
-                    span { class: "dm-fname", "{row.name}: " }
-                    for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
-                        span {
-                            key: "{j}",
-                            class: if !class.is_empty() { "{class}" },
-                            class: if held { "dm-held" },
-                            "{run}"
-                        }
+                    // What the field declares for itself, in front of its
+                    // name where rust writes it: a block whose own header
+                    // says `pub(crate)` can still be holding private state.
+                    if let Some(keyword) = row.vis.keyword() {
+                        span { class: "tok-kw", "{keyword} " }
                     }
+                    span { class: "dm-fname", "{row.name}: " }
+                    Quoted { text: row.decl.clone(), held: row.target.clone() }
                 }
             }
-            if !view.ty.is_empty() && view.is_fn {
+            // A parameterless signature has no closing paren to hang the
+            // return on, so it keeps a line of its own.
+            if !view.ty.is_empty() && view.is_fn && view.close.is_empty() {
                 p { class: "dm-ty",
-                    for (j , (class , run , held)) in spans(&view.ty, &view.ty_target).into_iter().enumerate() {
-                        span {
-                            key: "{j}",
-                            class: if !class.is_empty() { "{class}" },
-                            class: if held { "dm-held" },
-                            "{run}"
-                        }
-                    }
+                    Quoted { text: view.ty.clone(), held: view.ty_target.clone() }
                 }
             }
             for (i , row) in view.variants.iter().enumerate() {
@@ -945,12 +1059,20 @@ fn MarkPlate(view: MeasuredMark, selected: bool) -> Element {
                     if let Some(mk) = row.state.marker() {
                         span { class: "dm-mk", "{mk}" }
                     }
-                    for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
-                        span {
-                            key: "{j}",
-                            class: if !class.is_empty() { "{class}" },
-                            class: if held { "dm-held" },
-                            "{run}"
+                    Quoted { text: row.decl.clone(), held: row.target.clone() }
+                }
+            }
+            // A shape's brace closes before its `impl` band; a trait's
+            // closes after, because there the band is the body.
+            if !view.close.is_empty() && !view.is_trait {
+                p { class: "dm-close",
+                    "{view.close}"
+                    if view.is_fn && !view.ty.is_empty() {
+                        span { class: "dm-ret",
+                            Quoted {
+                                text: view.ty.clone(),
+                                held: view.ty_target.clone(),
+                            }
                         }
                     }
                 }
@@ -958,24 +1080,25 @@ fn MarkPlate(view: MeasuredMark, selected: bool) -> Element {
             // The second band: what the type promises, under a rule that
             // says the shape above it has ended.
             if !view.methods.is_empty() {
-                div { class: "dm-band",
+                div { class: "dm-band", class: if view.is_trait { "is-body" },
                     for (i , row) in view.methods.iter().enumerate() {
-                        p { key: "m{i}", class: "dm-sig",
+                        p {
+                            key: "m{i}",
+                            class: "dm-sig",
                             class: if !row.state.class().is_empty() { "{row.state.class()}" },
                             if let Some(mk) = row.state.marker() {
                                 span { class: "dm-mk", "{mk}" }
                             }
-                            for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
-                                span {
-                                    key: "{j}",
-                                    class: if !class.is_empty() { "{class}" },
-                                    class: if held { "dm-held" },
-                                    "{run}"
-                                }
+                            Quoted {
+                                text: row.decl.clone(),
+                                held: row.target.clone(),
                             }
                         }
                     }
                 }
+            }
+            if !view.close.is_empty() && view.is_trait {
+                p { class: "dm-close", "{view.close}" }
             }
             if !folds.is_empty() {
                 div { class: "dm-folds",
@@ -1324,6 +1447,15 @@ fn chrome_insets(narrow: bool, panel: bool) -> (f64, f64, f64, f64) {
 /// Below this the block letters stop being letters; the reviewer pans instead.
 const MIN_CHART_ZOOM: f64 = 0.22;
 
+/// The zoom a selection is read at: when a chosen mark sits below this, or off
+/// the glass entirely, the camera glides to it — the data chart's rule
+/// (2026-08-21, user: a focus is the one move the camera discipline permits,
+/// and a selection the reader cannot see is not a focus). This altitude needs
+/// it for the same reason it needs it there, and needed it the moment a row's
+/// held type became a link to a block that can be anywhere on the paper.
+#[cfg(target_arch = "wasm32")]
+const READ_ZOOM: f64 = 0.5;
+
 /// The camera as the reviewer last left it. Session state that must survive
 /// route-variant remounts, like the code map's camera: opening a definition
 /// plate unmounts the chart, and coming back must give the reader back their
@@ -1513,6 +1645,43 @@ pub(crate) fn SurfaceChart(graph: CodeGraph, sel: Option<SurfaceSel>) -> Element
         saved.set(Some(*core.viewport.read()));
     });
 
+    // The camera glides to a selection it cannot show: off the glass, or below
+    // reading zoom. A selection already legible moves nothing — the Kept-Ground
+    // rule holds wherever the reader can actually read.
+    #[cfg(target_arch = "wasm32")]
+    use_effect(use_reactive((&sel,), move |(sel,)| {
+        if !core_live() {
+            return;
+        }
+        let Some(SurfaceSel::Mark(path, label)) = sel else {
+            return;
+        };
+        let Some(core) = flow.core() else { return };
+        let drawing = chart.peek();
+        let Some(&anchor) = drawing.locate.get(&(path, label)) else {
+            return;
+        };
+        let Some(at) = drawing.rects.get(&anchor).copied() else {
+            return;
+        };
+        let vp = *core.viewport.peek();
+        let Some((w, h)) = window_size() else { return };
+        let (vx, vy) = ((0.0 - vp.x) / vp.zoom, (0.0 - vp.y) / vp.zoom);
+        let (vw, vh) = (w / vp.zoom, h / vp.zoom);
+        let inside = at.x >= vx && at.y >= vy && at.x + at.w <= vx + vw && at.y + at.h <= vy + vh;
+        if inside && vp.zoom >= READ_ZOOM {
+            return;
+        }
+        let z = vp.zoom.clamp(0.85, 1.0);
+        let (t, r, btm, l) = chrome_insets(narrow_viewport(), true);
+        let free_w = (w - l - r).max(120.0);
+        let free_h = (h - t - btm).max(120.0);
+        let (cx, cy) = (l + free_w / 2.0, t + free_h / 2.0);
+        let (mx, my) = (at.x + at.w / 2.0, at.y + at.h / 2.0);
+        let duration = if prefers_reduced_motion() { 0 } else { 400 };
+        core.set_viewport(Viewport::new(cx - mx * z, cy - my * z, z), duration);
+    }));
+
     use_hook(move || {
         spawn(async move {
             let mut eval = document::eval(SURFACE_KEYS_JS);
@@ -1618,6 +1787,7 @@ fn FitInsets(top: f64, right: f64, bottom: f64, left: f64) -> Element {
 mod tests {
     use super::*;
     use crate::api::{ItemKind, Vis};
+    use crate::views::surface::model::RowState;
 
     fn mark(name: &str, kind: ItemKind, fields: Vec<(&str, &str, &str)>) -> SurfaceMark {
         SurfaceMark {
@@ -1636,14 +1806,15 @@ mod tests {
                 .map(|(name, decl, target)| FieldRow {
                     name: name.to_string(),
                     decl: decl.to_string(),
-                    target: target.to_string(),
+                    vis: crate::api::Vis::Private,
+                    target: Held::named(target),
                     state: RowState::Same,
                 })
                 .collect(),
             variants: Vec::new(),
             methods: Vec::new(),
             ty: String::new(),
-            ty_target: String::new(),
+            ty_target: Held::default(),
             unseen_users: 0,
             unseen_uses: 0,
             held_by: 0,
@@ -1671,7 +1842,8 @@ mod tests {
         let row = FieldRow {
             name: String::new(),
             decl: "File(String, String)".to_string(),
-            target: String::new(),
+            vis: crate::api::Vis::Private,
+            target: Held::default(),
             state: RowState::Same,
         };
         let mut long = mark("Tok", ItemKind::Enum, vec![]);
@@ -1708,7 +1880,8 @@ mod tests {
                 } else {
                     "u32".to_string()
                 },
-                target: String::new(),
+                vis: crate::api::Vis::Private,
+                target: Held::default(),
                 state: RowState::Same,
             })
             .collect();
@@ -1742,8 +1915,8 @@ mod tests {
     fn a_static_bolds_only_a_workspace_type_it_holds() {
         let mut held = mark("TRAIL", ItemKind::Static, vec![]);
         held.ty = "GlobalSignal<Trail>".to_string();
-        held.ty_target = "Trail".to_string();
-        let bold: Vec<String> = spans(&held.ty, &held.ty_target)
+        held.ty_target = Held::named("Trail");
+        let bold: Vec<String> = spans(&held.ty, &held.ty_target.name)
             .into_iter()
             .filter(|(_, _, held)| *held)
             .map(|(_, run, _)| run)
@@ -1753,7 +1926,7 @@ mod tests {
         let mut outside = mark("CAMERA", ItemKind::Static, vec![]);
         outside.ty = "GlobalSignal<Option<Viewport>>".to_string();
         assert!(
-            spans(&outside.ty, &outside.ty_target)
+            spans(&outside.ty, &outside.ty_target.name)
                 .iter()
                 .all(|(_, _, held)| !held)
         );
@@ -1770,12 +1943,12 @@ mod tests {
             vec![("graph", "&CodeGraph", "CodeGraph")],
         );
         survey.ty = "Nut".to_string();
-        survey.ty_target = "Nut".to_string();
+        survey.ty_target = Held::named("Nut");
         let view = MeasuredMark::from(&survey);
         assert!(view.is_fn);
         assert_eq!(view.ty, "-> Nut");
         // The arrow is punctuation; what it hands back is still the bold run.
-        let bold: Vec<String> = spans(&view.ty, &view.ty_target)
+        let bold: Vec<String> = spans(&view.ty, &view.ty_target.name)
             .into_iter()
             .filter(|(_, _, held)| *held)
             .map(|(_, run, _)| run)
@@ -1788,7 +1961,8 @@ mod tests {
             .map(|i| FieldRow {
                 name: format!("p{i}"),
                 decl: "u32".to_string(),
-                target: String::new(),
+                vis: crate::api::Vis::Private,
+                target: Held::default(),
                 state: RowState::Same,
             })
             .collect();

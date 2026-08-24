@@ -35,8 +35,8 @@ use crate::views::codemap::use_code;
 use crate::views::data::model::{DataMark, DataModel, Tier};
 use crate::views::data::{DataSel, mark_route, mod_route, use_data};
 use crate::views::surface::layout::{self, Sizes, SurfaceLayout};
-use crate::views::surface::map::spans;
-use crate::views::surface::model::{Anchor, FieldRow, RowState, upstream};
+use crate::views::surface::map::Quoted;
+use crate::views::surface::model::{Anchor, FieldRow, Held, brackets, upstream};
 
 // ---------------------------------------------------------------------------
 // Block furniture, in flow units — one unit is one CSS pixel at zoom 1. These
@@ -48,6 +48,11 @@ const PAD_TOP: f64 = 6.0;
 const PAD_BOTTOM: f64 = 5.0;
 /// Both sides together: border and padding, left and right.
 const PAD_X: f64 = 16.0;
+/// How far a bracketed row stands in from its block's edge — rust's own
+/// indent, narrowed to what a 10px quotation can spare. A row's diff marker
+/// sits in this gutter, so `+`, `−` and unmarked rows all start their text on
+/// the same column.
+const ROW_INDENT: f64 = 12.0;
 const HEAD_H: f64 = 16.0;
 const ROW_H: f64 = 15.0;
 const TY_H: f64 = 14.0;
@@ -104,12 +109,16 @@ struct MeasuredBlock {
     ghost: bool,
     is_static: bool,
     is_enum: bool,
+    /// What the head opens with and the line that closes the quotation —
+    /// `{` / `}` for a shape with rows, nothing for one without.
+    open: &'static str,
+    close: &'static str,
     /// Wears the root's ink left edge: a chain of holding begins here.
     is_root: bool,
     fields: Vec<FieldRow>,
     variants: Vec<FieldRow>,
     ty: String,
-    ty_target: String,
+    ty_target: Held,
     /// The blocks nested inside this one, measured, with each one's offset
     /// from the kids shelf's origin.
     kids: Vec<MeasuredBlock>,
@@ -436,23 +445,28 @@ impl MeasuredBlock {
         let letter = mark.letter();
         let folds = fold_words(mark);
 
-        let mut widest = text_w(&head, 10.5) + if letter.is_some() { 12.0 } else { 0.0 };
-        let wrapping = MARK_MAX_W - PAD_X;
-        let marker_w = |row: &FieldRow| {
-            if row.state == RowState::Same {
+        // What the brackets have to enclose: a shape's rows, or — for a
+        // static — the one line that declares its type.
+        let body_rows = match mark.kind {
+            ItemKind::Static | ItemKind::Const | ItemKind::TypeAlias => {
+                usize::from(!mark.ty.is_empty())
+            }
+            _ => mark.fields.len() + mark.variants.len(),
+        };
+        let (open, close) = brackets(mark.kind, body_rows);
+        let mut widest = text_w(&head, 10.5)
+            + if letter.is_some() { 12.0 } else { 0.0 }
+            + if open.is_empty() {
                 0.0
             } else {
-                11.0
-            }
-        };
+                text_w(open, 10.5) + 4.0
+            };
+        let wrapping = MARK_MAX_W - PAD_X;
         for row in &mark.fields {
-            widest = widest.max(
-                (text_w(&format!("{}: {}", row.name, row.decl), 10.0) + marker_w(row))
-                    .min(wrapping),
-            );
+            widest = widest.max((text_w(&row.written(), 10.0) + ROW_INDENT).min(wrapping));
         }
         for row in &mark.variants {
-            widest = widest.max((text_w(&row.decl, 10.0) + marker_w(row)).min(wrapping));
+            widest = widest.max((text_w(&row.decl, 10.0) + ROW_INDENT).min(wrapping));
         }
         for fold in &folds {
             // Browsers round each glyph up at this size; measured with the
@@ -460,7 +474,7 @@ impl MeasuredBlock {
             widest = widest.max(text_w(fold, 9.0) * META_SLACK);
         }
         if !mark.ty.is_empty() {
-            widest = widest.max(text_w(&mark.ty, 9.5).min(wrapping));
+            widest = widest.max((text_w(&mark.ty, 9.5) + ROW_INDENT).min(wrapping));
         }
         let core_w = (widest + PAD_X).clamp(MARK_MIN_W, MARK_MAX_W);
 
@@ -471,13 +485,14 @@ impl MeasuredBlock {
         let ty_lines = if mark.ty.is_empty() {
             0.0
         } else {
-            wrapped(&mark.ty, 9.5, usable)
+            wrapped(&mark.ty, 9.5, usable - ROW_INDENT)
         };
         let core_h = PAD_TOP
             + HEAD_H
             + ty_lines * TY_H
             + mark.fields.len() as f64 * ROW_H
-            + mark.variants.len() as f64 * ROW_H;
+            + mark.variants.len() as f64 * ROW_H
+            + if close.is_empty() { 0.0 } else { ROW_H };
         let kids_band = if kids.is_empty() {
             0.0
         } else {
@@ -499,6 +514,8 @@ impl MeasuredBlock {
             is_static: mark.is_static(),
             is_enum: mark.kind == ItemKind::Enum,
             is_root: mark.is_root(),
+            open,
+            close,
             fields: mark.fields.clone(),
             variants: mark.variants.clone(),
             ty: mark.ty.clone(),
@@ -889,16 +906,19 @@ fn DataPlate(
                             "{letter}"
                         }
                     }
+                    if !view.open.is_empty() {
+                        span {
+                            class: "dm-open",
+                            class: if view.open.starts_with(['(', ':']) { "is-tight" },
+                            "{view.open}"
+                        }
+                    }
                 }
                 if !view.ty.is_empty() {
                     p { class: "dm-ty",
-                        for (j , (class , run , held)) in spans(&view.ty, &view.ty_target).into_iter().enumerate() {
-                            span {
-                                key: "{j}",
-                                class: if !class.is_empty() { "{class}" },
-                                class: if held { "dm-held" },
-                                "{run}"
-                            }
+                        Quoted {
+                            text: view.ty.clone(),
+                            held: view.ty_target.clone(),
                         }
                     }
                 }
@@ -908,15 +928,14 @@ fn DataPlate(
                         if let Some(mk) = row.state.marker() {
                             span { class: "dm-mk", "{mk}" }
                         }
-                        span { class: "dm-fname", "{row.name}: " }
-                        for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
-                            span {
-                                key: "{j}",
-                                class: if !class.is_empty() { "{class}" },
-                                class: if held { "dm-held" },
-                                "{run}"
-                            }
+                        // What the field declares for itself, in front of its
+                        // name where rust writes it: a block whose own header
+                        // says `pub(crate)` can still be holding private state.
+                        if let Some(keyword) = row.vis.keyword() {
+                            span { class: "tok-kw", "{keyword} " }
                         }
+                        span { class: "dm-fname", "{row.name}: " }
+                        Quoted { text: row.decl.clone(), held: row.target.clone() }
                     }
                 }
                 for (i , row) in view.variants.iter().enumerate() {
@@ -925,15 +944,13 @@ fn DataPlate(
                         if let Some(mk) = row.state.marker() {
                             span { class: "dm-mk", "{mk}" }
                         }
-                        for (j , (class , run , held)) in spans(&row.decl, &row.target).into_iter().enumerate() {
-                            span {
-                                key: "{j}",
-                                class: if !class.is_empty() { "{class}" },
-                                class: if held { "dm-held" },
-                                "{run}"
-                            }
-                        }
+                        Quoted { text: row.decl.clone(), held: row.target.clone() }
                     }
+                }
+                // The brace that closes the quotation. What nests below it is
+                // the state this block owns, not more of its own declaration.
+                if !view.close.is_empty() {
+                    p { class: "dm-close", "{view.close}" }
                 }
             }
             // The state this block owns, nested under a hairline rule: the
@@ -1731,6 +1748,7 @@ mod tests {
     use super::*;
     use crate::api::Vis;
     use crate::views::data::model::Tier;
+    use crate::views::surface::model::RowState;
 
     fn mark(id: u32, name: &str, fields: Vec<(&str, &str, &str)>, kids: Vec<u32>) -> DataMark {
         DataMark {
@@ -1749,13 +1767,14 @@ mod tests {
                 .map(|(name, decl, target)| FieldRow {
                     name: name.to_string(),
                     decl: decl.to_string(),
-                    target: target.to_string(),
+                    vis: crate::api::Vis::Private,
+                    target: Held::named(target),
                     state: RowState::Same,
                 })
                 .collect(),
             variants: Vec::new(),
             ty: String::new(),
-            ty_target: String::new(),
+            ty_target: Held::default(),
             tier: Tier::Root,
             kids,
             named_by: 0,

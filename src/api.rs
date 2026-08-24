@@ -259,9 +259,8 @@ pub(crate) struct GhostMark {
     pub(crate) vis: Vis,
     /// 1-based line in the base edition of the file.
     pub(crate) line: u32,
-    /// Fields — or a function's parameters — as the base wrote them:
-    /// (name, declared type).
-    pub(crate) field_rows: Vec<(String, String)>,
+    /// Fields — or a function's parameters — as the base wrote them.
+    pub(crate) field_rows: Vec<DeclRow>,
     /// An enum's variants as the base wrote them.
     pub(crate) variants: Vec<String>,
     /// A static's declared type, or a function's return type, at the base.
@@ -270,6 +269,39 @@ pub(crate) struct GhostMark {
     /// ghost's band is drawn whole: the base edition is all there is of it,
     /// so nothing here is gated on a door.
     pub(crate) method_rows: Vec<(String, String)>,
+}
+
+/// One quoted row of a declaration: a struct or union field, or a free
+/// function's parameter, exactly as the source writes it. Nothing here is
+/// reconstructed.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct DeclRow {
+    /// The name as written — a tuple field's is its index, a parameter's is
+    /// its pattern.
+    pub(crate) name: String,
+    /// The declared type as written.
+    pub(crate) ty: String,
+    /// What the row declares for *itself*, which is not what its item
+    /// declares: a `pub(crate)` struct can publish some fields and keep
+    /// others, and a reader deciding what may touch this state has to see
+    /// which. A parameter declares nothing, ever, so it is always private.
+    pub(crate) vis: Vis,
+}
+
+/// The structural diff's own reading of a row, and the only one: the client
+/// draws from [`crate::views::surface::model::FieldRow`], which carries the
+/// diff state as well.
+#[cfg(feature = "server")]
+impl DeclRow {
+    /// The row as rust writes it, visibility included — what the diff
+    /// compares, so dropping a field's `pub` reads as the declaration change
+    /// it is.
+    pub(crate) fn written(&self) -> String {
+        match self.vis.keyword() {
+            Some(keyword) => format!("{keyword} {}", self.ty),
+            None => self.ty.clone(),
+        }
+    }
 }
 
 /// One method of a type, as the surface reads it: a clause of the contract
@@ -330,11 +362,11 @@ pub(crate) struct ItemMark {
     /// and a derive is not code anyone wrote.
     pub(crate) impls: Vec<String>,
     /// A struct's or union's fields — or a free function's parameters —
-    /// quoted from source in declaration order: the name as written (a tuple
-    /// field's is its index, a parameter's is its pattern) and the declared
-    /// type as written. The data chart quotes them all — what a field or a
-    /// parameter reaches is on the holds edges. Empty for everything else.
-    pub(crate) field_rows: Vec<(String, String)>,
+    /// quoted from source in declaration order, each carrying the visibility
+    /// it declares for itself. The data chart quotes them all — what a field
+    /// or a parameter reaches is on the holds edges. Empty for everything
+    /// else.
+    pub(crate) field_rows: Vec<DeclRow>,
     /// An enum's variants as written, in source order — name, payload types,
     /// and discriminant included. Empty for everything that is not an enum.
     pub(crate) variants: Vec<String>,
@@ -351,8 +383,8 @@ pub(crate) struct ItemMark {
     /// Fields added since the base: indexes into `field_rows`.
     pub(crate) fields_added: Vec<u32>,
     /// Fields the base had that the working copy dropped, quoted from the
-    /// base: (insert before this index of `field_rows`, name, declared type).
-    pub(crate) fields_removed: Vec<(u32, String, String)>,
+    /// base: (insert before this index of `field_rows`, the row).
+    pub(crate) fields_removed: Vec<(u32, DeclRow)>,
     /// Variants added since the base: indexes into `variants`.
     pub(crate) variants_added: Vec<u32>,
     /// Variants the base had that the working copy dropped, quoted from the

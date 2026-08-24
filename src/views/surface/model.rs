@@ -45,9 +45,11 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::Route;
 use crate::api::{CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, ItemMark, Vis};
 use crate::views::codemap::model::Containment;
 use crate::views::codemap::{Doors, RefDir};
+use crate::views::surface::mark_route;
 
 /// Incoming holds edges a type draws before folding them to a count on its own
 /// mark. A type four other types reach is a hub, and its fan-in drawn in full
@@ -223,18 +225,92 @@ impl RowState {
     }
 }
 
-/// One holding field, quoted from the source: the name as written and the
-/// declared type as written. Nothing here is reconstructed.
+/// The workspace type one quoted row reaches: the name to draw in full ink,
+/// and — where this chart draws that type's own block — where that block
+/// stands, so the run can be its own link.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub(crate) struct Held {
+    /// The held type's name — the one run of the declaration drawn in full ink,
+    /// so `Vec<FileDetail>` reads as the wrapper it is around the type it
+    /// holds. Empty where the row reaches nothing this workspace declares.
+    pub(crate) name: String,
+    /// The route that selects the block that run names, at this altitude.
+    /// `Some` makes the run a link of its own — click the type's name inside
+    /// a row and the chart goes to that type (2026-08-24, user), which is the
+    /// same focus the block's own click is, so the camera glides only where
+    /// the block is not already legible. `None` where there is no block to go
+    /// to — a folded module's state, a type this altitude's doors keep off the
+    /// paper — or where the run names the block it is written in, which is
+    /// where the reader already stands.
+    pub(crate) at: Option<Route>,
+}
+
+#[cfg(test)]
+impl Held {
+    /// A held name with no block to go to.
+    pub(crate) fn named(name: &str) -> Self {
+        Held {
+            name: name.to_string(),
+            at: None,
+        }
+    }
+}
+
+/// One quoted row of a block: a field, a variant, or a method band's clause,
+/// as the source writes it. Nothing here is reconstructed.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct FieldRow {
     pub(crate) name: String,
     pub(crate) decl: String,
-    /// The held type's name — the one run of the declaration drawn in full ink,
-    /// so `Vec<FileDetail>` reads as the wrapper it is around the type it holds.
-    pub(crate) target: String,
+    /// What the row declares for itself, drawn in front of its name. A field
+    /// can be narrower than the type holding it — a `pub(crate)` struct may
+    /// publish some fields and keep the rest — and a reader deciding what may
+    /// touch this state has to see which (2026-08-24, user). A variant and a
+    /// method clause declare nothing of their own: a variant is as visible as
+    /// its enum, and a method quotes its own `pub` inside its signature.
+    pub(crate) vis: Vis,
+    /// The workspace type this row reaches, and where its block stands.
+    pub(crate) target: Held,
     /// The row against the diff base. A `Removed` row is the base's, seated
     /// where it stood.
     pub(crate) state: RowState,
+}
+
+/// What a block's head opens with and what closes it, so a quotation reads
+/// the way rust writes it (2026-08-24, user): braces around a body, parens
+/// around a signature's parameters, and nothing at all around a declaration
+/// with no rows to bracket — a unit struct, a static, an alias. The closer is
+/// a line of its own, which is what makes a long block's end findable.
+pub(crate) fn brackets(kind: ItemKind, rows: usize) -> (&'static str, &'static str) {
+    match kind {
+        // A signature's parameters sit in parens, and the closing one carries
+        // the return type, where rustfmt puts it on a wrapped signature. With
+        // no parameters there is nothing to wrap and nothing to close.
+        ItemKind::Fn if rows > 0 => ("(", ")"),
+        ItemKind::Fn => ("()", ""),
+        _ if rows == 0 => ("", ""),
+        ItemKind::Struct | ItemKind::Union | ItemKind::Enum | ItemKind::Trait => ("{", "}"),
+        // No body to bracket: the line under the name is the declared type,
+        // and rust writes a colon in front of it — an alias, an equals.
+        ItemKind::Static | ItemKind::Const => (":", ""),
+        ItemKind::TypeAlias => ("=", ""),
+        _ => ("", ""),
+    }
+}
+
+impl FieldRow {
+    /// The row as the block draws it: what it declares, its name, its type.
+    /// One string, so measuring a row and drawing it can never disagree.
+    pub(crate) fn written(&self) -> String {
+        let body = match self.name.is_empty() {
+            true => self.decl.clone(),
+            false => format!("{}: {}", self.name, self.decl),
+        };
+        match self.vis.keyword() {
+            Some(keyword) => format!("{keyword} {body}"),
+            None => body,
+        }
+    }
 }
 
 /// One type, static, or free function with a block on the paper.
@@ -275,7 +351,7 @@ pub(crate) struct SurfaceMark {
     /// walk found nothing on this chart to hold, which is exactly when the
     /// line draws no holds edge: `GlobalSignal<Option<Viewport>>` names a
     /// type from a dependency, and a dependency has no mark to point at.
-    pub(crate) ty_target: String,
+    pub(crate) ty_target: Held,
     /// References into it the chart cannot draw a line for, summed: the ones
     /// leaving a mark the visibility setting or the budget folded, or an item
     /// with no mark of its own.
@@ -1239,12 +1315,32 @@ impl SurfaceModel {
                     .map(|g| g.id),
             )
             .collect();
-        let mut target_of: HashMap<(u32, String), String> = HashMap::new();
+        // Where a held type's own block stands, by the key its URL uses. A
+        // bold run is a link only where the chart draws the block it would go
+        // to; a ghost's block is its base edition's, and its label is its name.
+        let seat_of = |id: u32| -> Option<(String, String)> {
+            match graph.items.get(id as usize) {
+                Some(mark) => Some((
+                    graph.files.get(mark.file as usize)?.path.clone(),
+                    mark.label.clone(),
+                )),
+                None => ghost_of(id).map(|g| (g.path.clone(), g.name.clone())),
+            }
+        };
+        let mut target_of: HashMap<(u32, String), Held> = HashMap::new();
         for edge in &graph.holds {
             if !drawn_set.contains(&edge.from) {
                 continue;
             }
-            let target = name_of(edge.to);
+            let target = Held {
+                name: name_of(edge.to),
+                // Never a link back to the block the run is written in: a
+                // self-holding type is where the reader already stands.
+                at: (drawn_set.contains(&edge.to) && edge.to != edge.from)
+                    .then(|| seat_of(edge.to))
+                    .flatten()
+                    .map(|(path, label)| mark_route(&path, &label)),
+            };
             for (name, _) in &edge.fields {
                 // One field can reach two workspace types (`Arc<(A, B)>`); its
                 // row bolds the first, and the edges still say the rest.
@@ -1253,7 +1349,7 @@ impl SurfaceModel {
                     .or_insert_with(|| target.clone());
             }
         }
-        let target = |id: u32, name: &str| -> String {
+        let target = |id: u32, name: &str| -> Held {
             target_of
                 .get(&(id, name.to_string()))
                 .cloned()
@@ -1286,10 +1382,11 @@ impl SurfaceModel {
                     .field_rows
                     .iter()
                     .enumerate()
-                    .map(|(at, (name, decl))| FieldRow {
-                        name: name.clone(),
-                        decl: decl.clone(),
-                        target: target(id, name),
+                    .map(|(at, row)| FieldRow {
+                        name: row.name.clone(),
+                        decl: row.ty.clone(),
+                        vis: row.vis,
+                        target: target(id, &row.name),
                         state: if mark.fields_added.contains(&(at as u32)) {
                             RowState::Added
                         } else {
@@ -1300,13 +1397,14 @@ impl SurfaceModel {
                 let mut dropped: Vec<(usize, FieldRow)> = mark
                     .fields_removed
                     .iter()
-                    .map(|(before, name, decl)| {
+                    .map(|(before, row)| {
                         (
                             *before as usize,
                             FieldRow {
-                                name: name.clone(),
-                                decl: decl.clone(),
-                                target: target(id, name),
+                                name: row.name.clone(),
+                                decl: row.ty.clone(),
+                                vis: row.vis,
+                                target: target(id, &row.name),
                                 state: RowState::Removed,
                             },
                         )
@@ -1322,6 +1420,7 @@ impl SurfaceModel {
                     .map(|(at, written)| FieldRow {
                         name: String::new(),
                         decl: written.clone(),
+                        vis: Vis::Private,
                         target: target(id, &vname(written)),
                         state: if mark.variants_added.contains(&(at as u32)) {
                             RowState::Added
@@ -1339,6 +1438,7 @@ impl SurfaceModel {
                             FieldRow {
                                 name: String::new(),
                                 decl: written.clone(),
+                                vis: Vis::Private,
                                 target: target(id, &vname(written)),
                                 state: RowState::Removed,
                             },
@@ -1361,6 +1461,7 @@ impl SurfaceModel {
                         FieldRow {
                             name: row.name.clone(),
                             decl: row.sig.clone(),
+                            vis: Vis::Private,
                             target: target(id, &row.name),
                             state: if mark.methods_added.contains(&(at as u32)) {
                                 RowState::Added
@@ -1383,6 +1484,7 @@ impl SurfaceModel {
                             FieldRow {
                                 name: name.clone(),
                                 decl: sig.clone(),
+                                vis: Vis::Private,
                                 target: target(id, name),
                                 state: RowState::Removed,
                             },
@@ -1443,10 +1545,11 @@ impl SurfaceModel {
                 fields: ghost
                     .field_rows
                     .iter()
-                    .map(|(name, decl)| FieldRow {
-                        name: name.clone(),
-                        decl: decl.clone(),
-                        target: target(ghost.id, name),
+                    .map(|row| FieldRow {
+                        name: row.name.clone(),
+                        decl: row.ty.clone(),
+                        vis: row.vis,
+                        target: target(ghost.id, &row.name),
                         state: RowState::Same,
                     })
                     .collect(),
@@ -1456,6 +1559,7 @@ impl SurfaceModel {
                     .map(|written| FieldRow {
                         name: String::new(),
                         decl: written.clone(),
+                        vis: Vis::Private,
                         target: target(ghost.id, &vname(written)),
                         state: RowState::Same,
                     })
@@ -1468,6 +1572,7 @@ impl SurfaceModel {
                     .map(|(name, sig)| FieldRow {
                         name: name.clone(),
                         decl: sig.clone(),
+                        vis: Vis::Private,
                         target: target(ghost.id, name),
                         state: RowState::Same,
                     })
@@ -1701,7 +1806,17 @@ impl SurfaceModel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{Delta, FileInfo, HoldEdge, HoldEvent, ItemEdge, MarkRef};
+    use crate::api::{DeclRow, Delta, FileInfo, HoldEdge, HoldEvent, ItemEdge, MarkRef};
+
+    /// A quoted row that declares nothing of its own — what most of these
+    /// fixtures want, since visibility is rarely what they are testing.
+    fn row(name: &str, ty: &str) -> DeclRow {
+        DeclRow {
+            name: name.to_string(),
+            ty: ty.to_string(),
+            vis: Vis::Private,
+        }
+    }
 
     fn file(id: u32, path: &str, changed: bool) -> FileInfo {
         FileInfo {
@@ -1937,7 +2052,7 @@ mod tests {
     /// and by `Hidden` (private, same module).
     fn graph() -> CodeGraph {
         let mut index = mark(1, 1, "Index", ItemKind::Struct, Vis::Pub);
-        index.field_rows = vec![("wire".into(), "Wire".into())];
+        index.field_rows = vec![row("wire", "Wire")];
         let mut cache = mark(3, 1, "CACHE", ItemKind::Static, Vis::Private);
         cache.ty = "OnceCell<Arc<Index>>".to_string();
         CodeGraph {
@@ -1995,6 +2110,66 @@ mod tests {
             notes: Vec::new(),
             walk_notes: Vec::new(),
         }
+    }
+
+    /// A row's held type is a link to that type's own block: a reader who
+    /// meets `wire: Wire` inside `Index` clicks the name and the chart goes
+    /// there, instead of hunting the paper for `Wire` by eye. Only where there
+    /// is a block to go to, though — a type the doors folded is bold text and
+    /// nothing more, and so is a run naming the block it is written in.
+    #[test]
+    fn a_held_run_carries_the_route_to_the_block_it_names() {
+        let mut g = graph();
+        // `Index` also keeps the private type of its own module, and one of
+        // itself: a linked shape really does name itself in a field.
+        g.items[1].field_rows = vec![
+            row("wire", "Wire"),
+            row("hidden", "Hidden"),
+            row("next", "Option<Box<Index>>"),
+        ];
+        g.holds.push(HoldEdge {
+            from: 1,
+            to: 2,
+            kind: HoldKind::Owns,
+            via: String::new(),
+            fields: vec![("hidden".into(), "Hidden".into())],
+            from_method: false,
+            event: None,
+        });
+        g.holds.push(HoldEdge {
+            from: 1,
+            to: 1,
+            kind: HoldKind::Owns,
+            via: "Box".into(),
+            fields: vec![("next".into(), "Option<Box<Index>>".into())],
+            from_method: false,
+            event: None,
+        });
+        let model = SurfaceModel::build(&g, RefDir::Uses, Doors::Crate, &Folds::new());
+        let index = model.marks.iter().find(|m| m.name == "Index").unwrap();
+        let field = |name: &str| {
+            index
+                .fields
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap()
+                .target
+                .clone()
+        };
+        assert_eq!(field("wire").name, "Wire");
+        assert_eq!(field("wire").at, Some(mark_route("src/api.rs", "Wire")));
+        // Folded behind the module's counted row: no block to go to.
+        assert_eq!(field("hidden").name, "Hidden");
+        assert_eq!(field("hidden").at, None);
+        // Its own name: the reader is already standing in that block.
+        assert_eq!(field("next").name, "Index");
+        assert_eq!(field("next").at, None);
+        // A static's declared type is the same line and reads the same way.
+        let cache = model.marks.iter().find(|m| m.name == "CACHE").unwrap();
+        assert_eq!(
+            cache.ty_target.at,
+            Some(mark_route("src/analyze/code.rs", "Index"))
+        );
     }
 
     #[test]
@@ -2083,10 +2258,10 @@ mod tests {
         // Its edge is filed under its own name, so the quoted line knows which
         // run to draw in full ink — the same run the drawn edge lands on.
         assert_eq!(cache.ty, "OnceCell<Arc<Index>>");
-        assert_eq!(cache.ty_target, "Index");
+        assert_eq!(cache.ty_target.name, "Index");
         let index = model.marks.iter().find(|m| m.name == "Index").unwrap();
         assert_eq!(index.fields.len(), 1);
-        assert_eq!(index.fields[0].target, "Wire");
+        assert_eq!(index.fields[0].target.name, "Wire");
         // A changed file no longer marks a type by itself: the letter is the
         // declaration's own delta.
         assert_eq!(index.letter(), None);
@@ -2100,7 +2275,7 @@ mod tests {
         // The working copy dropped `refs: Vec<FileRef>` from `Index`, and
         // `FileRef` itself.
         g.items[1].delta = Delta::Changed;
-        g.items[1].fields_removed = vec![(1, "refs".into(), "Vec<FileRef>".into())];
+        g.items[1].fields_removed = vec![(1, row("refs", "Vec<FileRef>"))];
         g.ghosts.push(crate::api::GhostMark {
             id: ghost_id,
             path: "src/api.rs".into(),
@@ -2109,7 +2284,7 @@ mod tests {
             kind: ItemKind::Struct,
             vis: Vis::Pub,
             line: 9,
-            field_rows: vec![("from".into(), "u32".into())],
+            field_rows: vec![row("from", "u32")],
             variants: Vec::new(),
             ty: String::new(),
             method_rows: Vec::new(),
@@ -2416,10 +2591,7 @@ mod tests {
         ret: &str,
     ) -> ItemMark {
         let mut f = mark(id, file, name, ItemKind::Fn, vis);
-        f.field_rows = params
-            .iter()
-            .map(|(n, d)| ((*n).to_string(), (*d).to_string()))
-            .collect();
+        f.field_rows = params.iter().map(|(n, d)| row(n, d)).collect();
         f.ty = ret.to_string();
         f
     }
@@ -2535,10 +2707,10 @@ mod tests {
         let survey = model.marks.iter().find(|m| m.name == "survey").unwrap();
         assert_eq!(survey.fields.len(), 1);
         assert_eq!(survey.fields[0].name, "graph");
-        assert_eq!(survey.fields[0].target, "Wire");
+        assert_eq!(survey.fields[0].target.name, "Wire");
         // The return type stands in the static's slot and bolds the same way.
         assert_eq!(
-            (survey.ty.as_str(), survey.ty_target.as_str()),
+            (survey.ty.as_str(), survey.ty_target.name.as_str()),
             ("Nut", "Nut")
         );
         // A parameter taken by reference borrows, and the edge carries the
@@ -2634,7 +2806,7 @@ mod tests {
         // `Id` is reached by four marks — two types, a static, and one
         // signature — so it is vocabulary: never seated, never a seat.
         g.items.push(mark(7, 0, "Id", ItemKind::Struct, Vis::Pub));
-        g.items[2].field_rows.push(("id".into(), "Id".into()));
+        g.items[2].field_rows.push(row("id", "Id"));
         g.holds.push(holds(0, 7, &["id"]));
         g.holds.push(holds(1, 7, &["id"]));
         g.holds.push(sig(2, 7, HoldKind::Owns, "", &[("id", "Id")]));
@@ -2697,7 +2869,7 @@ mod tests {
         // The working copy dropped `quiet: bool` from `survey`, and the whole
         // of `pub fn sweep_all(wire: &Wire)`.
         g.items[2].delta = Delta::Changed;
-        g.items[2].fields_removed = vec![(1, "quiet".into(), "bool".into())];
+        g.items[2].fields_removed = vec![(1, row("quiet", "bool"))];
         g.ghosts.push(crate::api::GhostMark {
             id: ghost_id,
             path: "src/api.rs".into(),
@@ -2706,7 +2878,7 @@ mod tests {
             kind: ItemKind::Fn,
             vis: Vis::Pub,
             line: 40,
-            field_rows: vec![("wire".into(), "&Wire".into())],
+            field_rows: vec![row("wire", "&Wire")],
             variants: Vec::new(),
             ty: String::new(),
             method_rows: Vec::new(),
@@ -2725,7 +2897,7 @@ mod tests {
         let ghost = model.marks.iter().find(|m| m.name == "sweep_all").unwrap();
         assert!(ghost.ghost && ghost.is_fn());
         assert_eq!(ghost.letter(), Some("D"));
-        assert_eq!(ghost.fields[0].target, "Wire");
+        assert_eq!(ghost.fields[0].target.name, "Wire");
         // A ghost has no callers to count: the survey read the working copy,
         // and the working copy no longer declares it.
         assert_eq!((ghost.unseen_users, ghost.unseen_uses), (0, 0));
@@ -2770,7 +2942,7 @@ mod tests {
     /// `build` names `Nut` by value, and the free `survey` calls it four times.
     fn api_graph() -> CodeGraph {
         let mut wire = mark(0, 0, "Wire", ItemKind::Struct, Vis::Pub);
-        wire.field_rows = vec![("id".into(), "u32".into())];
+        wire.field_rows = vec![row("id", "u32")];
         wire.method_rows = vec![
             method(
                 "build",
@@ -2868,7 +3040,7 @@ mod tests {
             .unwrap()
             .methods[0];
         assert_eq!(row.decl, "pub fn build(nut: Nut) -> Wire");
-        assert_eq!(row.target, "Nut");
+        assert_eq!(row.target.name, "Nut");
     }
 
     /// A method's signature edge is the type's, filed under the method's row —
@@ -2964,7 +3136,7 @@ mod tests {
             kind: ItemKind::Struct,
             vis: Vis::Pub,
             line: 12,
-            field_rows: vec![("turns".into(), "u32".into())],
+            field_rows: vec![row("turns", "u32")],
             variants: Vec::new(),
             ty: String::new(),
             method_rows: vec![("wind".into(), "pub fn wind(&self) -> Nut".into())],
@@ -2985,7 +3157,7 @@ mod tests {
         // not there any more, and the row still bolds what it named.
         assert_eq!(ghost.methods.len(), 1);
         assert_eq!(ghost.methods[0].decl, "pub fn wind(&self) -> Nut");
-        assert_eq!(ghost.methods[0].target, "Nut");
+        assert_eq!(ghost.methods[0].target.name, "Nut");
         assert!(model.holds.iter().any(|h| h.held == Anchor::Mark(1)
             && h.holder == Anchor::Mark(ghost_id)
             && h.from_method
@@ -3015,9 +3187,9 @@ mod tests {
         let mut quiet = mark(2, 0, "Quiet", ItemKind::Trait, Vis::Private);
         quiet.method_rows = vec![method("hush", "fn hush(&self)", Vis::Private, false, 6)];
         let mut board = mark(3, 0, "Board", ItemKind::Struct, Vis::Pub);
-        board.field_rows = vec![("reader".into(), "Box<dyn Reads>".into())];
+        board.field_rows = vec![row("reader", "Box<dyn Reads>")];
         let mut wire = mark(0, 0, "Wire", ItemKind::Struct, Vis::Pub);
-        wire.field_rows = vec![("hush".into(), "Box<dyn Quiet>".into())];
+        wire.field_rows = vec![row("hush", "Box<dyn Quiet>")];
         let mut clauses: Vec<ItemMark> = ["read", "CAP", "hush"]
             .iter()
             .enumerate()
@@ -3096,7 +3268,7 @@ mod tests {
             vec!["fn read(&self) -> Wire", "const CAP: usize"]
         );
         // The row's own edge bolds what it names.
-        assert_eq!(reads.methods[0].target, "Wire");
+        assert_eq!(reads.methods[0].target.name, "Wire");
         // A trait is never a root: nothing can hold a contract.
         assert!(!model.marks.iter().any(|m| m.name == "Quiet"));
         let api = frame_named(&model, "api");
@@ -3219,7 +3391,7 @@ mod tests {
         assert!(ghost.ghost && ghost.kind == ItemKind::Trait);
         assert_eq!(ghost.letter(), Some("D"));
         assert_eq!(ghost.methods.len(), 1);
-        assert_eq!(ghost.methods[0].target, "Wire");
+        assert_eq!(ghost.methods[0].target.name, "Wire");
         // The promise it took away is drawn from the base edition.
         assert!(model.holds.iter().any(|h| h.kind == HoldKind::Implements
             && h.held == Anchor::Mark(ghost_id)
@@ -3291,7 +3463,10 @@ mod tests {
         let cap = model.marks.iter().find(|m| m.name == "CAP").unwrap();
         // The line a static uses for its declared type is the line they use
         // for what they name, and it bolds the same way.
-        assert_eq!((cap.ty.as_str(), cap.ty_target.as_str()), ("Wire", "Wire"));
+        assert_eq!(
+            (cap.ty.as_str(), cap.ty_target.name.as_str()),
+            ("Wire", "Wire")
+        );
         assert!(cap.fields.is_empty() && cap.methods.is_empty());
         // A private one folds behind the module's counted row.
         assert!(!model.marks.iter().any(|m| m.name == "SEED"));

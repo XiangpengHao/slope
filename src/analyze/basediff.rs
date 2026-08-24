@@ -26,8 +26,8 @@ use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 
 use super::vcs::{Diff, file_at_base};
 use crate::api::{
-    CodeGraph, Delta, FileDetail, GhostMark, HoldEdge, HoldEvent, HoldKind, ImplEdge, ItemKind,
-    ItemMark, Vis,
+    CodeGraph, DeclRow, Delta, FileDetail, GhostMark, HoldEdge, HoldEvent, HoldKind, ImplEdge,
+    ItemKind, ItemMark, Vis,
 };
 
 /// One declaration as the base edition wrote it.
@@ -43,7 +43,7 @@ struct BaseDecl {
     /// comparison. Attributes and doc comments ride along, as they do in the
     /// live survey's byte range.
     text: String,
-    field_rows: Vec<(String, String)>,
+    field_rows: Vec<DeclRow>,
     variants: Vec<String>,
     ty: String,
     /// The methods the base's own impl blocks in *this file* wrote for it,
@@ -51,6 +51,13 @@ struct BaseDecl {
     /// diff only fetches the base edition of the files that changed, so the
     /// live side is held to the same file when the two are compared.
     method_rows: Vec<(String, String)>,
+}
+
+/// Whether the base edition's node sits in test-only code — the same reading
+/// the live survey makes, so the two editions leave out the same declarations
+/// and the diff has nothing spurious to report.
+fn skips_tests(node: &SyntaxNode) -> bool {
+    !super::charts_tests() && node.ancestors().any(|up| super::code::test_only(&up))
 }
 
 /// Runs of whitespace collapsed to one space — the same edit `type_text` and
@@ -68,9 +75,11 @@ fn line_of(text: &str, offset: usize) -> u32 {
         + 1
 }
 
-/// A field list's rows, syntactically: (name as written — a tuple field's
-/// index — and the declared type as written).
-fn base_fields(list: Option<ast::FieldList>) -> Vec<(String, String)> {
+/// A field list's rows, syntactically: the name as written (a tuple field's
+/// is its index), the declared type as written, and the visibility the field
+/// declares for itself — read the same way the live survey reads it, so the
+/// two editions compare without a false change.
+fn base_fields(list: Option<ast::FieldList>) -> Vec<DeclRow> {
     let mut out = Vec::new();
     match list {
         Some(ast::FieldList::RecordFieldList(fields)) => {
@@ -79,12 +88,20 @@ fn base_fields(list: Option<ast::FieldList>) -> Vec<(String, String)> {
                     .name()
                     .map(|n| n.text().to_string())
                     .unwrap_or_default();
-                out.push((name, super::data::type_text(field.ty())));
+                out.push(DeclRow {
+                    name,
+                    ty: super::data::type_text(field.ty()),
+                    vis: super::code::vis_kind(field.visibility()),
+                });
             }
         }
         Some(ast::FieldList::TupleFieldList(fields)) => {
             for (index, field) in fields.fields().enumerate() {
-                out.push((index.to_string(), super::data::type_text(field.ty())));
+                out.push(DeclRow {
+                    name: index.to_string(),
+                    ty: super::data::type_text(field.ty()),
+                    vis: super::code::vis_kind(field.visibility()),
+                });
             }
         }
         None => {}
@@ -119,14 +136,14 @@ fn module_prefix(node: &SyntaxNode) -> Option<String> {
 
 /// A parameter list as the base wrote it: the binding as written and the
 /// declared type as written — the rows a function's block quotes.
-fn base_params(list: Option<ast::ParamList>) -> Vec<(String, String)> {
+fn base_params(list: Option<ast::ParamList>) -> Vec<DeclRow> {
     list.into_iter()
         .flat_map(|list| list.params())
-        .map(|p| {
-            (
-                super::data::pat_text(p.pat()),
-                super::data::type_text(p.ty()),
-            )
+        .map(|p| DeclRow {
+            name: super::data::pat_text(p.pat()),
+            ty: super::data::type_text(p.ty()),
+            // A parameter declares no visibility of its own, ever.
+            vis: Vis::Private,
         })
         .collect()
 }
@@ -138,6 +155,9 @@ fn base_params(list: Option<ast::ParamList>) -> Vec<(String, String)> {
 fn base_methods(file: &ast::SourceFile) -> HashMap<String, Vec<(String, String)>> {
     let mut out: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for imp in file.syntax().descendants().filter_map(ast::Impl::cast) {
+        if skips_tests(imp.syntax()) {
+            continue;
+        }
         let Some(prefix) = module_prefix(imp.syntax()) else {
             continue;
         };
@@ -171,6 +191,9 @@ impl BaseDecl {
         let mut methods = base_methods(&parse.tree());
         let mut out = Vec::new();
         for node in parse.tree().syntax().descendants() {
+            if skips_tests(&node) {
+                continue;
+            }
             let kind = match node.kind() {
                 SyntaxKind::STRUCT => ItemKind::Struct,
                 SyntaxKind::ENUM => ItemKind::Enum,
@@ -719,9 +742,22 @@ pub(super) fn apply(
         let (ma, mr) = diff_rows(&decl.method_rows, &live_methods);
         let item = &mut graph.items[id as usize];
         item.delta = Delta::Changed;
-        let (fa, fr) = diff_rows(&decl.field_rows, &item.field_rows);
+        // Fields compare on the text a reader sees, visibility included, so
+        // a field losing its `pub` reads as the change it is.
+        let as_pairs = |rows: &[DeclRow]| -> Vec<(String, String)> {
+            rows.iter().map(|r| (r.name.clone(), r.written())).collect()
+        };
+        let (fa, fr) = diff_rows(&as_pairs(&decl.field_rows), &as_pairs(&item.field_rows));
+        let base_row: HashMap<&str, &DeclRow> = decl
+            .field_rows
+            .iter()
+            .map(|r| (r.name.as_str(), r))
+            .collect();
         item.fields_added = fa;
-        item.fields_removed = fr;
+        item.fields_removed = fr
+            .into_iter()
+            .filter_map(|(at, name, _)| Some((at, (*base_row.get(name.as_str())?).clone())))
+            .collect();
         let (va, vr) = diff_variants(&decl.variants, &item.variants);
         item.variants_added = va;
         item.variants_removed = vr;
@@ -767,7 +803,7 @@ pub(super) fn apply(
                 .fields_added
                 .iter()
                 .filter_map(|&at| i.field_rows.get(at as usize))
-                .map(|(n, _)| n.clone())
+                .map(|row| row.name.clone())
                 .collect();
             names.extend(
                 i.variants_added
@@ -837,8 +873,8 @@ pub(super) fn apply(
     // (from, name, quoted row, skip the row's own leading name, a method row)
     let mut dropped: Vec<(u32, String, String, bool, bool)> = Vec::new();
     for item in &graph.items {
-        for (_, name, decl) in &item.fields_removed {
-            dropped.push((item.id, name.clone(), decl.clone(), false, false));
+        for (_, row) in &item.fields_removed {
+            dropped.push((item.id, row.name.clone(), row.written(), false, false));
         }
         for (_, written) in &item.variants_removed {
             dropped.push((item.id, variant_name(written), written.clone(), true, false));
@@ -848,8 +884,8 @@ pub(super) fn apply(
         }
     }
     for ghost in &graph.ghosts {
-        for (name, decl) in &ghost.field_rows {
-            dropped.push((ghost.id, name.clone(), decl.clone(), false, false));
+        for row in &ghost.field_rows {
+            dropped.push((ghost.id, row.name.clone(), row.written(), false, false));
         }
         for written in &ghost.variants {
             dropped.push((
@@ -1026,7 +1062,7 @@ mod tests {
     fn base_decls_read_kinds_names_and_rows() {
         let text = r#"
 /// Doc.
-pub struct Wire { pub id: u32, pub name: String }
+pub struct Wire { pub id: u32, pub(crate) name: String, seen: bool }
 pub(crate) enum Kind { A, B(String) }
 static CACHE: OnceCell<Arc<Index>> = OnceCell::new();
 mod tests {
@@ -1056,28 +1092,36 @@ impl Wire {
             ]
         );
         assert_eq!(decls[0].vis, Vis::Pub);
+        // Each field's own visibility, not its type's: a `pub` struct can
+        // publish some of its state and keep the rest.
+        let rows = |at: usize| -> Vec<(&str, &str, Vis)> {
+            decls[at]
+                .field_rows
+                .iter()
+                .map(|row| (row.name.as_str(), row.ty.as_str(), row.vis))
+                .collect()
+        };
         assert_eq!(
-            decls[0].field_rows,
+            rows(0),
             vec![
-                ("id".to_string(), "u32".to_string()),
-                ("name".to_string(), "String".to_string())
+                ("id", "u32", Vis::Pub),
+                ("name", "String", Vis::Crate),
+                ("seen", "bool", Vis::Private),
             ]
         );
         assert_eq!(decls[1].vis, Vis::Crate);
         assert_eq!(decls[1].variants, vec!["A", "B(String)"]);
         assert_eq!(decls[2].ty, "OnceCell<Arc<Index>>");
-        assert_eq!(
-            decls[3].field_rows,
-            vec![("0".to_string(), "u8".to_string())]
-        );
+        assert_eq!(rows(3), vec![("0", "u8", Vis::Private)]);
         // A signature reads as rows and a return line: the parameters as the
         // base wrote them, the return type in the slot a static's type uses.
         assert_eq!((decls[5].kind, decls[5].vis), (ItemKind::Fn, Vis::Pub));
+        // A parameter declares no visibility of its own, ever.
         assert_eq!(
-            decls[5].field_rows,
+            rows(5),
             vec![
-                ("dir".to_string(), "&Path".to_string()),
-                ("quiet".to_string(), "bool".to_string())
+                ("dir", "&Path", Vis::Private),
+                ("quiet", "bool", Vis::Private),
             ]
         );
         assert_eq!(decls[5].ty, "Result<Index, String>");

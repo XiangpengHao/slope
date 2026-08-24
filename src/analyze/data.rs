@@ -31,10 +31,10 @@ use std::collections::HashMap;
 use ra_ap_hir::{Adt, ModuleDef, Mutability, Semantics, Type};
 use ra_ap_ide_db::RootDatabase;
 use ra_ap_ide_db::base_db::EditionedFileId;
-use ra_ap_syntax::ast::HasName;
+use ra_ap_syntax::ast::{HasName, HasVisibility};
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, TextRange, ast};
 
-use crate::api::{HoldEdge, HoldKind, ItemKind, MethodRow, Vis};
+use crate::api::{DeclRow, HoldEdge, HoldKind, ItemKind, MethodRow, Vis};
 
 /// One item the walk starts from: a struct, enum, union, static, or free
 /// function the survey has already given a mark — or one method, which starts
@@ -72,7 +72,7 @@ pub(super) struct DataWalk {
     /// A struct's or union's fields — or a free function's parameters —
     /// quoted in declaration order: (name as written, declared type as
     /// written).
-    pub(crate) field_rows: Vec<Vec<(String, String)>>,
+    pub(crate) field_rows: Vec<Vec<DeclRow>>,
     /// An enum's variants as written — name, payload, discriminant.
     pub(crate) variants: Vec<Vec<String>>,
     /// A static's declared type or a free function's return type, as written.
@@ -182,7 +182,7 @@ pub(super) fn walk<'db>(
     marks: usize,
     mark_of_def: &dyn Fn(ModuleDef) -> Option<u32>,
 ) -> DataWalk {
-    let mut field_rows: Vec<Vec<(String, String)>> = vec![Vec::new(); marks];
+    let mut field_rows: Vec<Vec<DeclRow>> = vec![Vec::new(); marks];
     let mut variants: Vec<Vec<String>> = vec![Vec::new(); marks];
     let mut ty: Vec<String> = vec![String::new(); marks];
     let mut method_rows: Vec<Vec<MethodRow>> = vec![Vec::new(); marks];
@@ -234,17 +234,17 @@ pub(super) fn walk<'db>(
                                 .and_then(|u| u.record_field_list())
                                 .map(ast::FieldList::RecordFieldList)
                         });
-                    for (name, decl, field_ty) in fields_of(sema, db, list) {
+                    for (row, field_ty) in fields_of(sema, db, list) {
                         field_edges(
                             db,
                             mark_of_def,
                             tail,
-                            name.clone(),
-                            decl.clone(),
+                            row.name.clone(),
+                            row.ty.clone(),
                             &field_ty,
                             &mut acc,
                         );
-                        field_rows[mark].push((name, decl));
+                        field_rows[mark].push(row);
                     }
                 }
                 ItemKind::Enum => {
@@ -259,13 +259,13 @@ pub(super) fn walk<'db>(
                         // A variant's payload is held by the enum, and a
                         // payload field has no name a reader would know: the
                         // variant is what they read it by.
-                        for (_, decl, field_ty) in fields_of(sema, db, variant.field_list()) {
+                        for (row, field_ty) in fields_of(sema, db, variant.field_list()) {
                             field_edges(
                                 db,
                                 mark_of_def,
                                 tail,
                                 name.clone(),
-                                decl,
+                                row.ty,
                                 &field_ty,
                                 &mut acc,
                             );
@@ -430,7 +430,12 @@ pub(super) fn walk<'db>(
                                 &mut acc,
                             );
                         }
-                        field_rows[mark].push((name, decl));
+                        // A parameter declares no visibility of its own.
+                        field_rows[mark].push(DeclRow {
+                            name,
+                            ty: decl,
+                            vis: Vis::Private,
+                        });
                     }
                     // The return type is the signature's own row, filed under
                     // the function's name the way a static's type is under the
@@ -646,7 +651,7 @@ fn fields_of<'db>(
     sema: &Semantics<'db, RootDatabase>,
     db: &'db RootDatabase,
     list: Option<ast::FieldList>,
-) -> Vec<(String, String, Type<'db>)> {
+) -> Vec<(DeclRow, Type<'db>)> {
     let mut out = Vec::new();
     match list {
         Some(ast::FieldList::RecordFieldList(fields)) => {
@@ -658,7 +663,12 @@ fn fields_of<'db>(
                     .name()
                     .map(|n| n.text().to_string())
                     .unwrap_or_default();
-                out.push((name, type_text(field.ty()), def.ty(db)));
+                let row = DeclRow {
+                    name,
+                    ty: type_text(field.ty()),
+                    vis: super::code::vis_kind(field.visibility()),
+                };
+                out.push((row, def.ty(db)));
             }
         }
         Some(ast::FieldList::TupleFieldList(fields)) => {
@@ -666,7 +676,12 @@ fn fields_of<'db>(
                 let Some(def) = sema.to_def(&field) else {
                     continue;
                 };
-                out.push((index.to_string(), type_text(field.ty()), def.ty(db)));
+                let row = DeclRow {
+                    name: index.to_string(),
+                    ty: type_text(field.ty()),
+                    vis: super::code::vis_kind(field.visibility()),
+                };
+                out.push((row, def.ty(db)));
             }
         }
         None => {}

@@ -34,7 +34,8 @@ are written in the tools' own words.
    publishes. Everything is quoted as written; nothing is reconstructed.
 3. **Every row that names a workspace mark files an edge under that row's
    name.** One machinery for fields, parameters, method rows and trait
-   clauses; the bold run of a row is the mark its edge lands on.
+   clauses; the bold run of a row is the mark its edge lands on — and the way
+   to it: the run is a link that selects that mark (2026-08-24, user).
 4. **One direction rule: the arrowhead rests on the dependent.** A change at
    the tail travels to the head. True of holds, signatures, method rows,
    implements, and body references alike.
@@ -95,7 +96,11 @@ the chosen door, rows included. Default `pub(crate)`.
   (`/surface/mark/:..path?item=`) and a reading: everything a change to it
   could reach keeps full ink with its wires, and the rest recedes. The block
   itself was already quoted whole — selection is the reading, never the
-  quotation. Nothing moves; the camera holds still.
+  quotation. Nothing moves, and the camera holds still for any selection the
+  glass can already show; one it cannot — off the viewport, or below reading
+  zoom — it glides to, which is the data chart's rule (2026-08-21) reaching
+  this altitude on 2026-08-24, when a row's held type became a link to a block
+  that can stand anywhere on the paper.
 - **Selection is also how a neighbourhood is read.** Every uses edge touching
   the selected mark inks in and stays inked — folded ones included — and the
   block at the far end of each reads a step behind the blast radius rather
@@ -234,9 +239,13 @@ contract reads as quiet rather than dead.
 
 Extends `CodeGraph` (src/api.rs):
 
-- `ItemMark` carries the quotation: `field_rows` (fields, or a function's
-  parameters), `variants`, `ty` (a static's or const's declared type, an
-  alias's target, a function's return), and `method_rows: Vec<MethodRow>` —
+- `ItemMark` carries the quotation: `field_rows: Vec<DeclRow>` — fields, or a
+  function's parameters, as `{ name, ty, vis }` (2026-08-24: each row's *own*
+  visibility, because a `pub(crate)` struct can publish some of its state and
+  keep the rest, and both charts draw the keyword in front of the name; a
+  parameter declares nothing and is always private) — `variants`, `ty` (a
+  static's or const's declared type, an alias's target, a function's return),
+  and `method_rows: Vec<MethodRow>` —
   `{ name, sig, vis, via_trait, mark }`, every method of the type whatever its
   visibility, because which rows are drawn is a door and a door is the
   client's. `via_trait` is what lets a `pub`-less trait-impl method read as
@@ -262,6 +271,29 @@ Extends `CodeGraph` (src/api.rs):
 - **Rows**: quoted as written, colored by token class the way a definition
   plate colors its source, with the one run naming the mark the row reaches
   in bold. A plain type name is from outside the workspace: no mark, no line.
+  **The bold run is a link** (2026-08-24, user): click the type's name inside
+  the row and the chart selects that type's block — the same focus the block's
+  own click is, gliding only where the block is not already legible. It
+  underlines while the pointer is on it and carries nothing at rest. A run
+  with no block to reach — folded behind a door or a hand-folded module, or
+  the block's own name — is bold text and nothing more.
+  Each field row carries the visibility it declares for itself, in front of
+  its name (2026-08-24): a `pub(crate)` struct can publish some of its state
+  and keep the rest, and only the row can say which.
+- **Brackets** (2026-08-24, user decision). A block is bracketed the way rust
+  brackets the declaration it quotes. `{` on the head and `}` on a line of its
+  own for a shape with rows; `(` against the name and `)` carrying the return
+  for a signature with parameters — `()` on the head and the return below when
+  it has none; `:` (an alias, `=`) on the head of a static, const or alias,
+  whose one line below is its declared type; nothing at all where there are no
+  rows, since inventing `{}` would guess at a unit struct. A shape's `}` closes
+  before its method band — that band is an `impl`, and an `impl` stands outside
+  the shape — while a trait's closes after it, the band being the body, and a
+  trait's band opens on no rule of its own. Punctuation ink; the far edition
+  drops it with the rows. Rows are indented 12px inside the brackets and the
+  closing brace is not, so a block's end is findable; the diff's `+`/`−`
+  marker sits in that gutter, which aligns a woven block's text column across
+  marked and untouched rows alike.
 - **No row caps** (revised 2026-08-20, user decision). A block draws its whole
   declaration: every field, every variant, every method row of the band, every
   parameter of a signature. A declaration read eight rows deep is a declaration
@@ -324,8 +356,8 @@ Extends `CodeGraph` (src/api.rs):
   clause announcing that no row waits behind a count.
 - Routes: `/surface`, `/surface/mark/:..path?item=`, and
   `/surface/mod/:..module`. Escape deselects; `f` refits; `←`/`→` retrace
-  history. The camera survives the round trip — a selection never moves it, and
-  neither does a fold.
+  history. The camera survives the round trip — a legible selection never
+  moves it, and neither does a fold.
 
 ## Honesty notes the chart states out loud
 

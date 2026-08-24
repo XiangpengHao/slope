@@ -495,7 +495,7 @@ pub(crate) fn SurfaceSheet(graph: CodeGraph, path: String, item: String) -> Elem
             let text = if row.name.is_empty() {
                 row.decl.clone()
             } else {
-                format!("{}: {}", row.name, row.decl)
+                row.written()
             };
             Some((mk, text, row.state == RowState::Removed))
         })

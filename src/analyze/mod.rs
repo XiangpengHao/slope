@@ -15,6 +15,17 @@ use cargo_metadata::{DependencyKind, MetadataCommand};
 
 use crate::api::{CrateInfo, DepEvent, DepKind, DepLink, WorkspaceGraph};
 
+/// Whether the survey charts test-only code. Off by default (2026-08-24,
+/// user): a reviewer reads the workspace the workspace ships, and a fixture
+/// module is a fifth of this one's declarations standing between them and it.
+/// `SLOPE_TESTS=1` puts it back.
+pub(crate) fn charts_tests() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| {
+        env::var("SLOPE_TESTS").is_ok_and(|on| !on.is_empty() && on != "0" && on != "false")
+    })
+}
+
 /// Where to analyze: `SLOPE_WORKSPACE`, else the server's working dir.
 pub(crate) fn workspace_dir() -> PathBuf {
     env::var_os("SLOPE_WORKSPACE")

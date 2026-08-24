@@ -422,7 +422,7 @@ pub(crate) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
             let text = if row.name.is_empty() {
                 row.decl.clone()
             } else {
-                format!("{}: {}", row.name, row.decl)
+                row.written()
             };
             Some((mk, text, row.state == RowState::Removed))
         })

@@ -144,6 +144,9 @@ struct RawFile {
     efid: EditionedFileId,
     items: Vec<RawItem>,
     lines: u32,
+    /// Source ranges the walk left out as test-only. Nothing written inside
+    /// one is a declaration or a reference this survey knows about.
+    test_ranges: Vec<TextRange>,
 }
 
 /// Where a resolved reference lands.
@@ -246,6 +249,7 @@ fn survey_attached(
                 efid,
                 items: Vec::new(),
                 lines: 0,
+                test_ranges: Vec::new(),
             });
         }
     }
@@ -270,9 +274,16 @@ fn survey_attached(
         starts.push(lines);
         sources.push(text);
         let mut items = Vec::new();
-        collect_items(source.syntax(), &ItemScope::root(), &mut items);
+        let mut skipped = Vec::new();
+        collect_items(
+            source.syntax(),
+            &ItemScope::root(),
+            &mut items,
+            &mut skipped,
+        );
         items.sort_by_key(|i| (i.range.start(), std::cmp::Reverse(i.range.end())));
         file.items = items;
+        file.test_ranges = skipped;
     }
 
     // ---- Pass A½: attribution. -------------------------------------------
@@ -763,6 +774,14 @@ fn survey_attached(
              and are not on the chart"
         ));
     }
+    // Never a silent cut: what the survey declines to read, it says.
+    let test_decls: usize = raw.iter().map(|file| file.test_ranges.len()).sum();
+    if test_decls > 0 {
+        notes.push(format!(
+            "{test_decls} test-only declarations, and everything written \
+             inside them, are not surveyed — set SLOPE_TESTS=1 to chart them"
+        ));
+    }
 
     let walk_notes = vec![
         "the walk reads declared types: `Arc`, `Rc`, `Weak` and the dioxus \
@@ -943,11 +962,44 @@ impl ItemScope {
     }
 }
 
+/// Whether a declaration exists only for the test build: `#[cfg(test)]` in
+/// any of its shapes, or a `#[test]` function. `#[cfg(any(test, …))]` is not
+/// here — that code ships under the other predicate too.
+pub(super) fn test_only(node: &SyntaxNode) -> bool {
+    node.children()
+        .filter(|child| child.kind() == SyntaxKind::ATTR)
+        .any(|attr| {
+            let text: String = attr
+                .text()
+                .to_string()
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            text == "#[test]"
+                || text.ends_with("::test]")
+                || text.starts_with("#[cfg(test")
+                || text.starts_with("#[cfg(all(test")
+        })
+}
+
 /// Collect the file's items in tree order. Inline modules contribute their
 /// path to item names but are not containers at this altitude: their items
 /// stay on the file's own shelf.
-fn collect_items(node: &SyntaxNode, ctx: &ItemScope, out: &mut Vec<RawItem>) {
+///
+/// Test-only declarations are left out unless [`super::charts_tests`] says
+/// otherwise, and their ranges go to `skipped` so the reference pass can drop
+/// what they wrote too — a fixture calling a function is not a use of it.
+fn collect_items(
+    node: &SyntaxNode,
+    ctx: &ItemScope,
+    out: &mut Vec<RawItem>,
+    skipped: &mut Vec<TextRange>,
+) {
     for child in node.children() {
+        if !super::charts_tests() && test_only(&child) {
+            skipped.push(child.text_range());
+            continue;
+        }
         let name_of = |n: Option<ast::Name>| n.map(|n| n.text().to_string());
         let range = child.text_range();
 
@@ -978,7 +1030,7 @@ fn collect_items(node: &SyntaxNode, ctx: &ItemScope, out: &mut Vec<RawItem>) {
                         owner: Some(range),
                         inherited: Some(vis),
                     };
-                    collect_items(list.syntax(), &inner, out);
+                    collect_items(list.syntax(), &inner, out, skipped);
                 }
             }
         } else if let Some(a) = ast::TypeAlias::cast(child.clone()) {
@@ -1022,7 +1074,7 @@ fn collect_items(node: &SyntaxNode, ctx: &ItemScope, out: &mut Vec<RawItem>) {
                     owner: ctx.owner,
                     inherited: ctx.inherited,
                 };
-                collect_items(list.syntax(), &inner, out);
+                collect_items(list.syntax(), &inner, out, skipped);
             }
         } else if let Some(i) = ast::Impl::cast(child.clone()) {
             let header = impl_header(&i);
@@ -1038,12 +1090,12 @@ fn collect_items(node: &SyntaxNode, ctx: &ItemScope, out: &mut Vec<RawItem>) {
                     owner: Some(range),
                     inherited: None,
                 };
-                collect_items(list.syntax(), &inner, out);
+                collect_items(list.syntax(), &inner, out, skipped);
             }
         } else if let Some(x) = ast::ExternBlock::cast(child.clone())
             && let Some(list) = x.extern_item_list()
         {
-            collect_items(list.syntax(), ctx, out);
+            collect_items(list.syntax(), ctx, out, skipped);
         }
     }
 }
@@ -1091,14 +1143,21 @@ fn scan_refs(
     spans: &mut Vec<(u32, u32, RefTarget)>,
 ) {
     let src_items = &raw[src_file as usize].items;
+    let test_ranges = &raw[src_file as usize].test_ranges;
     fn record(
         acc: &mut HashMap<RefSource, u32>,
         spans: &mut Vec<(u32, u32, RefTarget)>,
         src_items: &[RawItem],
+        test_ranges: &[TextRange],
         src_file: u32,
         at: TextRange,
         target: RefTarget,
     ) {
+        // A name written inside a declaration the walk left out is not a
+        // reference the chart has anywhere to draw from.
+        if test_ranges.iter().any(|range| range.contains(at.start())) {
+            return;
+        }
         let src_item = item_at(src_items, at.start());
         // A reference from an item to itself (recursion, `Self` in an impl)
         // says nothing at any zoom level.
@@ -1120,7 +1179,15 @@ fn scan_refs(
         }
         match resolve_name(sema, db, vfs, root, file_of, raw, &tok) {
             Resolved::Target(target) => {
-                record(acc, spans, src_items, src_file, tok.text_range(), target);
+                record(
+                    acc,
+                    spans,
+                    src_items,
+                    test_ranges,
+                    src_file,
+                    tok.text_range(),
+                    target,
+                );
             }
             Resolved::Elsewhere => {}
             Resolved::Missed => {
@@ -1150,7 +1217,7 @@ fn scan_refs(
                 continue;
             };
             if let Some(target) = def_target(sema, db, vfs, root, file_of, raw, def) {
-                record(acc, spans, src_items, src_file, at, target);
+                record(acc, spans, src_items, test_ranges, src_file, at, target);
             }
         }
     }
