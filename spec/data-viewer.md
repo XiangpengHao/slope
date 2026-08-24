@@ -43,7 +43,13 @@ silently became load-bearing. Visitor mode: **Operate**.
    `used by n bodies`. Both in the block's hover words, both listed as rows
    on the sheet (moved off the resting paper 2026-08-21) — that count is
    exactly the "directly accessed" reading, in words because its other end
-   has no block to draw a line to.
+   has no block to draw a line to. On the sheet the words become **names**
+   (2026-08-23): `Used by` and `Uses` list every reference — drawn types and
+   free functions, traits and consts in one weight-ranked list, each row
+   saying its keyword and its count and linking to its definition (the code
+   viewer for the ones with no block, since the chart cannot re-centre on
+   what it does not draw). No sentence is left counting what a reviewer
+   cannot open.
 
 ## Decisions (user-confirmed 2026-08-21)
 

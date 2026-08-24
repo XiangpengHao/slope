@@ -73,6 +73,19 @@ pub enum Stand {
     Ring,
 }
 
+/// The far end of a body reference this chart draws no block for: a free
+/// function, a trait, a const, an alias. Undrawn is not unnameable — each is
+/// a real item with a definition — so the sheet gives every one of them a row
+/// and a link to its code (2026-08-23, user); only the paper keeps them to a
+/// count.
+#[derive(Clone, PartialEq, Debug)]
+pub struct Unseen {
+    /// Its [`ItemMark`] id: the row's words, and where the link lands.
+    pub item: u32,
+    /// References across this pair, summed.
+    pub count: u32,
+}
+
 /// One shape or static with a block on the paper.
 #[derive(Clone, PartialEq, Debug)]
 pub struct DataMark {
@@ -105,12 +118,14 @@ pub struct DataMark {
     /// method rows, consts, aliases, trait clauses. None of them has a block
     /// here, so the count is the ink the chart will not draw.
     pub named_by: u32,
-    /// Body references into it from code with no block here — function
-    /// bodies, mostly. The other half of the same undrawn ink.
-    pub used_by: u32,
-    /// Body references out of its own impls that land where the chart draws
-    /// no mark. Said on the sheet, never on the paper.
-    pub unseen_uses: u32,
+    /// The bodies with no block here that reach it — function bodies,
+    /// mostly. The other half of the same undrawn ink, kept as ends and not
+    /// as a number, because the sheet lists every one of them; heaviest
+    /// first. The paper says only how many.
+    pub used_by: Vec<Unseen>,
+    /// Where its own impls reach code the chart draws no mark for, the same
+    /// way round. Said on the sheet, never on the paper.
+    pub unseen_uses: Vec<Unseen>,
     /// Structural holders folded to a count: nonzero only on vocabulary
     /// marks, whose incoming holds rest folded.
     pub held_by: u32,
@@ -845,8 +860,8 @@ impl DataModel {
                     kids: kids.get(&id).cloned().unwrap_or_default(),
                     named_by: named_set.get(&id).map_or(0, |set| set.len() as u32),
                     // The ties pass fills these in.
-                    used_by: 0,
-                    unseen_uses: 0,
+                    used_by: Vec::new(),
+                    unseen_uses: Vec::new(),
                     held_by: if vocab.contains(&id) {
                         holders.get(&id).map_or(0, |set| set.len() as u32)
                     } else {
@@ -899,8 +914,8 @@ impl DataModel {
                 tier: Tier::Standing(Stand::Afar),
                 kids: Vec::new(),
                 named_by: 0,
-                used_by: 0,
-                unseen_uses: 0,
+                used_by: Vec::new(),
+                unseen_uses: Vec::new(),
                 held_by: 0,
             });
         }
@@ -909,12 +924,14 @@ impl DataModel {
         // Every resolved reference, each end climbing its containment chain,
         // so a method's call is its type's. Both ends drawn keeps the pair;
         // a reference from code with no block here — a function's body, most
-        // of the time — is exactly the "directly accessed" ink, counted on
-        // the mark as `used by n bodies`.
+        // of the time — is exactly the "directly accessed" ink. It keeps the
+        // item it came from, not just a tally: the sheet lists those bodies
+        // by name and links each to its code, and only the paper's hover
+        // words fold them to `used by n bodies` (2026-08-23, user).
         let containment = Containment::build(graph);
         let mut tie_acc: HashMap<(u32, u32), u32> = HashMap::new();
-        let mut unseen_in: HashMap<u32, u32> = HashMap::new();
-        let mut unseen_out: HashMap<u32, u32> = HashMap::new();
+        let mut unseen_in: HashMap<u32, HashMap<u32, u32>> = HashMap::new();
+        let mut unseen_out: HashMap<u32, HashMap<u32, u32>> = HashMap::new();
         let row_of: HashMap<u32, (u32, String)> = drawn
             .iter()
             .filter_map(|&id| Some((id, graph.items.get(id as usize)?)))
@@ -956,8 +973,12 @@ impl DataModel {
                             .or_default() += count;
                     }
                 }
-                (false, true) => *unseen_in.entry(def).or_default() += count,
-                (true, false) => *unseen_out.entry(user).or_default() += count,
+                (false, true) => {
+                    *unseen_in.entry(def).or_default().entry(user).or_default() += count;
+                }
+                (true, false) => {
+                    *unseen_out.entry(user).or_default().entry(def).or_default() += count;
+                }
                 (false, false) => {}
             }
         }
@@ -1015,9 +1036,24 @@ impl DataModel {
         for tie in &mut ties {
             tie.labeled = tie.rest && tie.count > label_bar;
         }
+        // Heaviest first, ties broken by name: the sheet reads these rows in
+        // the order a reviewer would rank them.
+        let unseen_ends = |acc: Option<&HashMap<u32, u32>>| -> Vec<Unseen> {
+            let mut ends: Vec<Unseen> = acc
+                .into_iter()
+                .flatten()
+                .map(|(&item, &count)| Unseen { item, count })
+                .collect();
+            ends.sort_by(|a, b| {
+                b.count
+                    .cmp(&a.count)
+                    .then_with(|| name_of(a.item).cmp(&name_of(b.item)))
+            });
+            ends
+        };
         for mark in &mut marks {
-            mark.used_by = unseen_in.get(&mark.id).copied().unwrap_or(0);
-            mark.unseen_uses = unseen_out.get(&mark.id).copied().unwrap_or(0);
+            mark.used_by = unseen_ends(unseen_in.get(&mark.id));
+            mark.unseen_uses = unseen_ends(unseen_out.get(&mark.id));
         }
         // ---- Facts. -----------------------------------------------------------
         let current = |m: &&DataMark| !m.ghost;
@@ -1322,7 +1358,7 @@ mod tests {
     }
 
     #[test]
-    fn body_references_from_functions_are_counted_not_drawn() {
+    fn body_references_from_functions_are_named_not_drawn() {
         let mut g = graph(
             vec![
                 mark(0, 0, "render", ItemKind::Fn),
@@ -1345,8 +1381,9 @@ mod tests {
         ];
         let model = build(&g);
         let wire = by_name(&model, "Wire");
-        // The fn's references count on the mark; the type's draw a tie.
-        assert_eq!(wire.used_by, 4);
+        // The fn keeps its own row on the mark; the type's draw a tie.
+        assert_eq!(wire.used_by.len(), 1);
+        assert_eq!((wire.used_by[0].item, wire.used_by[0].count), (0, 4));
         assert_eq!(model.ties.len(), 1);
         assert_eq!(model.ties[0].count, 2);
     }

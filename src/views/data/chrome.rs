@@ -9,7 +9,7 @@ use crate::views::codemap::chrome::{
     Altitude, AltitudeSwitch, Gestures, SurveyLimits, UsageRow, decl_words, kind_words, plural,
 };
 use crate::views::codemap::{item_route, use_code};
-use crate::views::data::model::{DataFacts, DataMark, DataModel, Stand, Tier};
+use crate::views::data::model::{DataFacts, DataMark, DataModel, Stand, Tier, Unseen};
 use crate::views::data::{mark_route, mod_route, use_data};
 use crate::views::surface::chrome::{HoldList, HoldRow, RefToggle};
 use crate::views::surface::model::{Anchor, RowState, upstream};
@@ -157,7 +157,7 @@ fn hold_rows(
 /// One end of a uses edge as the sheet reads it.
 type UsesRow<'a> = (&'a Anchor, u32, &'a [(String, u32)]);
 
-fn uses_rows(model: &DataModel, rows: Vec<UsesRow<'_>>) -> Vec<HoldRow> {
+fn uses_rows(model: &DataModel, rows: Vec<UsesRow<'_>>) -> Vec<(u32, HoldRow)> {
     let by_id: std::collections::HashMap<u32, &DataMark> =
         model.marks.iter().map(|m| (m.id, m)).collect();
     rows.into_iter()
@@ -175,16 +175,28 @@ fn uses_rows(model: &DataModel, rows: Vec<UsesRow<'_>>) -> Vec<HoldRow> {
             {
                 word = format!("{word} · {row}");
             }
-            Some(HoldRow {
-                to: Some(mark_route(&far.path, &far.label)),
-                decl: decl_words(far.vis, far.kind),
-                name: far.name.clone(),
-                letter: far.letter(),
-                word,
-                event: None,
-            })
+            Some((
+                count,
+                HoldRow {
+                    to: Some(mark_route(&far.path, &far.label)),
+                    decl: decl_words(far.vis, far.kind),
+                    name: far.name.clone(),
+                    letter: far.letter(),
+                    word,
+                    event: None,
+                },
+            ))
         })
         .collect()
+}
+
+/// One relation, one ranking: a drawn type and a body with no block here are
+/// the same ink, so they rank together and the heaviest reads first. The
+/// list's first eight are what the sheet shows before `show all`, which is
+/// the whole reason the order has to be weight and not provenance.
+fn ranked(mut rows: Vec<(u32, HoldRow)>) -> Vec<HoldRow> {
+    rows.sort_by_key(|(count, _)| std::cmp::Reverse(*count));
+    rows.into_iter().map(|(_, row)| row).collect()
 }
 
 /// The tier, said out loud — the one sentence this altitude exists for.
@@ -351,24 +363,53 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
         })
         .collect();
 
-    // The implementation ink, both ways round.
-    let used_by: Vec<HoldRow> = uses_rows(
-        &model,
-        model
-            .ties
-            .iter()
-            .filter(|t| t.def == at)
-            .map(|t| (&t.user, t.count, t.rows.as_slice()))
-            .collect(),
+    // The implementation ink, both ways round — and then the same ink from
+    // the ends this chart draws no block for (2026-08-23, user). A free
+    // function's body is a real item with a definition, so it gets a row like
+    // any other and links to its code; the sheet used to spend a sentence
+    // counting them instead, which named nothing a reviewer could open.
+    let unseen_row = |end: &Unseen| -> Option<(u32, HoldRow)> {
+        let item = graph.items.get(end.item as usize)?;
+        let file = files.get(item.file as usize)?;
+        Some((
+            end.count,
+            HoldRow {
+                to: Some(item_route(&file.path, &item.label)),
+                decl: decl_words(item.vis, item.kind),
+                name: item.name.clone(),
+                letter: None,
+                word: plural(end.count as usize, "reference"),
+                event: None,
+            },
+        ))
+    };
+    let used_by: Vec<HoldRow> = ranked(
+        uses_rows(
+            &model,
+            model
+                .ties
+                .iter()
+                .filter(|t| t.def == at)
+                .map(|t| (&t.user, t.count, t.rows.as_slice()))
+                .collect(),
+        )
+        .into_iter()
+        .chain(mark.used_by.iter().filter_map(unseen_row))
+        .collect(),
     );
-    let uses: Vec<HoldRow> = uses_rows(
-        &model,
-        model
-            .ties
-            .iter()
-            .filter(|t| t.user == at)
-            .map(|t| (&t.def, t.count, t.rows.as_slice()))
-            .collect(),
+    let uses: Vec<HoldRow> = ranked(
+        uses_rows(
+            &model,
+            model
+                .ties
+                .iter()
+                .filter(|t| t.user == at)
+                .map(|t| (&t.def, t.count, t.rows.as_slice()))
+                .collect(),
+        )
+        .into_iter()
+        .chain(mark.unseen_uses.iter().filter_map(unseen_row))
+        .collect(),
     );
 
     // The selection's own diff rows, exactly as the block draws them.
@@ -437,8 +478,7 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
         && held_by.is_empty()
         && contracts.is_empty()
         && in_api.is_empty()
-        && used_by.is_empty()
-        && mark.used_by == 0;
+        && used_by.is_empty();
 
     rsx! {
         section { class: "plate pointer-events-auto flex max-h-[44dvh] w-full flex-col overflow-hidden sm:max-h-full sm:w-72",
@@ -536,34 +576,20 @@ pub fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
                     }
                     if used_by.is_empty() {
                         p { class: "mt-1 font-data text-[10px] text-ink-soft",
-                            if mark.used_by > 0 {
-                                "no type's body reaches it."
-                            } else {
-                                "no body in the workspace reaches it."
-                            }
+                            "no body in the workspace reaches it."
                         }
                     } else {
                         HoldList { rows: used_by }
-                    }
-                    if mark.used_by > 0 {
-                        p { class: "mt-1 px-1 font-data text-[10px] leading-relaxed text-ink-soft",
-                            "{plural(mark.used_by as usize, \"reference\")} reach it from code with no block here — function bodies, and items with no mark of their own."
-                        }
                     }
                     h3 { class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
                         "Uses ({uses.len()})"
                     }
                     if uses.is_empty() {
                         p { class: "mt-1 font-data text-[10px] text-ink-soft",
-                            "its impls reach nothing the chart draws."
+                            "its impls reach nothing in the workspace."
                         }
                     } else {
                         HoldList { rows: uses }
-                    }
-                    if mark.unseen_uses > 0 {
-                        p { class: "mt-1 px-1 font-data text-[10px] leading-relaxed text-ink-soft",
-                            "{plural(mark.unseen_uses as usize, \"reference\")} of its own land on code with no block here."
-                        }
                     }
                 }
             }

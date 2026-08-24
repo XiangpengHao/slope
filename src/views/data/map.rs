@@ -14,7 +14,9 @@
 //! nesting cannot say, and dashed counted uses edges for one type's impls
 //! leaning on another. Both rest on the dependent. What has no block here —
 //! a function naming or using state — is counted on the mark it touches,
-//! `named by n signatures · used by n bodies`, never silently cut.
+//! `named by n signatures · used by n bodies`, never silently cut; the
+//! sheet spends those counts back out as rows, one per item, each linking to
+//! the code the paper had no block for.
 
 use std::collections::HashMap;
 
@@ -385,8 +387,10 @@ fn count_words(mark: &DataMark) -> String {
             plural(mark.named_by as usize, "signature")
         ));
     }
-    if mark.used_by > 0 {
-        parts.push(match mark.used_by {
+    // Bodies, not references: the sheet lists them one row each, so the
+    // hover word counts the same things the rows do.
+    if !mark.used_by.is_empty() {
+        parts.push(match mark.used_by.len() {
             1 => "used by 1 body".to_string(),
             n => format!("used by {n} bodies"),
         });
@@ -1744,8 +1748,8 @@ mod tests {
             tier: Tier::Root,
             kids,
             named_by: 0,
-            used_by: 0,
-            unseen_uses: 0,
+            used_by: Vec::new(),
+            unseen_uses: Vec::new(),
             held_by: 0,
         }
     }
