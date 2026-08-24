@@ -142,6 +142,35 @@ pub(crate) enum ItemKind {
     Impl,
 }
 
+impl ItemKind {
+    /// An item's kind, as rust writes it. The keyword is the representation
+    /// every rust reader already has; there is nothing to learn.
+    pub(crate) fn words(self) -> &'static str {
+        match self {
+            ItemKind::Fn => "fn",
+            ItemKind::Struct => "struct",
+            ItemKind::Enum => "enum",
+            ItemKind::Union => "union",
+            ItemKind::Trait => "trait",
+            ItemKind::TypeAlias => "type",
+            ItemKind::Const => "const",
+            ItemKind::Static => "static",
+            ItemKind::Macro => "macro",
+            ItemKind::Mod => "mod",
+            ItemKind::Impl => "impl",
+        }
+    }
+
+    /// `pub fn`, `struct`, `pub(crate) mod` — what rust writes in front of a
+    /// name. A private item declares no visibility, so neither does its row.
+    pub(crate) fn decl_words(self, vis: Vis) -> String {
+        match vis.keyword() {
+            Some(vis) => format!("{vis} {}", self.words()),
+            None => self.words().to_string(),
+        }
+    }
+}
+
 /// How widely an item is declared visible. `pub(crate)`, `pub(super)`, and
 /// `pub(in path)` are not `pub`: the altitude's interest bar reads them
 /// apart, and privacy is a permanent fold.

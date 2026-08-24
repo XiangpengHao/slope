@@ -16,7 +16,7 @@ use dioxus_flow::prelude::{
 };
 
 use crate::api::{CodeGraph, FileInfo, ItemKind, Vis};
-use crate::views::codemap::chrome::{decl_words, file_name, plural};
+use crate::views::codemap::chrome::{file_name, plural};
 use crate::views::codemap::model::{self, Containment, Territory};
 use crate::views::codemap::tree::{self, FileTree, Measures, Placed, ROOT, dir_key, file_key};
 use crate::views::codemap::{CodeSel, RefDir, file_route, item_route, use_code};
@@ -140,11 +140,13 @@ fn row_px(tier: u8) -> f64 {
     }
 }
 
-/// One landmark row as it is written: `pub fn parse`, `struct Parse`. The row
-/// is measured on this string, not on the name alone, or the keyword the row
-/// exists to state would be the first thing clipped.
-fn row_words(row: &LandmarkRow) -> String {
-    format!("{} {}", decl_words(row.vis, row.kind), row.name)
+impl LandmarkRow {
+    /// One landmark row as it is written: `pub fn parse`, `struct Parse`. The
+    /// row is measured on this string, not on the name alone, or the keyword
+    /// the row exists to state would be the first thing clipped.
+    fn words(&self) -> String {
+        format!("{} {}", self.kind.decl_words(self.vis), self.name)
+    }
 }
 
 /// A block's measured size, and the height its fold's words need. The layout
@@ -162,7 +164,7 @@ fn block_size(name: &str, rows: &[LandmarkRow], fold: Option<&str>) -> (f64, f64
         .unwrap_or(0.0);
     let widest = rows
         .iter()
-        .map(|r| tree::text_w(&row_words(r), row_px(r.tier)) + 10.0)
+        .map(|r| tree::text_w(&r.words(), row_px(r.tier)) + 10.0)
         .fold(head.max(fold_w), f64::max);
     let w = (widest + tree::BLOCK_PAD_X * 2.0).clamp(tree::BLOCK_MIN_W, tree::BLOCK_MAX_W);
     // Ragged line breaks cost a little more than the ratio; the slack keeps
@@ -192,26 +194,6 @@ struct CodeDrawing {
     frame: Option<Rect>,
     /// A crate district is selected: the camera goes there.
     focused: bool,
-}
-
-/// Which side of two boxes face each other, so a tie leaves and lands on open
-/// paper instead of crossing its own territory. The data chart draws its edges
-/// between measured boxes the same way, so this is shared rather than copied.
-pub(crate) fn tie_ends(a: Placed, b: Placed) -> (Point, Point) {
-    let (ac, bc) = (a.center(), b.center());
-    if (ac.x - bc.x).abs() > (ac.y - bc.y).abs() {
-        let left = ac.x < bc.x;
-        (
-            Point::new(if left { a.x + a.w } else { a.x }, ac.y),
-            Point::new(if left { b.x } else { b.x + b.w }, bc.y),
-        )
-    } else {
-        let top = ac.y < bc.y;
-        (
-            Point::new(ac.x, if top { a.y + a.h } else { a.y }),
-            Point::new(bc.x, if top { b.y } else { b.y + b.h }),
-        )
-    }
 }
 
 /// State words for a gate: what folding this directory hid. The `▸` already
@@ -272,7 +254,7 @@ impl CodeDrawing {
                         name: mark.name.clone(),
                         label: mark.label.clone(),
                         kind: mark.kind,
-                        tier: model::tier(mark.fan_in),
+                        tier: mark.tier(),
                         fan_in: mark.fan_in,
                         vis: mark.vis,
                     }
@@ -474,7 +456,7 @@ impl CodeDrawing {
                 Territory::Dir(d) => layout.gates.get(&d).copied(),
             }
         };
-        let all_ties = model::ties(graph, containment, territory);
+        let all_ties = containment.ties(graph, territory);
         // A selected crate reads like the dependency chart's selection: it is the
         // anchor, so only ties crossing its boundary draw, in the direction the
         // reading asks for. A territory is the selection's when its file belongs to
@@ -563,7 +545,7 @@ impl CodeDrawing {
             .enumerate()
             .filter_map(|(i, tie)| {
                 let (def, user) = (rect_of(tie.def)?, rect_of(tie.user)?);
-                let (from, to) = tie_ends(def, user);
+                let (from, to) = def.tie_ends(user);
                 let rest = resting.contains(&i);
                 Some(TieView {
                     key: format!("{:?}-{:?}", tie.def, tie.user),
@@ -682,7 +664,7 @@ fn BlockPlate(
                             nav.push(item_route(&path, &label));
                         }
                     },
-                    span { class: "cb-kw", "{decl_words(row.vis, row.kind)}" }
+                    span { class: "cb-kw", "{row.kind.decl_words(row.vis)}" }
                     span { class: "cb-nm", "{row.name}" }
                 }
             }

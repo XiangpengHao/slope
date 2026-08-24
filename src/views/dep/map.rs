@@ -18,20 +18,22 @@ use dioxus_flow::prelude::{
 
 use crate::api::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
 use crate::views::dep::model::{DEFAULT_CAP, RadialLayout};
-use crate::views::dep::star::{StarData, StarNode, star_box, star_radius};
+use crate::views::dep::star::{StarData, StarNode};
 use crate::views::dep::{DirFilter, step_ring, use_dep};
 
 /// How many of the biggest external stars carry their name at rest. Every
 /// other external is named on hover, on selection, or as a neighbor.
 const NAMED_EXTERNALS: usize = 20;
 
-/// Display priority when several dependency kinds share one pair of crates:
-/// a normal edge outranks build, build outranks dev.
-fn kind_rank(kind: DepKind) -> u8 {
-    match kind {
-        DepKind::Normal => 0,
-        DepKind::Build => 1,
-        DepKind::Dev => 2,
+impl DepKind {
+    /// Display priority when several dependency kinds share one pair of
+    /// crates: a normal edge outranks build, build outranks dev.
+    fn draw_rank(self) -> u8 {
+        match self {
+            DepKind::Normal => 0,
+            DepKind::Build => 1,
+            DepKind::Dev => 2,
+        }
     }
 }
 
@@ -44,34 +46,41 @@ enum Role {
     Event,
 }
 
-fn edge_style(role: Role, kind: DepKind, event: &Option<DepEvent>) -> String {
-    match event {
-        Some(DepEvent::Removed) => {
-            "stroke: var(--color-flare); stroke-width: 1.2; stroke-dasharray: 9 5; opacity: 0.65;"
-                .into()
-        }
-        Some(_) => "stroke: var(--color-flare); stroke-width: 1.4;".into(),
-        None => {
-            let dash = match kind {
-                DepKind::Normal => "",
-                DepKind::Dev => "stroke-dasharray: 6 4;",
-                DepKind::Build => "stroke-dasharray: 2 3;",
-            };
-            match role {
-                Role::Dep => format!("stroke: var(--color-ink); stroke-width: 1.25; {dash}"),
-                Role::User | Role::Event => {
-                    format!("stroke: var(--color-ink-line); stroke-width: 1.1; {dash}")
+impl Role {
+    /// The ink one edge is drawn in: a manifest event takes the flare color,
+    /// everything else is ink weighted by how the edge earned its place.
+    fn edge_style(self, kind: DepKind, event: &Option<DepEvent>) -> String {
+        match event {
+            Some(DepEvent::Removed) => {
+                "stroke: var(--color-flare); stroke-width: 1.2; stroke-dasharray: 9 5; opacity: 0.65;"
+                    .into()
+            }
+            Some(_) => "stroke: var(--color-flare); stroke-width: 1.4;".into(),
+            None => {
+                let dash = match kind {
+                    DepKind::Normal => "",
+                    DepKind::Dev => "stroke-dasharray: 6 4;",
+                    DepKind::Build => "stroke-dasharray: 2 3;",
+                };
+                match self {
+                    Role::Dep => format!("stroke: var(--color-ink); stroke-width: 1.25; {dash}"),
+                    Role::User | Role::Event => {
+                        format!("stroke: var(--color-ink-line); stroke-width: 1.1; {dash}")
+                    }
                 }
             }
         }
     }
 }
 
-fn event_label(event: &DepEvent) -> String {
-    match event {
-        DepEvent::Added => "ADDED".into(),
-        DepEvent::Removed => "REMOVED".into(),
-        DepEvent::Bumped(old, new) => format!("{old} → {new}"),
+impl DepEvent {
+    /// The engraved tag an evented edge carries on the chart.
+    fn edge_tag(&self) -> String {
+        match self {
+            DepEvent::Added => "ADDED".into(),
+            DepEvent::Removed => "REMOVED".into(),
+            DepEvent::Bumped(old, new) => format!("{old} → {new}"),
+        }
     }
 }
 
@@ -121,33 +130,35 @@ struct DepDrawing {
     names: Vec<String>,
 }
 
-/// Every crate on a route from the root down to the selection: the crates
-/// that depend on it, then the crates that depend on those, hop by hop
-/// until the chain runs out of users — which is where the root sits. The
-/// selection itself is in the set, so an edge is one hop of some route
-/// exactly when its dependency end is in here. Removed dependencies are no
-/// longer routes; the epoch already cut them.
-fn uphill_from<'g>(graph: &'g WorkspaceGraph, sel_ids: &HashSet<&'g str>) -> HashSet<&'g str> {
-    let mut users: HashMap<&'g str, Vec<&'g str>> = HashMap::new();
-    for link in &graph.links {
-        if link.event == Some(DepEvent::Removed) {
-            continue;
+impl WorkspaceGraph {
+    /// Every crate on a route from the root down to the selection: the crates
+    /// that depend on it, then the crates that depend on those, hop by hop
+    /// until the chain runs out of users — which is where the root sits. The
+    /// selection itself is in the set, so an edge is one hop of some route
+    /// exactly when its dependency end is in here. Removed dependencies are no
+    /// longer routes; the epoch already cut them.
+    fn uphill_from<'g>(&'g self, sel_ids: &HashSet<&'g str>) -> HashSet<&'g str> {
+        let mut users: HashMap<&'g str, Vec<&'g str>> = HashMap::new();
+        for link in &self.links {
+            if link.event == Some(DepEvent::Removed) {
+                continue;
+            }
+            users
+                .entry(link.to.as_str())
+                .or_default()
+                .push(link.from.as_str());
         }
-        users
-            .entry(link.to.as_str())
-            .or_default()
-            .push(link.from.as_str());
-    }
-    let mut seen: HashSet<&'g str> = sel_ids.clone();
-    let mut queue: Vec<&'g str> = sel_ids.iter().copied().collect();
-    while let Some(id) = queue.pop() {
-        for &user in users.get(id).into_iter().flatten() {
-            if seen.insert(user) {
-                queue.push(user);
+        let mut seen: HashSet<&'g str> = sel_ids.clone();
+        let mut queue: Vec<&'g str> = sel_ids.iter().copied().collect();
+        while let Some(id) = queue.pop() {
+            for &user in users.get(id).into_iter().flatten() {
+                if seen.insert(user) {
+                    queue.push(user);
+                }
             }
         }
+        seen
     }
-    seen
 }
 
 impl DepDrawing {
@@ -174,7 +185,7 @@ impl DepDrawing {
         // transitive closure first; the other two readings only ever look at
         // the selection's own edges.
         let uphill: HashSet<&str> = match dir {
-            DirFilter::PathToRoot => uphill_from(graph, &sel_ids),
+            DirFilter::PathToRoot => graph.uphill_from(&sel_ids),
             _ => HashSet::new(),
         };
 
@@ -212,7 +223,7 @@ impl DepDrawing {
             let entry = pairs
                 .entry((from, to))
                 .or_insert((role, link.kind, link.event.clone()));
-            if kind_rank(link.kind) < kind_rank(entry.1) {
+            if link.kind.draw_rank() < entry.1.draw_rank() {
                 entry.1 = link.kind;
             }
             if entry.2.is_none() {
@@ -239,12 +250,12 @@ impl DepDrawing {
             .map(|((from, to), (role, kind, event))| {
                 let mut edge = FlowEdge::new(to, from)
                     .id(format!("{to}->{from}"))
-                    .style(edge_style(role, kind, &event));
+                    .style(role.edge_style(kind, &event));
                 edge.marker_end = MarkerKind::None;
                 // The role class colors the arrowhead; the active reading on
                 // the panel's dependencies toggle names what is drawn.
                 edge = match (&event, role) {
-                    (Some(ev), _) => edge.label(event_label(ev)).class("evented"),
+                    (Some(ev), _) => edge.label(ev.edge_tag()).class("evented"),
                     (None, Role::Dep) => edge.class("dep"),
                     (None, _) => edge.class("user"),
                 };
@@ -298,7 +309,7 @@ impl DepDrawing {
             .filter_map(|c| {
                 let p = layout.placed.get(&c.id)?;
                 let focal = !c.ghost && sel.contains(c.name.as_str());
-                let b = star_box(c);
+                let b = c.star_box();
                 let (ux, uy) = if p.ring == 0 {
                     (0.0, 1.0)
                 } else {
@@ -775,7 +786,7 @@ pub(super) fn Chart(graph: WorkspaceGraph) -> Element {
                 .iter()
                 .filter_map(|c| {
                     let p = layout.placed.get(&c.id)?;
-                    Some((c.id.clone(), (p.point, star_radius(c.dependents))))
+                    Some((c.id.clone(), (p.point, c.star_radius())))
                 })
                 .collect::<HashMap<String, (Point, f64)>>()
         }

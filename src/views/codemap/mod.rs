@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, FileDetail, ItemSource};
+use crate::api::{CodeGraph, FileDetail, ItemSource, item_source};
 use crate::views::codemap::chrome::{CodeCartouche, CodeSearch, CratePanel};
 use crate::views::codemap::ego::EgoPlate;
 use crate::views::codemap::map::CodeChart;
@@ -93,6 +93,24 @@ impl CodeState {
             sources: Signal::new(HashMap::new()),
             expanded: Signal::new(HashSet::new()),
             ref_dir: Signal::new(RefDir::default()),
+        }
+    }
+
+    /// Flip one row's in-place expansion, fetching its source on first open.
+    fn toggle_expand(self, key: (u32, u32)) {
+        let mut expanded = self.expanded;
+        let mut set = expanded.peek().clone();
+        if !set.remove(&key) {
+            set.insert(key);
+        }
+        expanded.set(set);
+        if !self.sources.peek().contains_key(&key) {
+            spawn(async move {
+                if let Ok(source) = item_source(key.0, key.1).await {
+                    let mut sources = self.sources;
+                    sources.write().insert(key, source);
+                }
+            });
         }
     }
 }

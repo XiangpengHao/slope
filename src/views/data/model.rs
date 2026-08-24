@@ -249,20 +249,22 @@ pub(super) struct FieldRow {
     pub(crate) state: RowState,
 }
 
-/// What a block's head opens with and what closes it, so a quotation reads
-/// the way rust writes it (2026-08-24, user): braces around a body, and
-/// nothing at all around a declaration with no rows to bracket — a unit
-/// struct, a static with no type the survey could read. The closer is a line
-/// of its own, which is what makes a long block's end findable.
-pub(super) fn brackets(kind: ItemKind, rows: usize) -> (&'static str, &'static str) {
-    match kind {
-        _ if rows == 0 => ("", ""),
-        ItemKind::Struct | ItemKind::Union | ItemKind::Enum => ("{", "}"),
-        // No body to bracket: the line under the name is the declared type,
-        // and rust writes a colon in front of it — an alias, an equals.
-        ItemKind::Static | ItemKind::Const => (":", ""),
-        ItemKind::TypeAlias => ("=", ""),
-        _ => ("", ""),
+impl ItemKind {
+    /// What a block's head opens with and what closes it, so a quotation reads
+    /// the way rust writes it (2026-08-24, user): braces around a body, and
+    /// nothing at all around a declaration with no rows to bracket — a unit
+    /// struct, a static with no type the survey could read. The closer is a
+    /// line of its own, which is what makes a long block's end findable.
+    pub(super) fn brackets(self, rows: usize) -> (&'static str, &'static str) {
+        match self {
+            _ if rows == 0 => ("", ""),
+            ItemKind::Struct | ItemKind::Union | ItemKind::Enum => ("{", "}"),
+            // No body to bracket: the line under the name is the declared type,
+            // and rust writes a colon in front of it — an alias, an equals.
+            ItemKind::Static | ItemKind::Const => (":", ""),
+            ItemKind::TypeAlias => ("=", ""),
+            _ => ("", ""),
+        }
     }
 }
 
@@ -597,13 +599,15 @@ impl DataModel {
     }
 }
 
-/// A mark this chart draws: the shapes state takes, and the statics that
-/// anchor it. Everything else names state without keeping any.
-fn data_kind(kind: ItemKind) -> bool {
-    matches!(
-        kind,
-        ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Static
-    )
+impl ItemKind {
+    /// A mark this chart draws: the shapes state takes, and the statics that
+    /// anchor it. Everything else names state without keeping any.
+    fn is_data(self) -> bool {
+        matches!(
+            self,
+            ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Static
+        )
+    }
 }
 
 /// Which frame a file's state belongs to: its crate, and the module path.
@@ -686,7 +690,7 @@ impl DataModel {
         let mut drawn: Vec<u32> = Vec::new();
         let mut packed: Vec<u32> = Vec::new();
         for (i, mark) in graph.items.iter().enumerate() {
-            if !data_kind(mark.kind) || mark.parent.is_some() {
+            if !mark.kind.is_data() || mark.parent.is_some() {
                 continue;
             }
             let i = i as u32;
@@ -700,7 +704,7 @@ impl DataModel {
         // ---- Frames: one per crate, then the module tree inside it. ---------
         let framed_key = |key: FrameKey| -> FrameKey { fold_key(&key).unwrap_or(key) };
         let data_ghosts: Vec<&GhostMark> =
-            graph.ghosts.iter().filter(|g| data_kind(g.kind)).collect();
+            graph.ghosts.iter().filter(|g| g.kind.is_data()).collect();
         let mut keys: Vec<FrameKey> = drawn
             .iter()
             .filter_map(|&m| key_of(m).cloned())
@@ -796,7 +800,7 @@ impl DataModel {
         // listed on the sheet, never drawn, because none of the namers has a
         // block here.
         let structural = |from: u32, from_method: bool| -> bool {
-            !from_method && kind_of(from).is_some_and(data_kind)
+            !from_method && kind_of(from).is_some_and(ItemKind::is_data)
         };
         // Current structural holders per drawn type, Owns/Shares only: a
         // borrow is a view, not a hold, so it never decides the tier.
