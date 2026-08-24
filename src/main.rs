@@ -1,8 +1,8 @@
 use dioxus::prelude::*;
 
 use views::{
-    AtlasShell, CodeCrate, CodeFile, CodeOverview, DataFocus, DataModFocus, DataOverview, Focus,
-    Overview, RingSel, SurfaceFocus, SurfaceModFocus, SurfaceOverview,
+    AppShell, CodeCrate, CodeFile, CodeOverview, DataFocus, DataModFocus, DataOverview, DepFocus,
+    DepOverview, DepRing,
 };
 
 /// Server-side analysis: cargo metadata, VCS diff, manifest events.
@@ -15,37 +15,33 @@ mod views;
 
 /// Internal routes. Each variant is a URL pattern; the matching component is
 /// rendered when that pattern matches. Every chart selection is a URL, so
-/// the browser's back button retraces the review trail. A multi-selection
-/// joins crate names with `+` (impossible in a crate name); a whole ring is
-/// `/ring/:hop`. The `/code` family is the code altitude: the file map,
-/// one crate's district, one file (its path segments), one item (`?item=`).
-/// `/surface` is the surface altitude: every contract the code publishes, and
-/// what leans on what; selecting one is `/surface/mark/:..path?item=` (its
-/// defining file, then its label). `/data` is the data altitude: every
-/// struct, enum, union and static the workspace keeps, tiered into roots and
-/// the state nested inside them.
+/// the browser's back button retraces the review trail. One family per
+/// altitude, each named for what it charts: `/dep` is the dependency
+/// altitude — crates on rings of hops, a multi-selection joining crate names
+/// with `+` (impossible in a crate name), a whole ring as `/dep/ring/:hop`.
+/// `/code` is the code altitude: the file map, one crate's district, one file
+/// (its path segments), one item (`?item=`). `/data` is the data altitude:
+/// every struct, enum, union and static the workspace keeps, tiered into roots
+/// and the state nested inside them; selecting one is
+/// `/data/mark/:..path?item=` (its defining file, then its label). `/` is the
+/// dependency chart, the rung a review starts on.
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
-    #[layout(AtlasShell)]
-        #[route("/")]
-        Overview {},
-        #[route("/crate/:name")]
-        Focus { name: String },
-        #[route("/ring/:hop")]
-        RingSel { hop: u32 },
+    #[layout(AppShell)]
+        #[redirect("/", || Route::DepOverview {})]
+        #[route("/dep")]
+        DepOverview {},
+        #[route("/dep/crate/:name")]
+        DepFocus { name: String },
+        #[route("/dep/ring/:hop")]
+        DepRing { hop: u32 },
         #[route("/code")]
         CodeOverview {},
         #[route("/code/crate/:name")]
         CodeCrate { name: String },
         #[route("/code/file/:..path?:item")]
         CodeFile { path: Vec<String>, item: String },
-        #[route("/surface")]
-        SurfaceOverview {},
-        #[route("/surface/mark/:..path?:item")]
-        SurfaceFocus { path: Vec<String>, item: String },
-        #[route("/surface/mod/:..module")]
-        SurfaceModFocus { module: Vec<String> },
         #[route("/data")]
         DataOverview {},
         #[route("/data/mark/:..path?:item")]

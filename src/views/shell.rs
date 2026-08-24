@@ -1,20 +1,16 @@
-//! The atlas shell: loads the analysis once, gates the loading and error
-//! states, keeps the review trail in step with the URL, and lays the chart
-//! furniture over whichever route is active.
-
-use std::collections::HashSet;
+//! The app shell: loads the workspace analysis once, gates its loading and
+//! error states, and hands the paper to whichever altitude the route asks for.
 
 use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{WorkspaceGraph, workspace_graph};
-use crate::views::atlas::{Chart, DrawnCap};
-use crate::views::chrome::{Legend, SearchBox, TitleBlock};
 use crate::views::codemap::CodeState;
 use crate::views::codemap::map::CodeCamera;
 use crate::views::data::DataState;
 use crate::views::data::map::DataCamera;
-use crate::views::surface::map::SurfaceCamera;
+use crate::views::dep::map::DrawnCap;
+use crate::views::dep::{DepShell, DepState};
 use crate::views::survey::SurveyShell;
 
 type GraphResource = Resource<Result<WorkspaceGraph, ServerFnError>>;
@@ -25,128 +21,6 @@ pub(crate) fn use_graph() -> Option<WorkspaceGraph> {
     let res = use_context::<GraphResource>();
     let state = res.read();
     state.as_ref().and_then(|r| r.as_ref().ok()).cloned()
-}
-
-/// One step of the review trail: `None` is the whole chart, `Some(step)` a
-/// selection — crate names joined with `+`, or a whole ring as `ring:N`
-/// (crate names can contain neither `+` nor `:`).
-type TrailStep = Option<String>;
-
-/// The ring index a trail step selects, if it is a ring step.
-pub(crate) fn step_ring(step: &str) -> Option<u32> {
-    step.strip_prefix("ring:")?.parse().ok()
-}
-
-/// Which of the selection's edges the chart draws. Manifest events are
-/// always drawn regardless. Defaults to dependencies only: the compact
-/// reading; the other two readings are one toggle away.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum DirFilter {
-    /// What the selection depends on.
-    #[default]
-    Deps,
-    /// What depends on the selection.
-    Users,
-    /// Every route from the root to the selection: what depends on it, then
-    /// what depends on those, hop by hop until the chain reaches the top.
-    PathToRoot,
-}
-
-/// The review trail, kept in step with the browser history. Every selection
-/// is a URL; back retraces the review, forward replays it.
-#[derive(Clone, Default, PartialEq)]
-pub(crate) struct Trail {
-    pub(crate) steps: Vec<TrailStep>,
-    /// Where in `steps` the current route sits.
-    pub(crate) at: usize,
-}
-
-impl Trail {
-    /// Record a route change, telling a back/forward retrace apart from a
-    /// new step by comparing against the recorded neighbors.
-    pub(crate) fn note(&mut self, step: TrailStep) {
-        if self.steps.is_empty() {
-            self.steps.push(step);
-            self.at = 0;
-            return;
-        }
-        if self.steps.get(self.at) == Some(&step) {
-            return;
-        }
-        if self.at > 0 && self.steps.get(self.at - 1) == Some(&step) {
-            self.at -= 1;
-            return;
-        }
-        if self.steps.get(self.at + 1) == Some(&step) {
-            self.at += 1;
-            return;
-        }
-        self.steps.truncate(self.at + 1);
-        self.steps.push(step);
-        self.at = self.steps.len() - 1;
-    }
-
-    /// The crate the current route focuses, if any.
-    pub(crate) fn current_focus(&self) -> Option<String> {
-        self.steps.get(self.at).cloned().flatten()
-    }
-
-    /// The crates this stretch of the trail walked through since it last
-    /// passed the whole chart, in visiting order — the review's breadcrumb.
-    pub(crate) fn walked(&self) -> Vec<String> {
-        if self.steps.is_empty() {
-            return Vec::new();
-        }
-        let upto = &self.steps[..=self.at.min(self.steps.len() - 1)];
-        let start = upto
-            .iter()
-            .rposition(|s| s.is_none())
-            .map(|i| i + 1)
-            .unwrap_or(0);
-        let mut walked: Vec<String> = Vec::new();
-        for step in &upto[start..] {
-            if let Some(name) = step
-                && !walked.iter().any(|n| n == name)
-            {
-                walked.push(name.clone());
-            }
-        }
-        walked
-    }
-}
-
-/// Shared review state: the trail, which crates were visited, the edge
-/// direction filter, and the screen-reader announcement line. Provided as a
-/// context by the shell — the one scope that survives every route change —
-/// so the trail outlives the route-component remounts, and every app
-/// instance (a test's `VirtualDom` included) owns its own copy.
-#[derive(Clone, Copy)]
-pub(crate) struct AtlasState {
-    pub(crate) trail: Signal<Trail>,
-    pub(crate) visited: Signal<HashSet<String>>,
-    pub(crate) announce: Signal<String>,
-    /// Which direction of the selection's edges the chart draws.
-    pub(crate) dir: Signal<DirFilter>,
-    /// The current selection, materialized to crate names (a ring step
-    /// resolves to every name on that ring; the overview resolves to the
-    /// center). Written by the chart; read by modifier-clicks to toggle.
-    pub(crate) selected: Signal<Vec<String>>,
-}
-
-impl AtlasState {
-    pub(crate) fn new() -> Self {
-        Self {
-            trail: Signal::new(Trail::default()),
-            visited: Signal::new(HashSet::new()),
-            announce: Signal::new(String::new()),
-            dir: Signal::new(DirFilter::default()),
-            selected: Signal::new(Vec::new()),
-        }
-    }
-}
-
-pub(crate) fn use_atlas() -> AtlasState {
-    use_context()
 }
 
 /// The browser's back button, from code: one step back along the trail.
@@ -178,7 +52,7 @@ if (!window.__slopeNavKeys) {
 
 /// Wraps every page.
 #[component]
-pub(crate) fn AtlasShell() -> Element {
+pub(crate) fn AppShell() -> Element {
     let resource: GraphResource = use_resource(workspace_graph);
     use_context_provider(|| resource);
 
@@ -187,11 +61,10 @@ pub(crate) fn AtlasShell() -> Element {
     // route-variant changes, and the trail, disclosure, and camera memories
     // must outlive every remount. Views reach them through context, so a
     // test can mount any view under a provider of its own.
-    let atlas = use_context_provider(AtlasState::new);
+    use_context_provider(DepState::new);
     use_context_provider(DrawnCap::new);
     use_context_provider(CodeState::new);
     use_context_provider(CodeCamera::new);
-    use_context_provider(SurfaceCamera::new);
     use_context_provider(DataState::new);
     use_context_provider(DataCamera::new);
 
@@ -201,10 +74,6 @@ pub(crate) fn AtlasShell() -> Element {
         document::eval(NAV_KEYS_JS);
     });
 
-    // Keep the trail in step with the URL. An effect, not a render-time
-    // write: writes during the hydration render do not stick, which would
-    // silently drop the trail's first step. The code altitude keeps its own
-    // selection state; it never writes the dependency trail.
     let route = use_route::<Route>();
     // The altitudes that read the code survey. One shell serves all of them, so
     // stepping between them never re-runs the survey fetch.
@@ -213,56 +82,14 @@ pub(crate) fn AtlasShell() -> Element {
         Route::CodeOverview {}
             | Route::CodeCrate { .. }
             | Route::CodeFile { .. }
-            | Route::SurfaceOverview {}
-            | Route::SurfaceFocus { .. }
-            | Route::SurfaceModFocus { .. }
             | Route::DataOverview {}
             | Route::DataFocus { .. }
             | Route::DataModFocus { .. }
     );
-    let step: Option<TrailStep> = match &route {
-        Route::Overview {} => Some(None),
-        Route::Focus { name } => Some(Some(name.clone())),
-        Route::RingSel { hop } => Some(Some(format!("ring:{hop}"))),
-        _ => None,
-    };
-    use_effect(use_reactive((&step,), move |(step,)| {
-        let Some(step) = step else { return };
-        let mut trail = atlas.trail;
-        if trail.peek().steps.get(trail.peek().at) == Some(&step) {
-            return;
-        }
-        let mut visited = atlas.visited;
-        let mut announce = atlas.announce;
-        trail.write().note(step.clone());
-        match &step {
-            Some(step) => {
-                if let Some(hop) = step_ring(step) {
-                    announce.set(format!(
-                        "Selected ring {hop}: every crate {hop} hops from the center."
-                    ));
-                } else {
-                    let names: Vec<&str> = step.split('+').collect();
-                    for name in &names {
-                        visited.write().insert(name.to_string());
-                    }
-                    match names.len() {
-                        1 => announce.set(format!(
-                            "Selected {step}; its edges are drawn. Back deselects."
-                        )),
-                        n => announce.set(format!("Selected {n} crates; their edges are drawn.")),
-                    }
-                }
-            }
-            None => announce.set("Whole chart.".to_string()),
-        }
-    }));
-
     let state = resource.read();
 
     rsx! {
-        main { class: "atlas relative h-dvh w-dvw overflow-hidden bg-paper font-data text-ink",
-            div { class: "sr-only", role: "status", aria_live: "polite", "{atlas.announce}" }
+        main { class: "slope relative h-dvh w-dvw overflow-hidden bg-paper font-data text-ink",
             match &*state {
                 None => rsx! {
                     Surveying {}
@@ -271,10 +98,10 @@ pub(crate) fn AtlasShell() -> Element {
                     SurveyFailed { message: err.to_string(), resource }
                 },
                 Some(Ok(graph)) if survey_route => {
-                    // The code and surface altitudes: one survey shell, and its
-                    // own chart and furniture inside. The workspace's identity
-                    // and epoch ride along so every altitude stamps the same
-                    // cartouche facts.
+                    // The altitudes that read the code survey: one survey
+                    // shell, and its own chart and furniture inside. The
+                    // workspace's identity and epoch ride along so every
+                    // altitude stamps the same cartouche facts.
                     // Each side of the arrow is one quoted idiom — the plate
                     // may break the line at the arrow, never inside
                     // `master @ 1a2b3c4` or `working copy`.
@@ -288,40 +115,9 @@ pub(crate) fn AtlasShell() -> Element {
                         SurveyShell { workspace: graph.name.clone(), diff_line }
                     }
                 }
-                Some(Ok(graph)) => {
-                    // What sits at the center of the rings, for the legend's
-                    // words: the root crate, or the workspace itself.
-                    let center = graph
-                        .root_crate
-                        .as_ref()
-                        .and_then(|id| graph.crates.iter().find(|c| &c.id == id))
-                        .map(|c| c.name.clone())
-                        .unwrap_or_else(|| graph.name.clone());
-                    rsx! {
-                        Chart { graph: graph.clone() }
-                        Outlet::<Route> {}
-                        // Desktop: the left column is the reading order of a
-                        // review — what this is and what changed, then the key.
-                        div { class: "pointer-events-none absolute bottom-3 left-3 top-3 z-10 hidden w-64 flex-col sm:flex",
-                            TitleBlock { graph: graph.clone() }
-                            div { class: "mt-auto min-h-0 pt-2",
-                                Legend { start_open: true, center: center.clone() }
-                            }
-                        }
-                        div { class: "pointer-events-none absolute right-3 top-3 z-10 hidden w-56 sm:block",
-                            SearchBox { graph: graph.clone() }
-                        }
-                        // Phone: the title block stacks over search, its
-                        // changes folded away; the key waits at the foot.
-                        div { class: "pointer-events-none absolute inset-x-3 top-3 z-10 flex flex-col gap-2 sm:hidden",
-                            TitleBlock { graph: graph.clone(), changes_open: false }
-                            SearchBox { graph: graph.clone() }
-                        }
-                        div { class: "pointer-events-none absolute bottom-3 left-3 z-10 sm:hidden",
-                            Legend { start_open: false, center }
-                        }
-                    }
-                },
+                Some(Ok(graph)) => rsx! {
+                    DepShell { graph: graph.clone() }
+                }
             }
         }
     }
@@ -415,39 +211,6 @@ mod tests {
 
     use super::*;
 
-    /// A miniature shell: provides the review state the way [`AtlasShell`]
-    /// does, and takes one trail step on mount.
-    fn shell() -> Element {
-        let mut atlas = use_context_provider(AtlasState::new);
-        use_hook(move || atlas.trail.write().note(Some("alpha".to_string())));
-        rsx! {}
-    }
-
-    // Why the state lives in context, not globals: every mounted app owns
-    // its own review session, so a test can drive one shell's trail without
-    // a second shell — or the next test — seeing it move.
-    #[test]
-    fn each_mounted_shell_owns_its_own_review_state() {
-        let mut one = VirtualDom::new(shell);
-        one.rebuild_in_place();
-        let mut two = VirtualDom::new(shell);
-        two.rebuild_in_place();
-
-        // Walk the first shell a step further; the second must not move.
-        one.in_scope(ScopeId::APP, || {
-            let mut trail = consume_context::<AtlasState>().trail;
-            trail.write().note(Some("beta".to_string()));
-        });
-
-        let walked = |vdom: &VirtualDom| {
-            vdom.in_scope(ScopeId::APP, || {
-                consume_context::<AtlasState>().trail.peek().walked()
-            })
-        };
-        assert_eq!(walked(&one), vec!["alpha", "beta"]);
-        assert_eq!(walked(&two), vec!["alpha"]);
-    }
-
     // What providing state on the layout leans on: the router keeps a layout
     // mounted while the route variant under it changes. A probe layout counts
     // its mounts; navigating between two variants must not add one.
@@ -491,7 +254,7 @@ mod tests {
         vdom.rebuild_in_place();
         assert_eq!(mounts.get(), 1);
 
-        // Navigate `/` → `/two/serde`, the shape of `/` → `/crate/serde`.
+        // Navigate `/` → `/two/serde`, the shape of `/dep` → `/dep/crate/serde`.
         vdom.in_scope(ScopeId::APP, || {
             dioxus::history::history().push("/two/serde".to_string());
         });

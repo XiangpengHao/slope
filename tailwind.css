@@ -43,20 +43,20 @@ body {
 ::selection {
   background: color-mix(in srgb, var(--color-ink) 22%, transparent);
 }
-.atlas {
+.slope {
   caret-color: var(--color-ink);
   scrollbar-width: thin;
   scrollbar-color: var(--color-ink-line) transparent;
 }
-.atlas :focus-visible {
+.slope :focus-visible {
   outline: 1.5px solid var(--color-ink);
   outline-offset: 2px;
 }
-.atlas input[type="search"]::-webkit-search-cancel-button {
+.slope input[type="search"]::-webkit-search-cancel-button {
   display: none;
 }
 
-/* A paper plate with the atlas's double-ruled frame. The inner hairline is
+/* A paper plate with the chart's double-ruled frame. The inner hairline is
    drawn with inset shadows so it also works on replaced elements (inputs). */
 .plate {
   background: var(--color-paper);
@@ -86,7 +86,7 @@ details.fold:not([open]) > summary::after {
 
 /* ————— The flow canvas dressed as the plate ————— */
 
-.atlas .dioxus-flow {
+.slope .dioxus-flow {
   --df-bg: transparent;
   --df-node-bg: transparent;
   --df-node-color: var(--color-ink);
@@ -107,22 +107,22 @@ details.fold:not([open]) > summary::after {
 
 /* The ring guides live under the stars and lines: engraved ground, not
    overlay. Edge hit-paths are disabled — edges are drawn, never clicked. */
-.atlas .df-world-layer.ring-guides {
+.slope .df-world-layer.ring-guides {
   z-index: 0;
 }
-.atlas .df-edge-hit {
+.slope .df-edge-hit {
   pointer-events: none;
 }
 
 /* Edge arrowheads point the way change travels: from the dependency into
    the crate that uses it. Colored by the edge's role. */
-.atlas .df-edge.dep .edge-head {
+.slope .df-edge.dep .edge-head {
   stroke: var(--color-ink);
 }
-.atlas .df-edge.user .edge-head {
+.slope .df-edge.user .edge-head {
   stroke: var(--color-ink-line);
 }
-.atlas .df-edge.evented .edge-head {
+.slope .df-edge.evented .edge-head {
   stroke: var(--color-flare);
 }
 
@@ -130,42 +130,42 @@ details.fold:not([open]) > summary::after {
    needed to say which ring you are selecting. The hit band is a wide
    invisible stroke over the same circle, and only the stroke is hittable, so
    the ring's whole interior stays open paper. */
-.atlas .ring-guide {
+.slope .ring-guide {
   pointer-events: auto;
   cursor: pointer;
 }
-.atlas .ring-guide-hit {
+.slope .ring-guide-hit {
   fill: none;
   stroke: transparent;
   stroke-width: 16;
   pointer-events: stroke;
 }
-.atlas .ring-guide-line {
+.slope .ring-guide-line {
   fill: none;
   stroke: var(--color-ink-line);
   stroke-width: 0.75;
   opacity: 0.45;
   pointer-events: none;
 }
-.atlas .ring-guide:hover .ring-guide-line,
-.atlas .ring-guide:focus-visible .ring-guide-line,
-.atlas .ring-guide.is-selected .ring-guide-line {
+.slope .ring-guide:hover .ring-guide-line,
+.slope .ring-guide:focus-visible .ring-guide-line,
+.slope .ring-guide.is-selected .ring-guide-line {
   stroke: var(--color-ink);
   stroke-width: 1.1;
   opacity: 1;
 }
-.atlas .ring-guide.is-selected .ring-guide-line {
+.slope .ring-guide.is-selected .ring-guide-line {
   stroke-dasharray: 7 4;
 }
 /* The focus ring would be a screen-space box around a whole circle; the
    hairline going to full ink says it better. */
-.atlas .ring-guide:focus-visible {
+.slope .ring-guide:focus-visible {
   outline: none;
 }
 
 /* The virtual-workspace medallion's caption, in the data voice with a paper
    halo so it stays legible under crossing lines. */
-.atlas .hub-caption {
+.slope .hub-caption {
   font-family: var(--font-data);
   font-size: 10px;
   letter-spacing: 0.14em;
@@ -179,10 +179,10 @@ details.fold:not([open]) > summary::after {
 /* Expanding the outermost band (and folding it back) only ever slides stars
    and guides radially, so the move is drawn instead of jumped — matched to
    the camera's own 400ms ease so plate and camera travel together. */
-.atlas .df-node {
+.slope .df-node {
   transition: transform 400ms cubic-bezier(0.65, 0, 0.35, 1);
 }
-.atlas .ring-guide circle {
+.slope .ring-guide circle {
   transition:
     r 400ms cubic-bezier(0.65, 0, 0.35, 1),
     stroke 120ms ease-out,
@@ -191,7 +191,7 @@ details.fold:not([open]) > summary::after {
 }
 /* The selection's lines are redrawn at the new radii at once, so they ink in
    over the same beat rather than snapping taut across a moving chart. */
-.atlas .df-edge {
+.slope .df-edge {
   animation: edge-ink 400ms ease-out;
 }
 @keyframes edge-ink {
@@ -200,17 +200,17 @@ details.fold:not([open]) > summary::after {
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  .atlas .df-node,
-  .atlas .ring-guide circle {
+  .slope .df-node,
+  .slope .ring-guide circle {
     transition: none;
   }
-  .atlas .df-edge {
+  .slope .df-edge {
     animation: none;
   }
 }
 
 /* The lib's overlays, re-ruled as paper plates: square corners, ink frame. */
-.atlas .df-controls {
+.slope .df-controls {
   border-radius: 0;
   border: 1px solid var(--color-ink);
   box-shadow: 0 1px 4px color-mix(in srgb, var(--color-ink) 14%, transparent);
@@ -221,7 +221,7 @@ details.fold:not([open]) > summary::after {
 
 /* Edge labels are manifest events: data voice, spaced caps, flare ink.
    A paper halo keeps the words legible where curves converge. */
-.atlas .df-edge-label {
+.slope .df-edge-label {
   font-family: var(--font-data);
   font-size: 9.5px;
   letter-spacing: 0.1em;
@@ -229,32 +229,32 @@ details.fold:not([open]) > summary::after {
   stroke: var(--color-paper);
   stroke-width: 3px;
 }
-.atlas g.evented .df-edge-label {
+.slope g.evented .df-edge-label {
   fill: var(--color-flare);
 }
 
 /* One star on the rings: the mark fills the node box; the name seats on
    the side facing away from the center. Every live star is a link — the
    resting underline says so, hairline ink rising to full ink on hover. */
-.atlas .star-node {
+.slope .star-node {
   position: relative;
   width: 100%;
   height: 100%;
 }
-.atlas .star-node:hover {
+.slope .star-node:hover {
   z-index: 5;
 }
-.atlas .star-link {
+.slope .star-link {
   display: block;
   width: 100%;
   height: 100%;
   cursor: pointer;
   text-decoration: none;
 }
-.atlas .star-node.is-ghost .star-link {
+.slope .star-node.is-ghost .star-link {
   cursor: default;
 }
-.atlas .star-label {
+.slope .star-label {
   position: absolute;
   white-space: nowrap;
   font-size: 10.5px;
@@ -270,36 +270,36 @@ details.fold:not([open]) > summary::after {
     0 0 3px var(--color-paper),
     0 0 4px var(--color-paper);
 }
-.atlas .star-node:hover .star-label {
+.slope .star-node:hover .star-label {
   text-decoration-color: var(--color-ink);
 }
-.atlas .star-node.is-ghost .star-label {
+.slope .star-node.is-ghost .star-label {
   text-decoration-line: none;
 }
 /* When two versions of one crate are both on the chart, the version rides
    with the name, a shade quieter than it. */
-.atlas .star-version {
+.slope .star-version {
   color: var(--color-ink-line);
 }
-.atlas .star-label.lab-e {
+.slope .star-label.lab-e {
   left: 100%;
   top: 50%;
   transform: translateY(-50%);
   margin-left: 2px;
 }
-.atlas .star-label.lab-w {
+.slope .star-label.lab-w {
   right: 100%;
   top: 50%;
   transform: translateY(-50%);
   margin-right: 2px;
 }
-.atlas .star-label.lab-n {
+.slope .star-label.lab-n {
   bottom: 100%;
   left: 50%;
   transform: translateX(-50%);
   margin-bottom: 0px;
 }
-.atlas .star-label.lab-s {
+.slope .star-label.lab-s {
   top: 100%;
   left: 50%;
   transform: translateX(-50%);
@@ -307,16 +307,16 @@ details.fold:not([open]) > summary::after {
 }
 
 /* Unnamed stars keep their name folded until pointed at or focused. */
-.atlas .star-node:not(.is-named) .star-label {
+.slope .star-node:not(.is-named) .star-label {
   opacity: 0;
   pointer-events: none;
   transition: opacity 120ms ease-out;
 }
-.atlas .star-node:not(.is-named):hover .star-label,
-.atlas .star-node:not(.is-named):focus-within .star-label {
+.slope .star-node:not(.is-named):hover .star-label,
+.slope .star-node:not(.is-named):focus-within .star-label {
   opacity: 1;
 }
-.atlas .star-node.is-focal .star-label {
+.slope .star-node.is-focal .star-label {
   font-weight: 500;
 }
 
@@ -324,11 +324,11 @@ details.fold:not([open]) > summary::after {
 
 /* One file's block: a paper plate inside its district. Its box is measured by
    the layout, so nothing here may add height the geometry did not budget. */
-.atlas .code-territory {
+.slope .code-territory {
   width: 100%;
   height: 100%;
 }
-.atlas .code-block {
+.slope .code-block {
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -336,11 +336,11 @@ details.fold:not([open]) > summary::after {
   border: 1px solid var(--color-ink-line);
   padding: 0 9px;
 }
-.atlas .code-block.is-focal {
+.slope .code-block.is-focal {
   border-color: var(--color-ink);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--color-ink) 30%, transparent);
 }
-.atlas .cb-head {
+.slope .cb-head {
   display: flex;
   align-items: baseline;
   gap: 4px;
@@ -349,7 +349,7 @@ details.fold:not([open]) > summary::after {
   margin-bottom: 4px;
   border-bottom: 1px solid color-mix(in srgb, var(--color-ink-line) 55%, transparent);
 }
-.atlas .cb-name {
+.slope .cb-name {
   font-size: 10.5px;
   font-weight: 700;
   color: var(--color-ink);
@@ -358,17 +358,17 @@ details.fold:not([open]) > summary::after {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.atlas .cb-name:hover {
+.slope .cb-name:hover {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.atlas .cb-chg {
+.slope .cb-chg {
   color: var(--color-flare);
   font-weight: 700;
   margin-left: 4px;
 }
 /* Landmark rows: engraved weight follows fan-in, in three tiers. */
-.atlas .cb-row {
+.slope .cb-row {
   display: flex;
   align-items: center;
   gap: 5px;
@@ -377,33 +377,33 @@ details.fold:not([open]) > summary::after {
   line-height: 1;
   white-space: nowrap;
 }
-.atlas .cb-row.t1 {
+.slope .cb-row.t1 {
   font-weight: 700;
 }
-.atlas .cb-row.t2 {
+.slope .cb-row.t2 {
   font-weight: 500;
 }
-.atlas .cb-row.t3 {
+.slope .cb-row.t3 {
   font-weight: 400;
   color: color-mix(in srgb, var(--color-ink) 88%, var(--color-paper));
 }
 /* The keyword rust writes in front of the name — `pub fn`, `struct` — a
    shade quieter than the name it qualifies, and never uppercased. */
-.atlas .cb-kw {
+.slope .cb-kw {
   flex: none;
   font-weight: 400;
   color: var(--color-ink-soft);
 }
-.atlas .cb-nm {
+.slope .cb-nm {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.atlas .cb-row:hover .cb-nm {
+.slope .cb-row:hover .cb-nm {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 /* A fold states what it hides, or it is a lie by omission. */
-.atlas .cb-fold {
+.slope .cb-fold {
   margin-top: auto;
   padding-top: 3px;
   border-top: 1px dotted color-mix(in srgb, var(--color-ink-line) 70%, transparent);
@@ -416,16 +416,16 @@ details.fold:not([open]) > summary::after {
 
 /* A block whose items all folded away has nothing between its two rules; one
    rule is enough to divide a name from the count under it. */
-.atlas .code-block:not(:has(.cb-row)) .cb-head {
+.slope .code-block:not(:has(.cb-row)) .cb-head {
   border-bottom: none;
   margin-bottom: 0;
 }
-.atlas .code-block:not(:has(.cb-row)) .cb-fold {
+.slope .code-block:not(:has(.cb-row)) .cb-fold {
   border-top: none;
 }
 
 /* A folded directory: one gate carrying its counts. */
-.atlas .code-gate {
+.slope .code-gate {
   display: flex;
   flex-direction: column;
   justify-content: center;
@@ -441,10 +441,10 @@ details.fold:not([open]) > summary::after {
   font: inherit;
   color: inherit;
 }
-.atlas .code-gate:hover {
+.slope .code-gate:hover {
   border-color: var(--color-ink);
 }
-.atlas .cg-name {
+.slope .cg-name {
   font-size: 10px;
   font-weight: 700;
   color: var(--color-ink);
@@ -452,7 +452,7 @@ details.fold:not([open]) > summary::after {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.atlas .cg-meta {
+.slope .cg-meta {
   font-size: 8.5px;
   letter-spacing: 0.05em;
   color: var(--color-ink-soft);
@@ -461,23 +461,23 @@ details.fold:not([open]) > summary::after {
 
 /* The ground: districts as faint ink-tinted territory, their names engraved
    on the border. The layer itself is not a target; its labels are. */
-.atlas .df-world-layer.code-ground {
+.slope .df-world-layer.code-ground {
   z-index: 0;
 }
-.atlas .df-world-layer.code-ground svg {
+.slope .df-world-layer.code-ground svg {
   pointer-events: none;
 }
-.atlas .district-frame {
+.slope .district-frame {
   fill: color-mix(in srgb, var(--color-ink) 2.6%, transparent);
   stroke: var(--color-ink-line);
   stroke-width: 1;
 }
-.atlas .district-frame.is-focal {
+.slope .district-frame.is-focal {
   stroke: var(--color-ink);
   stroke-width: 1.4;
 }
-.atlas .district-label,
-.atlas .district-crate {
+.slope .district-label,
+.slope .district-crate {
   paint-order: stroke;
   stroke: var(--color-paper);
   stroke-width: 5px;
@@ -486,7 +486,7 @@ details.fold:not([open]) > summary::after {
 }
 /* A directory is written the way it is on disk: `src/`, lowercase, in the
    data face. Nothing on this plate uppercases a path. */
-.atlas .district-label {
+.slope .district-label {
   font-family: var(--font-data);
   font-size: 12px;
   font-weight: 500;
@@ -494,23 +494,23 @@ details.fold:not([open]) > summary::after {
   pointer-events: auto;
   cursor: pointer;
 }
-.atlas .district-label.is-root {
+.slope .district-label.is-root {
   cursor: default;
 }
-.atlas .district-label:hover:not(.is-root) {
+.slope .district-label:hover:not(.is-root) {
   text-decoration: underline;
   text-underline-offset: 4px;
 }
 /* The crate name, spelled the way cargo spells it. Drawn only where the survey
    has more than one crate to tell apart. */
-.atlas .district-crate {
+.slope .district-crate {
   font-family: var(--font-data);
   font-size: 10px;
   fill: var(--color-ink-soft);
   pointer-events: auto;
   cursor: pointer;
 }
-.atlas .district-crate:hover {
+.slope .district-crate:hover {
   fill: var(--color-ink);
   text-decoration: underline;
   text-underline-offset: 4px;
@@ -520,46 +520,46 @@ details.fold:not([open]) > summary::after {
    Both world layers sit under the flow viewport, so a tie draws over the
    district tints and under the blocks — never across a file's own rows. Ties
    come after the ground in the DOM, which is what stacks them above it. */
-.atlas .df-world-layer.code-ties {
+.slope .df-world-layer.code-ties {
   z-index: 0;
 }
-.atlas .code-tie {
+.slope .code-tie {
   animation: edge-ink 400ms ease-out;
 }
 /* A tie the reading folded away: still in the set, drawn the moment the reader
    hovers either of its ends. The fold is reachable, never silently cut. */
-.atlas .code-tie.is-folded {
+.slope .code-tie.is-folded {
   display: none;
 }
-.atlas .code-tie.is-folded.is-hot {
+.slope .code-tie.is-folded.is-hot {
   display: inline;
 }
-.atlas .code-tie .tie-path,
-.atlas .code-tie .tie-head {
+.slope .code-tie .tie-path,
+.slope .code-tie .tie-head {
   stroke: var(--color-ink-line);
   opacity: 0.82;
 }
 /* A tie below the label bar draws lighter and keeps its count folded until the
    reader hovers either end. The tie itself is never dropped. */
-.atlas .code-tie.is-quiet .tie-path,
-.atlas .code-tie.is-quiet .tie-head {
+.slope .code-tie.is-quiet .tie-path,
+.slope .code-tie.is-quiet .tie-head {
   opacity: 0.5;
 }
-.atlas .code-tie.is-quiet .tie-count {
+.slope .code-tie.is-quiet .tie-count {
   opacity: 0;
 }
-.atlas .code-tie.is-hot .tie-path,
-.atlas .code-tie.is-hot .tie-head {
+.slope .code-tie.is-hot .tie-path,
+.slope .code-tie.is-hot .tie-head {
   opacity: 1;
 }
-.atlas .code-tie .tie-head {
+.slope .code-tie .tie-head {
   stroke-width: 1.1px;
 }
-.atlas .code-tie.is-hot .tie-path,
-.atlas .code-tie.is-hot .tie-head {
+.slope .code-tie.is-hot .tie-path,
+.slope .code-tie.is-hot .tie-head {
   stroke: var(--color-ink);
 }
-.atlas .tie-count {
+.slope .tie-count {
   font-family: var(--font-data);
   font-size: 9.5px;
   letter-spacing: 0.06em;
@@ -569,29 +569,29 @@ details.fold:not([open]) > summary::after {
   stroke-width: 4px;
   stroke-linejoin: round;
 }
-.atlas .code-tie.is-hot .tie-count {
+.slope .code-tie.is-hot .tie-count {
   fill: var(--color-ink);
   font-weight: 700;
   opacity: 1;
 }
 @media (prefers-reduced-motion: reduce) {
-  .atlas .code-tie {
+  .slope .code-tie {
     animation: none;
   }
 }
 
 /* ————— The data altitude: type marks, module frames, holding edges. —————
 
-   Every number here is also in `views/surface/map.rs`, which measures a block
+   Every number here is also in `views/data/map.rs`, which measures a block
    before the layout places it: a plate taller than its box would stand on its
    neighbour. Move one and the other must follow. */
 
-.atlas .data-node {
+.slope .data-node {
   width: 100%;
   height: 100%;
   transition: opacity 400ms ease-out;
 }
-.atlas .data-mark {
+.slope .data-mark {
   display: block;
   /* The box is the node's, which is the box the layout measured and the box
      every edge lands on. The plate never restates it: an inline size would
@@ -607,56 +607,33 @@ details.fold:not([open]) > summary::after {
   text-decoration: none;
   cursor: pointer;
 }
-.atlas .data-mark:hover {
+.slope .data-mark:hover {
   border-color: var(--color-ink);
 }
 /* A static is a root — state no type holds. The 2.5px ink left edge is the
    gate's own mark, reused: this is where a chain of holding begins. */
-.atlas .data-mark.is-root {
+.slope .data-mark.is-root {
   border-left: 2.5px solid var(--color-ink);
   padding-left: 5.5px;
-}
-/* A free function is a contract, not a shape. It wears the gate's mark turned
-   to face the paper — a 2.5px ink rule across the top, where a static wears it
-   down the side — and stands on a wash of the same ink, dark enough to read
-   above a module frame's own tint. Between them a band of contracts tells
-   itself apart from the state around it without anyone reading the keyword.
-   The padding gives back exactly what the rule takes, so the plate still fits
-   the box the layout measured. Declared before the diff and ghost rules, so
-   the amber frame and the dashed one still speak over it: what happened to a
-   contract this epoch outranks its being one. */
-.atlas .data-mark.is-sig {
-  border-top: 2.5px solid var(--color-ink);
-  padding-top: 3.5px;
-  background: color-mix(in srgb, var(--color-ink) 11%, var(--color-paper));
-}
-/* The legend's sample of that plate, off the same two values, so the key
-   cannot drift from the map — the rule the wire samples follow. */
-.atlas .sig-sample .plate-ground {
-  fill: color-mix(in srgb, var(--color-ink) 11%, var(--color-paper));
-  stroke: var(--color-ink-line);
-}
-.atlas .sig-sample .plate-rule {
-  fill: var(--color-ink);
 }
 /* The structural diff's ink. A diff-touched block wears the flare on its own
    frame, not only its letter; a ghost — a type only the base has — keeps the
    frame but dashed, its text at the ghost's pressure. */
-.atlas .data-mark.is-diff,
-.atlas .data-mark.is-diff:hover {
+.slope .data-mark.is-diff,
+.slope .data-mark.is-diff:hover {
   border-color: var(--color-flare);
 }
-.atlas .data-mark.is-ghost {
+.slope .data-mark.is-ghost {
   border-style: dashed;
 }
-.atlas .data-mark.is-ghost .dm-kw,
-.atlas .data-mark.is-ghost .dm-nm,
-.atlas .data-mark.is-ghost .dm-ty,
-.atlas .data-mark.is-ghost .dm-ty span,
-.atlas .data-mark.is-ghost .dm-row,
-.atlas .data-mark.is-ghost .dm-row span,
-.atlas .data-mark.is-ghost .dm-var,
-.atlas .data-mark.is-ghost .dm-var span {
+.slope .data-mark.is-ghost .dm-kw,
+.slope .data-mark.is-ghost .dm-nm,
+.slope .data-mark.is-ghost .dm-ty,
+.slope .data-mark.is-ghost .dm-ty span,
+.slope .data-mark.is-ghost .dm-row,
+.slope .data-mark.is-ghost .dm-row span,
+.slope .data-mark.is-ghost .dm-var,
+.slope .data-mark.is-ghost .dm-var span {
   color: var(--color-ink-soft);
 }
 /* A row's own diff marker, in the diff's own idiom. The marker escapes a
@@ -664,7 +641,7 @@ details.fold:not([open]) > summary::after {
 /* The diff's row marker lives in the indent's gutter, so a `+` row and its
    untouched neighbour start their text on the same column — the alignment is
    what makes a woven block readable as one declaration. */
-.atlas .dm-mk {
+.slope .dm-mk {
   display: inline-block;
   margin-left: -12px;
   width: 12px;
@@ -672,31 +649,31 @@ details.fold:not([open]) > summary::after {
   color: var(--color-flare);
   text-decoration: none;
 }
-.atlas .dm-row.is-del,
-.atlas .dm-var.is-del {
+.slope .dm-row.is-del,
+.slope .dm-var.is-del {
   text-decoration: line-through;
 }
-.atlas .dm-row.is-del,
-.atlas .dm-row.is-del span,
-.atlas .dm-var.is-del,
-.atlas .dm-var.is-del span {
+.slope .dm-row.is-del,
+.slope .dm-row.is-del span,
+.slope .dm-var.is-del,
+.slope .dm-var.is-del span {
   color: var(--color-ink-soft);
 }
-.atlas .dm-row.is-del .dm-mk,
-.atlas .dm-var.is-del .dm-mk {
+.slope .dm-row.is-del .dm-mk,
+.slope .dm-var.is-del .dm-mk {
   color: var(--color-flare);
 }
 /* While the diff has anything to say, whatever it never touched rests at a
    lighter pressure; hovering gives a block back its full ink. */
-.atlas .data-node.is-rest,
-.atlas .data-foldrow.is-rest {
+.slope .data-node.is-rest,
+.slope .data-foldrow.is-rest {
   opacity: 0.62;
 }
-.atlas .data-node.is-rest:hover,
-.atlas .data-foldrow.is-rest:hover {
+.slope .data-node.is-rest:hover,
+.slope .data-foldrow.is-rest:hover {
   opacity: 1;
 }
-.atlas .dm-head {
+.slope .dm-head {
   display: flex;
   align-items: baseline;
   gap: 4px;
@@ -705,11 +682,11 @@ details.fold:not([open]) > summary::after {
   line-height: 16px;
   white-space: nowrap;
 }
-.atlas .dm-kw {
+.slope .dm-kw {
   flex: none;
   color: var(--color-tok-kw);
 }
-.atlas .dm-nm {
+.slope .dm-nm {
   overflow: hidden;
   text-overflow: ellipsis;
   font-weight: 700;
@@ -718,20 +695,14 @@ details.fold:not([open]) > summary::after {
 /* A sum type's name in the palette's other type color: `enum` is still the
    word in front of it, and the color is the second reading of the same fact —
    at chart zoom the keyword is small and the name is what carries. */
-.atlas .dm-nm.is-sum {
+.slope .dm-nm.is-sum {
   color: var(--color-tok-sum);
 }
-/* A free function's name in the palette's fn color, the same ink a definition
-   plate gives it. `pub fn` stands in front of it either way; the color is the
-   second reading, for the zoom where the keyword is too small to read. */
-.atlas .dm-nm.is-fn {
-  color: var(--color-tok-fn);
-}
-.atlas .data-mark:hover .dm-nm {
+.slope .data-mark:hover .dm-nm {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.atlas .dm-chg {
+.slope .dm-chg {
   flex: none;
   color: var(--color-flare);
   font-weight: 700;
@@ -741,58 +712,53 @@ details.fold:not([open]) > summary::after {
    makes a long block's end findable. Punctuation ink, like every other
    bracket inside a quotation. A paren belongs against its name, so it eats
    the head's flex gap; a brace wants the space and keeps it. */
-.atlas .dm-open {
+.slope .dm-open {
   flex: none;
   color: var(--color-tok-punct);
 }
-.atlas .dm-open.is-tight {
+.slope .dm-open.is-tight {
   margin-left: -4px;
 }
 /* Rows stand in from the edge the way rust indents a body; the brace that
    closes them does not, which is what makes the block's end findable. */
-.atlas .dm-ty,
-.atlas .dm-row,
-.atlas .dm-var,
-.atlas .dm-sig {
+.slope .dm-ty,
+.slope .dm-row,
+.slope .dm-var {
   padding-left: 12px;
 }
-.atlas .dm-close {
+.slope .dm-close {
   font-size: 10px;
   line-height: 15px;
   color: var(--color-tok-punct);
-  /* A signature's return rides this line and can be long: it wraps, as it
-     did when it stood on a line of its own. */
+  /* A generic type quoted on this line can be long and has no spaces to
+     break at. */
   overflow-wrap: anywhere;
-}
-/* A signature's return type rides its closing paren, where rust writes it. */
-.atlas .dm-ret {
-  margin-left: 4px;
 }
 /* A static's declared type, quoted as written. It breaks anywhere, because a
    generic type has no spaces to break at. */
-.atlas .dm-ty {
+.slope .dm-ty {
   font-size: 9.5px;
   line-height: 14px;
   overflow-wrap: anywhere;
 }
-.atlas .dm-ty,
-.atlas .dm-row,
-.atlas .dm-var {
+.slope .dm-ty,
+.slope .dm-row,
+.slope .dm-var {
   color: var(--color-ink);
 }
 /* One field, quoted as written: its name, then its declared type, with the
    one run that names a held workspace type bold. */
-.atlas .dm-row {
+.slope .dm-row {
   font-size: 10px;
   line-height: 15px;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.atlas .dm-fname {
+.slope .dm-fname {
   color: var(--color-ink);
 }
-.atlas .dm-held {
+.slope .dm-held {
   font-weight: 600;
 }
 /* A held run whose type has a block on this chart is a link of its own: click
@@ -801,21 +767,21 @@ details.fold:not([open]) > summary::after {
    name already uses — an underline while the pointer is on it — so nothing new
    has to be learned, and nothing is added at rest: a row whose types were
    underlined all the time would read as decoration, not as a declaration. */
-.atlas .dm-held.is-link {
+.slope .dm-held.is-link {
   cursor: pointer;
 }
-.atlas .dm-held.is-link:hover {
+.slope .dm-held.is-link:hover {
   text-decoration: underline;
   text-underline-offset: 2px;
 }
-.atlas .dm-held.is-link:focus-visible {
+.slope .dm-held.is-link:focus-visible {
   outline: 1px solid var(--color-ink);
   outline-offset: 1px;
   text-decoration: underline;
   text-underline-offset: 2px;
 }
 /* An enum's variants as written, one row each, payloads included. */
-.atlas .dm-var {
+.slope .dm-var {
   font-size: 10px;
   line-height: 15px;
   white-space: nowrap;
@@ -825,63 +791,26 @@ details.fold:not([open]) > summary::after {
 /* A mark's rows are quotations: inside them color is token class — the
    plate's own palette — and it stops at the block's frame. The counted folds
    and the locator below stay in the chart's monochrome voice. */
-.atlas .data-mark .tok-kw {
+.slope .data-mark .tok-kw {
   color: var(--color-tok-kw);
 }
-.atlas .data-mark .tok-type {
+.slope .data-mark .tok-type {
   color: var(--color-tok-type);
 }
-.atlas .data-mark .tok-num {
+.slope .data-mark .tok-num {
   color: var(--color-tok-num);
 }
-.atlas .data-mark .tok-punct {
+.slope .data-mark .tok-punct {
   color: var(--color-tok-punct);
-}
-/* The second band: the methods a type publishes. The rule says the shape has
-   ended and the promise has begun — a hairline, because the band is the same
-   quotation the rows above it are, not another material. */
-.atlas .dm-band {
-  margin-top: 3px;
-  padding-top: 2px;
-  border-top: 1px solid color-mix(in srgb, var(--color-ink-line) 55%, transparent);
-}
-/* A trait's band is its body, already bracketed by the block's own braces:
-   a rule there would separate the body from nothing. */
-.atlas .dm-band.is-body {
-  margin-top: 0;
-  padding-top: 0;
-  border-top: 0;
-}
-.atlas .dm-sig {
-  font-size: 10px;
-  line-height: 15px;
-  color: var(--color-ink);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.atlas .data-mark.is-ghost .dm-sig,
-.atlas .data-mark.is-ghost .dm-sig span {
-  color: var(--color-ink-soft);
-}
-.atlas .dm-sig.is-del {
-  text-decoration: line-through;
-}
-.atlas .dm-sig.is-del,
-.atlas .dm-sig.is-del span {
-  color: var(--color-ink-soft);
-}
-.atlas .dm-sig.is-del .dm-mk {
-  color: var(--color-flare);
 }
 
 /* What the mark holds back, counted. A mark that hides nothing draws no rule. */
-.atlas .dm-folds {
+.slope .dm-folds {
   margin-top: 3px;
   padding-top: 3px;
   border-top: 1px dotted color-mix(in srgb, var(--color-ink-line) 70%, transparent);
 }
-.atlas .dm-fold {
+.slope .dm-fold {
   font-size: 9px;
   line-height: 12px;
   color: var(--color-ink-soft);
@@ -892,7 +821,7 @@ details.fold:not([open]) > summary::after {
 /* A frame's counted fold row: the private types it never draws, or the quiet
    ones the budget folded. Every edge that touches one lands here. It fills its
    measured box the way a mark's plate does. */
-.atlas .data-foldrow {
+.slope .data-foldrow {
   display: flex;
   width: 100%;
   height: 100%;
@@ -909,29 +838,29 @@ details.fold:not([open]) > summary::after {
 /* The row a hand-folded module leaves behind is the way back into it, so it is
    the one counted row that answers a click. The other two count code the chart
    was never going to draw; this one is a door, and says so in full ink. */
-.atlas .data-foldrow.is-mod {
+.slope .data-foldrow.is-mod {
   border-style: dashed;
   color: var(--color-ink);
   cursor: pointer;
   font-family: var(--font-data);
   text-align: left;
 }
-.atlas .data-foldrow.is-mod:hover,
-.atlas .data-foldrow.is-mod:focus-visible {
+.slope .data-foldrow.is-mod:hover,
+.slope .data-foldrow.is-mod:focus-visible {
   border-color: var(--color-ink);
   background: color-mix(in srgb, var(--color-ink) 4%, var(--color-paper));
 }
 
 /* The ground: crate and module frames, tinted like the code map's districts so
    nesting reads as depth without a second material. */
-.atlas .df-world-layer.data-ground {
+.slope .df-world-layer.data-ground {
   z-index: 0;
 }
-.atlas .df-world-layer.data-ground svg,
-.atlas .df-world-layer.data-wires svg {
+.slope .df-world-layer.data-ground svg,
+.slope .df-world-layer.data-wires svg {
   pointer-events: none;
 }
-.atlas .data-frame {
+.slope .data-frame {
   fill: color-mix(in srgb, var(--color-ink) 2.6%, transparent);
   stroke: var(--color-ink-line);
   stroke-width: 1;
@@ -942,51 +871,51 @@ details.fold:not([open]) > summary::after {
    invisible stroke over the same rectangle, and a chip of paper behind each
    piece of engraving — so the frame's whole interior stays open paper for the
    blocks, the wires and the pan. */
-.atlas .data-frame-pick,
-.atlas .data-frame-shut {
+.slope .data-frame-pick,
+.slope .data-frame-shut {
   pointer-events: auto;
   cursor: pointer;
 }
-.atlas .data-frame-hit {
+.slope .data-frame-hit {
   fill: none;
   stroke: transparent;
   stroke-width: 14;
   pointer-events: stroke;
 }
-.atlas .data-frame-tab,
-.atlas .data-frame-hit-mark {
+.slope .data-frame-tab,
+.slope .data-frame-hit-mark {
   fill: transparent;
   pointer-events: all;
 }
-.atlas .data-frame-group:has(.data-frame-pick:hover) .data-frame,
-.atlas .data-frame-group:has(.data-frame-pick:focus-visible) .data-frame {
+.slope .data-frame-group:has(.data-frame-pick:hover) .data-frame,
+.slope .data-frame-group:has(.data-frame-pick:focus-visible) .data-frame {
   stroke: var(--color-ink);
 }
 /* The chosen boundary in full ink, dashed the way a selected ring is: the
    reader chose a line, so the line is what answers. Its label comes up with
    it, and every other module recedes — frames, blocks and wires together. */
-.atlas .data-frame-group.is-sel .data-frame {
+.slope .data-frame-group.is-sel .data-frame {
   stroke: var(--color-ink);
   stroke-width: 1.2;
   stroke-dasharray: 7 4;
 }
-.atlas .data-frame-group.is-sel .data-frame-label {
+.slope .data-frame-group.is-sel .data-frame-label {
   fill: var(--color-ink);
   font-weight: 600;
 }
-.atlas .data-frame-group {
+.slope .data-frame-group {
   transition: opacity 400ms ease-out;
 }
-.atlas .data-frame-group.is-dim {
+.slope .data-frame-group.is-dim {
   opacity: 0.3;
 }
-.atlas .data-frame-group.is-dim:hover {
+.slope .data-frame-group.is-dim:hover {
   opacity: 1;
 }
 /* The fold mark: `−` while the module is on the paper, `+` once it is one row.
    The chart already says `+ n` for everything it holds back, so a folded
    module wears the same sign the counted rows do. */
-.atlas .data-frame-mark {
+.slope .data-frame-mark {
   font-family: var(--font-data);
   font-size: 13px;
   font-weight: 500;
@@ -998,13 +927,13 @@ details.fold:not([open]) > summary::after {
   stroke-linejoin: round;
   pointer-events: none;
 }
-.atlas .data-frame-shut:hover .data-frame-mark,
-.atlas .data-frame-shut:focus-visible .data-frame-mark {
+.slope .data-frame-shut:hover .data-frame-mark,
+.slope .data-frame-shut:focus-visible .data-frame-mark {
   fill: var(--color-ink);
 }
 /* The label chips onto the border: rust's own words for the module, with a
    paper halo so the border reads as interrupted rather than crossed. */
-.atlas .data-frame-label {
+.slope .data-frame-label {
   pointer-events: none;
   font-family: var(--font-data);
   font-size: 12px;
@@ -1020,21 +949,21 @@ details.fold:not([open]) > summary::after {
 /* The two edge families, over the frame tints and under the blocks. Holds is
    structure and rests at full pressure; the reference reading rests at half,
    so the two never read as one family. Neither ever takes a colour. */
-.atlas .df-world-layer.data-wires {
+.slope .df-world-layer.data-wires {
   z-index: 0;
 }
-.atlas .data-wire {
+.slope .data-wire {
   animation: edge-ink 400ms ease-out;
 }
-.atlas .data-wire .wire-path {
+.slope .data-wire .wire-path {
   fill: none;
   stroke: var(--color-ink-line);
 }
-.atlas .data-wire .wire-head {
+.slope .data-wire .wire-head {
   fill: var(--color-ink-line);
   stroke: none;
 }
-.atlas .data-wire .wire-label {
+.slope .data-wire .wire-label {
   font-family: var(--font-data);
   font-size: 9.5px;
   fill: var(--color-ink-soft);
@@ -1049,93 +978,93 @@ details.fold:not([open]) > summary::after {
    line (`Arc`, `&`, `dyn`) and no word at all is plain ownership. Dash used
    to encode which wrapper it was; dash is spoken for now. The kind still
    rides on the group as a class, for the hover and diff rules to reach. */
-.atlas .data-wire.data-hold .wire-path {
+.slope .data-wire.data-hold .wire-path {
   stroke: var(--color-ink-soft);
 }
-.atlas .data-wire.data-hold .wire-head {
+.slope .data-wire.data-hold .wire-head {
   fill: var(--color-ink-soft);
 }
 /* Implementing is the one interface line no row draws — the impl block does —
    so it carries rust's own word and nothing else. It stays inside the solid
    family: a promise is as binding as a field. */
-.atlas .data-wire.is-impl .wire-path {
+.slope .data-wire.is-impl .wire-path {
   stroke: var(--color-ink-soft);
 }
 
 /* Dashed is implementation coupling: a body leaning on a mark — a call, a
    name written inside a function. Lighter than the surface it serves, and
    dashed because it is what the published shape does not promise. */
-.atlas .data-wire.is-ref .wire-path {
+.slope .data-wire.is-ref .wire-path {
   stroke-dasharray: 5 3;
 }
-.atlas .data-wire.is-ref .wire-path,
-.atlas .data-wire.is-ref .wire-head {
+.slope .data-wire.is-ref .wire-path,
+.slope .data-wire.is-ref .wire-head {
   opacity: 0.45;
 }
 /* A wire the chart folded away — a hub's fan-in, or a tie outside the current
    reading — stays in the set and is given back on hover of either end. */
-.atlas .data-wire.is-folded {
+.slope .data-wire.is-folded {
   display: none;
 }
-.atlas .data-wire.is-folded.is-hot {
+.slope .data-wire.is-folded.is-hot {
   display: inline;
 }
-.atlas .data-wire.is-hot .wire-path {
+.slope .data-wire.is-hot .wire-path {
   stroke: var(--color-ink);
 }
-.atlas .data-wire.is-hot .wire-head {
+.slope .data-wire.is-hot .wire-head {
   fill: var(--color-ink);
 }
-.atlas .data-wire.is-hot .wire-path,
-.atlas .data-wire.is-hot .wire-head {
+.slope .data-wire.is-hot .wire-path,
+.slope .data-wire.is-hot .wire-head {
   opacity: 1;
 }
-.atlas .data-wire.is-hot .wire-label {
+.slope .data-wire.is-hot .wire-label {
   fill: var(--color-ink);
 }
 /* The structural diff's edges. Added takes the dep chart's manifest grammar —
    flare, slightly firmer; removed is flare dashed at lower pressure, re-drawn
    from the base edition. The flare outranks hover and kin ink: a diff edge is
    diff ink whatever else is happening around it. */
-.atlas .data-wire.is-added .wire-path {
+.slope .data-wire.is-added .wire-path {
   stroke: var(--color-flare);
 }
-.atlas .data-wire.is-added .wire-head {
+.slope .data-wire.is-added .wire-head {
   fill: var(--color-flare);
 }
-.atlas .data-wire.is-added .wire-label {
+.slope .data-wire.is-added .wire-label {
   fill: var(--color-flare);
 }
-.atlas .data-wire.is-removed .wire-path {
+.slope .data-wire.is-removed .wire-path {
   stroke: var(--color-flare);
   stroke-dasharray: 9 5;
   opacity: 0.65;
 }
-.atlas .data-wire.is-removed .wire-head {
+.slope .data-wire.is-removed .wire-head {
   fill: var(--color-flare);
   opacity: 0.65;
 }
-.atlas .data-wire.is-removed .wire-label {
+.slope .data-wire.is-removed .wire-label {
   fill: var(--color-flare);
 }
-.atlas .data-wire.is-hot.is-added .wire-path,
-.atlas .data-wire.is-hot.is-removed .wire-path,
-.atlas .data-wire.is-kin.is-added .wire-path,
-.atlas .data-wire.is-kin.is-removed .wire-path {
+.slope .data-wire.is-hot.is-added .wire-path,
+.slope .data-wire.is-hot.is-removed .wire-path,
+.slope .data-wire.is-kin.is-added .wire-path,
+.slope .data-wire.is-kin.is-removed .wire-path {
   stroke: var(--color-flare);
   opacity: 1;
 }
-.atlas .data-wire.is-hot.is-added .wire-head,
-.atlas .data-wire.is-hot.is-removed .wire-head,
-.atlas .data-wire.is-kin.is-added .wire-head,
-.atlas .data-wire.is-kin.is-removed .wire-head {
+.slope .data-wire.is-hot.is-added .wire-head,
+.slope .data-wire.is-hot.is-removed .wire-head,
+.slope .data-wire.is-kin.is-added .wire-head,
+.slope .data-wire.is-kin.is-removed .wire-head {
   fill: var(--color-flare);
   opacity: 1;
 }
-.atlas .data-wire.is-hot.is-added .wire-label,
-.atlas .data-wire.is-hot.is-removed .wire-label,
-.atlas .data-wire.is-kin.is-added .wire-label,
-.atlas .data-wire.is-kin.is-removed .wire-label {
+.slope .data-wire.is-hot.is-added .wire-label,
+.slope .data-wire.is-hot.is-removed .wire-label,
+.slope .data-wire.is-kin.is-added .wire-label,
+.slope .data-wire.is-kin.is-removed .wire-label {
   fill: var(--color-flare);
 }
 
@@ -1145,14 +1074,14 @@ details.fold:not([open]) > summary::after {
    neighbours read a step behind; every other mark and wire recedes to a
    lighter pressure. A reading, never a re-layout: nothing moves, and the
    camera holds still. */
-.atlas .data-node.is-dim {
+.slope .data-node.is-dim {
   opacity: 0.35;
 }
 /* A receded block still answers a look. */
-.atlas .data-node.is-dim:hover {
+.slope .data-node.is-dim:hover {
   opacity: 1;
 }
-.atlas .data-node.is-sel .data-mark {
+.slope .data-node.is-sel .data-mark {
   border-color: var(--color-ink);
   outline: 1.5px solid var(--color-ink);
   outline-offset: 2px;
@@ -1165,36 +1094,36 @@ details.fold:not([open]) > summary::after {
    the resting one, so nothing else on the chart moves. `!important` beats the
    flow library's own inline `z-index: 0` on the node, which is the only way to
    leave the paint order the node list happens to be in. */
-.atlas .data-node.is-sel .data-mark {
+.slope .data-node.is-sel .data-mark {
   height: auto;
   /* Never shorter than the box it rests in, whatever the text measures to. */
   min-height: 100%;
   overflow: visible;
   box-shadow: 0 1px 4px color-mix(in srgb, var(--color-ink) 14%, transparent);
 }
-.atlas .df-node:has(> .data-node.is-sel) {
+.slope .df-node:has(> .data-node.is-sel) {
   z-index: 900 !important;
 }
-.atlas .data-wire {
+.slope .data-wire {
   transition: opacity 400ms ease-out;
 }
-.atlas .data-wire.is-dim {
+.slope .data-wire.is-dim {
   opacity: 0.15;
 }
-.atlas .data-wire.is-folded.is-kin {
+.slope .data-wire.is-folded.is-kin {
   display: inline;
 }
-.atlas .data-wire.is-kin .wire-path {
+.slope .data-wire.is-kin .wire-path {
   stroke: var(--color-ink);
 }
-.atlas .data-wire.is-kin .wire-head {
+.slope .data-wire.is-kin .wire-head {
   fill: var(--color-ink);
 }
-.atlas .data-wire.is-kin .wire-path,
-.atlas .data-wire.is-kin .wire-head {
+.slope .data-wire.is-kin .wire-path,
+.slope .data-wire.is-kin .wire-head {
   opacity: 1;
 }
-.atlas .data-wire.is-kin .wire-label {
+.slope .data-wire.is-kin .wire-label {
   fill: var(--color-ink);
 }
 /* The uses neighbourhood the selection pins: every dashed edge touching the
@@ -1206,10 +1135,10 @@ details.fold:not([open]) > summary::after {
    dashed line to a block nobody can read is the same as no line, and hover is
    a gesture the reader has to hold, which is no way to follow an edge to the
    other end. */
-.atlas .data-node.is-near {
+.slope .data-node.is-near {
   opacity: 0.62;
 }
-.atlas .data-node.is-near:hover {
+.slope .data-node.is-near:hover {
   opacity: 1;
 }
 /* ---- The data altitude's nesting. ----------------------------------------
@@ -1217,45 +1146,45 @@ details.fold:not([open]) > summary::after {
    a hairline rule closes the rows, and the owned blocks sit on the clear
    paper under it. The offsets are computed with the block — the same numbers
    the layout measured — so the box a wire lands on is the box on screen. */
-.atlas .dm-kids {
+.slope .dm-kids {
   position: relative;
   margin-top: 4px;
   border-top: 1px solid var(--color-ink-line);
 }
-.atlas .dm-kid {
+.slope .dm-kid {
   position: absolute;
 }
 /* A reading's pressure acts on a block's own paint — its frame and its two
    text layers — never on its box, because a receded holder can have a lit
    block nested inside it and opacity on the box would take the kid down with
    it. Hover gives a block back its full ink, as everywhere. */
-.atlas .dm-own {
+.slope .dm-own {
   transition: opacity 400ms ease-out;
 }
-.atlas .data-mark.is-dim-own {
+.slope .data-mark.is-dim-own {
   border-color: color-mix(in srgb, var(--color-ink-line) 45%, var(--color-paper));
 }
-.atlas .data-mark.is-dim-own > .dm-own {
+.slope .data-mark.is-dim-own > .dm-own {
   opacity: 0.35;
 }
-.atlas .data-mark.is-near-own > .dm-own {
+.slope .data-mark.is-near-own > .dm-own {
   opacity: 0.62;
 }
-.atlas .data-mark.is-dim-own:hover > .dm-own,
-.atlas .data-mark.is-near-own:hover > .dm-own {
+.slope .data-mark.is-dim-own:hover > .dm-own,
+.slope .data-mark.is-near-own:hover > .dm-own {
   opacity: 1;
 }
-.atlas .data-mark.is-dim-own:hover {
+.slope .data-mark.is-dim-own:hover {
   border-color: var(--color-ink);
 }
 /* The chosen block wears the app's focus ring — the block itself, not the
    node, because the selection can be a block nested three layers deep. */
-.atlas .data-mark.is-picked {
+.slope .data-mark.is-picked {
   border-color: var(--color-ink);
   outline: 1.5px solid var(--color-ink);
   outline-offset: 2px;
 }
-.atlas .df-node:has(.data-mark.is-picked) {
+.slope .df-node:has(.data-mark.is-picked) {
   z-index: 900 !important;
 }
 /* ---- The far edition. ------------------------------------------------------
@@ -1266,28 +1195,28 @@ details.fold:not([open]) > summary::after {
    and the rows return; nothing is cut, only deferred to the zoom that can
    carry it. The blocks keep their boxes, so nothing moves and every wire
    still lands where it landed. */
-.atlas .data-chart .data-mark {
+.slope .data-chart .data-mark {
   container-type: inline-size;
 }
-.atlas .data-chart.is-far .dm-ty,
-.atlas .data-chart.is-far .dm-row,
-.atlas .data-chart.is-far .dm-var,
-.atlas .data-chart.is-far .dm-open,
-.atlas .data-chart.is-far .dm-close,
-.atlas .data-chart.is-far .dm-folds,
-.atlas .data-chart.is-far .dm-kids {
+.slope .data-chart.is-far .dm-ty,
+.slope .data-chart.is-far .dm-row,
+.slope .data-chart.is-far .dm-var,
+.slope .data-chart.is-far .dm-open,
+.slope .data-chart.is-far .dm-close,
+.slope .data-chart.is-far .dm-folds,
+.slope .data-chart.is-far .dm-kids {
   display: none;
 }
-.atlas .data-chart.is-far .dm-head {
+.slope .data-chart.is-far .dm-head {
   display: block;
   height: auto;
 }
-.atlas .data-chart.is-far .dm-kw {
+.slope .data-chart.is-far .dm-kw {
   display: block;
   font-size: 13px;
   line-height: 1.3;
 }
-.atlas .data-chart.is-far .dm-nm {
+.slope .data-chart.is-far .dm-nm {
   display: block;
   font-size: 30px;
   line-height: 1.05;
@@ -1295,36 +1224,36 @@ details.fold:not([open]) > summary::after {
   white-space: normal;
   word-break: break-word;
 }
-.atlas .data-chart.is-far .dm-chg {
+.slope .data-chart.is-far .dm-chg {
   font-size: 24px;
 }
 @container (max-width: 230px) {
-  .atlas .data-chart.is-far .dm-nm {
+  .slope .data-chart.is-far .dm-nm {
     font-size: 21px;
   }
 }
 /* The tier must survive the shrink: the root's edge and the chosen block's
    ring hold near-constant screen width while the chart is far. */
-.atlas .data-chart.is-far .data-mark.is-root {
+.slope .data-chart.is-far .data-mark.is-root {
   border-left-width: 8px;
   padding-left: 0;
 }
-.atlas .data-chart.is-far .data-mark.is-picked {
+.slope .data-chart.is-far .data-mark.is-picked {
   outline-width: 5px;
   outline-offset: 6px;
 }
 /* Wire words are unreadable below reading zoom; the lines thicken to stay
    lines. The inline stroke-width is per-wire data, so the far edition has to
    outrank it. */
-.atlas .data-chart.is-far .data-wire .wire-path {
+.slope .data-chart.is-far .data-wire .wire-path {
   stroke-width: 3.5px !important;
 }
-.atlas .data-chart.is-far .wire-label {
+.slope .data-chart.is-far .wire-label {
   display: none;
 }
 /* A boundary bundle's count is the bundle's whole point: it survives the far
    edition, sized for it. */
-.atlas .data-chart.is-far .data-wire.is-bundle .wire-label {
+.slope .data-chart.is-far .data-wire.is-bundle .wire-label {
   display: inline;
   font-size: 26px;
 }
@@ -1332,13 +1261,13 @@ details.fold:not([open]) > summary::after {
    halo, shown only while the chart is far. Its layer rides above the blocks
    — the skyline packs frames tight, so on the ground the name would spend
    its ink behind the paper — but below the chosen block's lift. */
-.atlas .df-world-layer.data-names {
+.slope .df-world-layer.data-names {
   z-index: 30;
 }
-.atlas .df-world-layer.data-names svg {
+.slope .df-world-layer.data-names svg {
   pointer-events: none;
 }
-.atlas .data-frame-name {
+.slope .data-frame-name {
   font-family: var(--font-data);
   font-weight: 500;
   fill: var(--color-ink);
@@ -1350,37 +1279,37 @@ details.fold:not([open]) > summary::after {
   pointer-events: none;
   transition: opacity 400ms ease-out;
 }
-.atlas .data-chart.is-far .data-frame-name {
+.slope .data-chart.is-far .data-frame-name {
   opacity: 0.55;
 }
-.atlas .data-chart.is-far .data-frame-name.is-dim {
+.slope .data-chart.is-far .data-frame-name.is-dim {
   opacity: 0.12;
 }
-.atlas .data-chart.is-far .data-frame-name.is-sel {
+.slope .data-chart.is-far .data-frame-name.is-sel {
   opacity: 0.8;
 }
-.atlas .data-wire.is-folded.is-near {
+.slope .data-wire.is-folded.is-near {
   display: inline;
 }
-.atlas .data-wire.is-near .wire-path {
+.slope .data-wire.is-near .wire-path {
   stroke: var(--color-ink);
 }
-.atlas .data-wire.is-near .wire-head {
+.slope .data-wire.is-near .wire-head {
   fill: var(--color-ink);
 }
-.atlas .data-wire.is-near .wire-path,
-.atlas .data-wire.is-near .wire-head {
+.slope .data-wire.is-near .wire-path,
+.slope .data-wire.is-near .wire-head {
   opacity: 1;
 }
-.atlas .data-wire.is-near .wire-label {
+.slope .data-wire.is-near .wire-label {
   fill: var(--color-ink);
 }
 @media (prefers-reduced-motion: reduce) {
-  .atlas .data-wire {
+  .slope .data-wire {
     animation: none;
     transition: none;
   }
-  .atlas .data-node {
+  .slope .data-node {
     transition: none;
   }
 }
@@ -1390,11 +1319,11 @@ details.fold:not([open]) > summary::after {
 /* A group is a section of one list, divided by a rule — not a plate inside the
    page's own paper. Nine boxed groups in a column was nine frames drawn to say
    what one rule each says. */
-.atlas .ego-group + .ego-group {
+.slope .ego-group + .ego-group {
   margin-top: 10px;
 }
 /* The group header is a file path. A path is never uppercased. */
-.atlas .ego-group-head {
+.slope .ego-group-head {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -1405,23 +1334,23 @@ details.fold:not([open]) > summary::after {
   font-size: 9.5px;
   color: var(--color-ink-soft);
 }
-.atlas .ego-group-rows {
+.slope .ego-group-rows {
   padding: 2px 0 0;
 }
 /* What the group holds back: private items, counted once, never named. */
-.atlas .ego-group-fold {
+.slope .ego-group-fold {
   padding: 1px 4px 0;
   font-family: var(--font-data);
   font-size: 9.5px;
   color: var(--color-ink-soft);
 }
-.atlas .ego-group-total {
+.slope .ego-group-total {
   flex: none;
   font-size: 9.5px;
   font-weight: 700;
   color: var(--color-ink);
 }
-.atlas .ego-row {
+.slope .ego-row {
   display: flex;
   align-items: baseline;
   gap: 6px;
@@ -1434,33 +1363,33 @@ details.fold:not([open]) > summary::after {
   text-align: left;
 }
 /* The keyword rust writes in front of the name, a shade quieter than it. */
-.atlas .ego-row-kw {
+.slope .ego-row-kw {
   flex: none;
   font-size: 9.5px;
   color: var(--color-ink-soft);
 }
-.atlas .ego-row-name {
+.slope .ego-row-name {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.atlas .ego-row-count {
+.slope .ego-row-count {
   flex: none;
   font-size: 9.5px;
   color: var(--color-ink-soft);
 }
-.atlas .ego-row.is-more {
+.slope .ego-row.is-more {
   font-size: 9.5px;
   color: var(--color-ink-soft);
   cursor: pointer;
 }
-.atlas .ego-row.is-more:hover {
+.slope .ego-row.is-more:hover {
   color: var(--color-ink);
 }
-.atlas a.ego-row:hover .ego-row-name,
-.atlas a.ego-row:focus-visible .ego-row-name {
+.slope a.ego-row:hover .ego-row-name,
+.slope a.ego-row:focus-visible .ego-row-name {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
@@ -1469,10 +1398,10 @@ details.fold:not([open]) > summary::after {
    would show it. The gutter counts from the item's first line in the real
    file and stays put while the code scrolls under it. Long definitions
    scroll inside the pane rather than being cut. */
-.atlas .ego-center {
+.slope .ego-center {
   min-width: 0;
 }
-.atlas .ego-code {
+.slope .ego-code {
   margin: 0;
   max-height: 70vh;
   overflow: auto;
@@ -1487,16 +1416,16 @@ details.fold:not([open]) > summary::after {
   line-height: 1.55;
   tab-size: 4;
 }
-.atlas .ego-lines {
+.slope .ego-lines {
   width: max-content;
   min-width: 100%;
 }
-.atlas .ego-line {
+.slope .ego-line {
   display: flex;
   align-items: flex-start;
   white-space: pre;
 }
-.atlas .ego-ln {
+.slope .ego-ln {
   position: sticky;
   left: 0;
   z-index: 1;
@@ -1510,7 +1439,7 @@ details.fold:not([open]) > summary::after {
   user-select: none;
   -webkit-user-select: none;
 }
-.atlas .ego-src {
+.slope .ego-src {
   user-select: text;
   -webkit-user-select: text;
   padding-right: 12px;
@@ -1518,33 +1447,33 @@ details.fold:not([open]) > summary::after {
 /* A row's definition unfolded in place: the same quoted pane, seated under
    its row and capped shorter than the plate's own quotation, so an outline
    stays an outline. The step deeper is the footer link. */
-.atlas .ego-expand {
+.slope .ego-expand {
   margin: 2px 0 6px;
 }
-.atlas .ego-expand .ego-code {
+.slope .ego-expand .ego-code {
   max-height: 40vh;
   border: none;
   border-left: 2.5px solid var(--color-ink-line);
   box-shadow: none;
   padding: 4px 0;
 }
-.atlas .ego-expand-foot {
+.slope .ego-expand-foot {
   margin-top: 3px;
   font-family: var(--font-data);
   font-size: 9.5px;
   color: var(--color-ink-soft);
 }
-.atlas .ego-expand-foot a {
+.slope .ego-expand-foot a {
   color: inherit;
   text-decoration: none;
 }
-.atlas .ego-expand-foot a:hover {
+.slope .ego-expand-foot a:hover {
   color: var(--color-ink);
   text-decoration: underline;
   text-underline-offset: 3px;
 }
 /* The pane before its source arrives: one honest line. */
-.atlas .ego-expand-load {
+.slope .ego-expand-load {
   font-family: var(--font-data);
   font-size: 9.5px;
   color: var(--color-ink-soft);
@@ -1552,60 +1481,60 @@ details.fold:not([open]) > summary::after {
 /* Token classes. Colour lives inside a code pane and nowhere else, and says
    one thing: what kind of token this is. Every hue clears 4.5:1 on paper, and
    none of them is the flare — amber still means CHANGED, here as everywhere. */
-.atlas .ego-code .tok-kw {
+.slope .ego-code .tok-kw {
   color: var(--color-tok-kw);
 }
-.atlas .ego-code .tok-fn,
-.atlas .ego-code .tok-macro {
+.slope .ego-code .tok-fn,
+.slope .ego-code .tok-macro {
   color: var(--color-tok-fn);
 }
-.atlas .ego-code .tok-type,
-.atlas .ego-code .tok-lifetime {
+.slope .ego-code .tok-type,
+.slope .ego-code .tok-lifetime {
   color: var(--color-tok-type);
 }
-.atlas .ego-code .tok-str {
+.slope .ego-code .tok-str {
   color: var(--color-tok-str);
 }
-.atlas .ego-code .tok-num {
+.slope .ego-code .tok-num {
   color: var(--color-tok-num);
 }
-.atlas .ego-code .tok-doc {
+.slope .ego-code .tok-doc {
   color: var(--color-tok-doc);
 }
-.atlas .ego-code .tok-comment {
+.slope .ego-code .tok-comment {
   color: var(--color-tok-comment);
 }
-.atlas .ego-code .tok-attr {
+.slope .ego-code .tok-attr {
   color: var(--color-ink-soft);
 }
-.atlas .ego-code .tok-punct {
+.slope .ego-code .tok-punct {
   color: var(--color-tok-punct);
 }
-.atlas .ego-code .tok-ident {
+.slope .ego-code .tok-ident {
   color: var(--color-ink);
 }
 /* A resolved run is a link: it keeps its token's colour, and a quiet
    underline alone says it goes somewhere — firmer under the pointer. */
-.atlas .ego-code .tok-link {
+.slope .ego-code .tok-link {
   cursor: pointer;
   text-decoration: underline;
   text-decoration-color: color-mix(in srgb, currentColor 30%, transparent);
   text-underline-offset: 3px;
 }
-.atlas .ego-code .tok-link:hover {
+.slope .ego-code .tok-link:hover {
   text-decoration-color: currentColor;
 }
 
 /* The impl section: what the source cannot show, because it is written
    somewhere else. Its header is the impl header, as written. */
-.atlas .ego-impl-head {
+.slope .ego-impl-head {
   padding-bottom: 2px;
   font-family: var(--font-data);
   font-size: 10.5px;
   font-weight: 500;
   color: var(--color-ink);
 }
-.atlas .ego-member {
+.slope .ego-member {
   display: flex;
   align-items: baseline;
   gap: 8px;
@@ -1615,15 +1544,15 @@ details.fold:not([open]) > summary::after {
   font-family: var(--font-data);
   text-decoration: none;
 }
-.atlas a.ego-member:hover {
+.slope a.ego-member:hover {
   background: color-mix(in srgb, var(--color-ink) 4%, transparent);
 }
-.atlas .ego-member-decl {
+.slope .ego-member-decl {
   flex: none;
   font-size: 10px;
   color: var(--color-ink-soft);
 }
-.atlas .ego-member-name {
+.slope .ego-member-name {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
@@ -1633,11 +1562,11 @@ details.fold:not([open]) > summary::after {
   font-weight: 500;
   color: var(--color-ink);
 }
-.atlas a.ego-member:hover .ego-member-name {
+.slope a.ego-member:hover .ego-member-name {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
-.atlas .ego-member-refs {
+.slope .ego-member-refs {
   flex: none;
   font-size: 9.5px;
   color: var(--color-ink-soft);
@@ -1645,7 +1574,7 @@ details.fold:not([open]) > summary::after {
 /* The line, in the plate's own locator idiom: the header names the file,
    the row completes it. Set apart from the ref count so the two never read as
    one run of digits. */
-.atlas .ego-member-line {
+.slope .ego-member-line {
   flex: none;
   width: 42px;
   text-align: right;
@@ -1661,7 +1590,7 @@ details.fold:not([open]) > summary::after {
    the flex track, the scroll area under it is unbounded and the plate runs off
    the page however short the key gets. `flex-basis: auto` so a short key still
    hugs its own content instead of stretching to the page edge. */
-.atlas .legend-plate::details-content {
+.slope .legend-plate::details-content {
   display: flex;
   flex-direction: column;
   flex: 1 1 auto;
@@ -1669,19 +1598,19 @@ details.fold:not([open]) > summary::after {
   overflow: hidden;
 }
 
-.atlas .legend-scroll {
+.slope .legend-scroll {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--color-ink-line)
     color-mix(in srgb, var(--color-ink) 7%, transparent);
 }
-.atlas .legend-scroll::-webkit-scrollbar {
+.slope .legend-scroll::-webkit-scrollbar {
   width: 6px;
 }
-.atlas .legend-scroll::-webkit-scrollbar-thumb {
+.slope .legend-scroll::-webkit-scrollbar-thumb {
   background: var(--color-ink-line);
 }
-.atlas .legend-scroll::-webkit-scrollbar-track {
+.slope .legend-scroll::-webkit-scrollbar-track {
   background: color-mix(in srgb, var(--color-ink) 7%, transparent);
 }
 

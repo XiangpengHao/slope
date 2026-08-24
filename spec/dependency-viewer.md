@@ -82,9 +82,9 @@ Living Chart" interaction notes and the Interaction and layout section.
   Manifest-event edges (added / removed / bumped) are always drawn, in
   flare. Default selection is the center crate, so the first paint is the
   root and its direct spokes.
-- Selection is the focus route (`/crate/:name`); every star is a link;
-  clicking the selected star (or back / Esc) returns to `/`. The camera
-  frames the whole rings on `/` and the selection's neighborhood on a
+- Selection is the focus route (`/dep/crate/:name`); every star is a link;
+  clicking the selected star (or back / Esc) returns to `/dep`. The camera
+  frames the whole rings on `/dep` and the selection's neighborhood on a
   focus. With the root at the center, change travels inward: a changed
   star's blast radius points at the center.
 - Ring cap (2026-08-18, same day): the chart draws at most four rings at
@@ -101,9 +101,9 @@ Living Chart" interaction notes and the Interaction and layout section.
   dependents and the path to the root are one press away.
 - Selection extensions (2026-08-18, same day): the selection is a set.
   Ctrl / cmd / shift-click toggles a star in or out of it; the whole set
-  is the URL (`/crate/a+b+c` — `+` cannot appear in a crate name), so
+  is the URL (`/dep/crate/a+b+c` — `+` cannot appear in a crate name), so
   multi-selections stay shareable and back-button-retracable. Clicking a
-  ring line itself selects every crate on that ring (`/ring/:hop`).
+  ring line itself selects every crate on that ring (`/dep/ring/:hop`).
   Middle-click on any star still opens its solo focus in a new tab. An
   edges toggle (depends on / used by / reverse deps) draws one reading of
   the selection's edges; manifest events are always drawn regardless. A
@@ -168,7 +168,7 @@ rings rework above):** after a critique run, the interaction model was
 redesigned. What changed relative to the Interaction and layout section
 below:
 
-- `/` is now the change report (changed crates + one hop downstream, with
+- `/dep` is now the change report (changed crates + one hop downstream, with
   a CHANGES queue plate), not the member atlas; the member atlas is the
   clean-epoch fallback.
 - focus no longer swaps to a new chart: clicking a star blooms its

@@ -8,7 +8,7 @@ use dioxus_flow::prelude::*;
 
 use crate::Route;
 use crate::api::CrateInfo;
-use crate::views::shell::use_atlas;
+use crate::views::dep::use_dep;
 
 /// Payload carried by chart nodes: one crate's star on the rings.
 #[derive(Clone, PartialEq)]
@@ -258,9 +258,9 @@ pub(crate) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
     // Plain click replaces the selection; ctrl / cmd / shift-click toggles
     // this crate in the current one. The href stays the solo route, so
     // middle-click still opens the crate in its own tab.
-    let atlas = use_atlas();
+    let dep = use_dep();
     let nav = use_navigator();
-    let solo_href = Route::Focus {
+    let solo_href = Route::DepFocus {
         name: info.name.clone(),
     }
     .to_string();
@@ -271,7 +271,7 @@ pub(crate) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
         let m = e.modifiers();
         let name = click_name.clone();
         if m.ctrl() || m.meta() || m.shift() {
-            let mut set = atlas.selected.peek().clone();
+            let mut set = dep.selected.peek().clone();
             match set.iter().position(|n| n == &name) {
                 Some(i) => {
                     set.remove(i);
@@ -279,16 +279,16 @@ pub(crate) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
                 None => set.push(name),
             }
             if set.is_empty() {
-                nav.push(Route::Overview {});
+                nav.push(Route::DepOverview {});
             } else {
-                nav.push(Route::Focus {
+                nav.push(Route::DepFocus {
                     name: set.join("+"),
                 });
             }
-        } else if focal && atlas.selected.peek().len() == 1 {
-            nav.push(Route::Overview {});
+        } else if focal && dep.selected.peek().len() == 1 {
+            nav.push(Route::DepOverview {});
         } else {
-            nav.push(Route::Focus { name });
+            nav.push(Route::DepFocus { name });
         }
     };
 

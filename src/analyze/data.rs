@@ -59,9 +59,6 @@ pub(super) struct Holder {
 pub(super) struct MethodOf {
     /// The method's own mark.
     pub(crate) mark: u32,
-    pub(crate) vis: Vis,
-    /// Declared inside `impl Trait for Type`.
-    pub(crate) via_trait: bool,
 }
 
 /// What the walk found. Everything but `holds` is indexed by mark id, so the
@@ -105,8 +102,8 @@ enum WrapperHome {
 /// tuples, arrays, slices, and every unknown external type — is transparent:
 /// the walk passes through into its arguments and the hold stays plain.
 /// Interior mutability without a shared handle is still ownership; sharing
-/// needs a shared handle. The legend on `/surface` quotes this table, so the
-/// two must agree.
+/// needs a shared handle. The legend on `/data` quotes this table, so the two
+/// must agree.
 const WRAPPERS: &[(&str, WrapperHome, HoldKind)] = &[
     // A shared handle: the state behind it has more than one possible reader.
     ("Arc", WrapperHome::Std, HoldKind::Shares),
@@ -341,8 +338,6 @@ pub(super) fn walk<'db>(
                     method_rows[mark].push(MethodRow {
                         name,
                         sig,
-                        vis: method.vis,
-                        via_trait: method.via_trait,
                         mark: method.mark,
                     });
                 }
@@ -400,8 +395,6 @@ pub(super) fn walk<'db>(
                         method_rows[mark].push(MethodRow {
                             name,
                             sig,
-                            vis: method.vis,
-                            via_trait: method.via_trait,
                             mark: method.mark,
                         });
                         continue;

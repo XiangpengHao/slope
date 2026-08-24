@@ -569,8 +569,8 @@ mod tests {
     fn tree_mirrors_directories() {
         let g = graph(&[
             "src/main.rs",
-            "src/views/atlas.rs",
-            "src/views/star.rs",
+            "src/views/shell.rs",
+            "src/views/survey.rs",
             "build.rs",
         ]);
         let tree = FileTree::build(&g);

@@ -1,11 +1,11 @@
 //! The code survey, fetched once for the two altitudes that read it.
 //!
-//! `/code`, `/surface` and `/data` are three readings of one rust-analyzer
-//! survey — the same files, the same items, the same resolved references — so
-//! the fetch, its loading moment, and its failure plate live here instead of
-//! in any one altitude. This shell stays mounted across a rung change on the
-//! altitude ladder, so stepping between them never asks the server for the
-//! survey a second time.
+//! `/code` and `/data` are two readings of one rust-analyzer survey — the same
+//! files, the same items, the same resolved references — so the fetch, its
+//! loading moment, and its failure plate live here instead of in either
+//! altitude. This shell stays mounted across a rung change on the altitude
+//! ladder, so stepping between them never asks the server for the survey a
+//! second time.
 
 use dioxus::prelude::*;
 
@@ -13,7 +13,6 @@ use crate::Route;
 use crate::api::{CodeGraph, code_graph};
 use crate::views::codemap::CodeShell;
 use crate::views::data::DataShell;
-use crate::views::surface::SurfaceShell;
 
 type CodeResource = Resource<Result<CodeGraph, ServerFnError>>;
 
@@ -25,18 +24,14 @@ pub(crate) fn use_code_graph() -> Option<CodeGraph> {
 }
 
 /// Loads the survey, gates its loading and error states, and hands it to
-/// whichever altitude the route asks for. Mounted by the atlas shell for every
-/// `/code` and `/surface` route.
+/// whichever altitude the route asks for. Mounted by the app shell for every
+/// `/code` and `/data` route.
 #[component]
 pub(crate) fn SurveyShell(workspace: String, diff_line: String) -> Element {
     let resource: CodeResource = use_resource(code_graph);
     use_context_provider(|| resource);
 
     let route = use_route::<Route>();
-    let surface = matches!(
-        route,
-        Route::SurfaceOverview {} | Route::SurfaceFocus { .. } | Route::SurfaceModFocus { .. }
-    );
     let data = matches!(
         route,
         Route::DataOverview {} | Route::DataFocus { .. } | Route::DataModFocus { .. }
@@ -50,13 +45,6 @@ pub(crate) fn SurveyShell(workspace: String, diff_line: String) -> Element {
             },
             Some(Err(err)) => rsx! {
                 SurveyFailed { message: err.to_string(), resource }
-            },
-            Some(Ok(graph)) if surface => rsx! {
-                SurfaceShell {
-                    graph: graph.clone(),
-                    workspace: workspace.clone(),
-                    diff_line: diff_line.clone(),
-                }
             },
             Some(Ok(graph)) if data => rsx! {
                 DataShell {
@@ -142,7 +130,7 @@ fn SurveyFailed(message: String, resource: CodeResource) -> Element {
                     "{message}"
                 }
                 p { class: "mt-3 font-data text-[10.5px] leading-relaxed text-ink-soft",
-                    "The dependency atlas still works without it."
+                    "The dependency chart still works without it."
                 }
                 div { class: "mt-3 flex gap-4",
                     button {
@@ -155,7 +143,7 @@ fn SurveyFailed(message: String, resource: CodeResource) -> Element {
                     }
                     Link {
                         class: "font-data text-[10px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
-                        to: Route::Overview {},
+                        to: Route::DepOverview {},
                         "← dependencies"
                     }
                 }

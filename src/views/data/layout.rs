@@ -1,4 +1,4 @@
-//! Where the surface chart's marks and frames sit on the paper.
+//! Where the data chart's frames, marks and fold rows sit on the paper.
 //!
 //! A pure function of (frames, measured sizes): every block is measured before
 //! anything is placed, a frame's ownership forest is tidied into trees, the
@@ -18,7 +18,7 @@
 use std::collections::HashMap;
 
 use crate::views::codemap::tree::Placed;
-use crate::views::surface::model::{Anchor, Frame, Seat};
+use crate::views::data::model::{Anchor, Frame, Seat};
 
 /// Frame furniture, in flow units — one unit is one CSS pixel at zoom 1.
 const PAD: f64 = 14.0;
@@ -50,22 +50,12 @@ pub(crate) struct Sizes {
 
 /// The whole chart, placed and centered on the flow origin.
 #[derive(Clone, PartialEq, Debug, Default)]
-pub(crate) struct SurfaceLayout {
+pub(crate) struct DataLayout {
     pub(crate) marks: HashMap<u32, Placed>,
     pub(crate) rows: HashMap<Anchor, Placed>,
     /// Outermost first, so a nested tint lays over its parent's.
     pub(crate) frames: Vec<(u32, Placed)>,
     pub(crate) size: (f64, f64),
-}
-
-impl SurfaceLayout {
-    /// Where an edge's end is, whichever kind of anchor it landed on.
-    pub(crate) fn rect(&self, anchor: Anchor) -> Option<Placed> {
-        match anchor {
-            Anchor::Mark(id) => self.marks.get(&id).copied(),
-            other => self.rows.get(&other).copied(),
-        }
-    }
 }
 
 /// One thing a shelf seats: a tidied tree out of a frame's forest, or a nested
@@ -289,7 +279,7 @@ fn kids_of(frame: &Frame, frames: &[Frame], sizes: &Sizes) -> Vec<(Kid, f64, f64
     kids
 }
 
-impl SurfaceLayout {
+impl DataLayout {
     /// Lay every frame and every mark, centered on the flow origin.
     pub(crate) fn build(frames: &[Frame], sizes: &Sizes) -> Self {
         // The crate frames, side by side on the sheet.
@@ -332,7 +322,7 @@ impl SurfaceLayout {
         }
         let (w, h) = (content_w, y + row_h);
         let placed = out.shift(-w / 2.0, -h / 2.0);
-        SurfaceLayout {
+        DataLayout {
             marks: placed.marks.into_iter().collect(),
             rows: placed.rows.into_iter().collect(),
             frames: placed.frames,
@@ -354,7 +344,6 @@ mod tests {
             module: module.iter().map(|s| (*s).to_string()).collect(),
             parent,
             marks: marks.to_vec(),
-            private: 0,
             folded: false,
             packed: 0,
             forest: marks.iter().map(|&m| Seat::leaf(Anchor::Mark(m))).collect(),
@@ -401,7 +390,7 @@ mod tests {
             api,
             frame(2, &["views"], Some(0), &[3, 4]),
         ];
-        let placed = SurfaceLayout::build(&frames, &sizes(&[0, 1, 2, 3, 4, 9]));
+        let placed = DataLayout::build(&frames, &sizes(&[0, 1, 2, 3, 4, 9]));
 
         let boxes: Vec<Placed> = placed.marks.values().copied().collect();
         for (i, a) in boxes.iter().enumerate() {
@@ -428,7 +417,7 @@ mod tests {
     fn a_child_seats_one_layer_under_the_parent_that_owns_it() {
         let mut api = frame(0, &["api"], None, &[0, 1, 2]);
         api.forest = vec![seat(0, &[1, 2])];
-        let placed = SurfaceLayout::build(&[api], &sizes(&[0, 1, 2]));
+        let placed = DataLayout::build(&[api], &sizes(&[0, 1, 2]));
         let (root, left, right) = (placed.marks[&0], placed.marks[&1], placed.marks[&2]);
 
         // One layer down, with room between them for the owns edge.
@@ -451,7 +440,7 @@ mod tests {
                 .collect(),
             ..Default::default()
         };
-        let placed = SurfaceLayout::build(&[api], &sizes);
+        let placed = DataLayout::build(&[api], &sizes);
         let (root, kid) = (placed.marks[&0], placed.marks[&1]);
         assert!((root.x + root.w / 2.0 - (kid.x + kid.w / 2.0)).abs() < 0.001);
         assert!(kid.x > root.x);
@@ -466,12 +455,12 @@ mod tests {
             api,
             frame(2, &["views"], Some(0), &[2]),
         ];
-        let a = SurfaceLayout::build(&frames, &sizes(&[0, 1, 2]));
-        let b = SurfaceLayout::build(&frames, &sizes(&[0, 1, 2]));
+        let a = DataLayout::build(&frames, &sizes(&[0, 1, 2]));
+        let b = DataLayout::build(&frames, &sizes(&[0, 1, 2]));
         assert_eq!(a, b);
     }
 
-    /// The module tree runs as deep as the code does: `mod views::surface` is
+    /// The module tree runs as deep as the code does: `mod views::data` is
     /// drawn inside `mod views`, inside the crate, and every block still lands
     /// in the frame that declares it.
     #[test]
@@ -479,18 +468,18 @@ mod tests {
         let frames = vec![
             frame(0, &[], None, &[]),
             frame(1, &["views"], Some(0), &[0]),
-            frame(2, &["views", "surface"], Some(1), &[1]),
-            frame(3, &["views", "surface", "wire"], Some(2), &[2]),
+            frame(2, &["views", "data"], Some(1), &[1]),
+            frame(3, &["views", "data", "wire"], Some(2), &[2]),
         ];
-        let placed = SurfaceLayout::build(&frames, &sizes(&[0, 1, 2]));
+        let placed = DataLayout::build(&frames, &sizes(&[0, 1, 2]));
         let of = |id: u32| placed.frames.iter().find(|(f, _)| *f == id).unwrap().1;
-        let (root, views, surface, wire) = (of(0), of(1), of(2), of(3));
+        let (root, views, data, wire) = (of(0), of(1), of(2), of(3));
         assert!(contains(&root, &views));
-        assert!(contains(&views, &surface));
-        assert!(contains(&surface, &wire));
+        assert!(contains(&views, &data));
+        assert!(contains(&data, &wire));
         assert!(contains(&views, &placed.marks[&0]));
-        assert!(!overlaps(&surface, &placed.marks[&0]));
-        assert!(contains(&surface, &placed.marks[&1]));
+        assert!(!overlaps(&data, &placed.marks[&0]));
+        assert!(contains(&data, &placed.marks[&1]));
         assert!(contains(&wire, &placed.marks[&2]));
         // Outermost first, so a nested tint lays over the one it sits in.
         assert_eq!(

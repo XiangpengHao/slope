@@ -44,13 +44,13 @@ How it works today:
 
 Frontend (`src/views/`): one living chart that blooms.
 
-- `/` is the change report: every changed crate and one hop downstream,
+- `/dep` is the change report: every changed crate and one hop downstream,
   plus manifest-event externals. on a clean epoch it falls back to the
   member atlas. a CHANGES plate lists the changed crates as links — the
   review queue — and marks each SEEN once visited.
 - clicking a star blooms its neighborhood in place: the chart never
   remounts; new stars grow out of the star they came from, the camera
-  glides. each bloom pushes `/crate/:name`, so browser back (or Esc)
+  glides. each bloom pushes `/dep/crate/:name`, so browser back (or Esc)
   closes the most recent bloom — back is the undo of the review trail.
   a deep link opens a fresh chart bloomed on just that crate.
 - clicking an open star again folds its bloom (the focal star's click is

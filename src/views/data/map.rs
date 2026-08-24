@@ -6,10 +6,10 @@
 //! that owns it hardest, the way module frames nest, so the tier is read off
 //! the paper's own nesting before any words are. A block quotes its whole
 //! declaration — fields, variants, a static's type — and contains the blocks
-//! it owns under a hairline rule. No methods: what a type promises is the
-//! surface chart's ink, one rung up.
+//! it owns under a hairline rule. No methods: what a type promises is read on
+//! its definition plate, one rung up.
 //!
-//! Two families run between the blocks, the surface chart's grammar exactly:
+//! Two families run between the blocks, and only two:
 //! solid holding lines with the wrapper's word (`Arc`, `&`) for what the
 //! nesting cannot say, and dashed counted uses edges for one type's impls
 //! leaning on another. Both rest on the dependent. What has no block here —
@@ -32,16 +32,15 @@ use crate::views::codemap::chrome::{decl_words, plural};
 use crate::views::codemap::map::{narrow_viewport, prefers_reduced_motion, tie_ends, window_size};
 use crate::views::codemap::tree::{Placed, text_w};
 use crate::views::codemap::use_code;
-use crate::views::data::model::{DataMark, DataModel, Tier};
+use crate::views::data::layout::{self, DataLayout, Sizes};
+use crate::views::data::model::{
+    Anchor, DataMark, DataModel, FieldRow, Held, Tier, brackets, upstream,
+};
 use crate::views::data::{DataSel, mark_route, mod_route, use_data};
-use crate::views::surface::layout::{self, Sizes, SurfaceLayout};
-use crate::views::surface::map::Quoted;
-use crate::views::surface::model::{Anchor, FieldRow, Held, brackets, upstream};
 
 // ---------------------------------------------------------------------------
 // Block furniture, in flow units — one unit is one CSS pixel at zoom 1. These
 // numbers are the CSS in `tailwind.css`; move one and the other must follow.
-// The core rows share the surface block's anatomy and its numbers.
 // ---------------------------------------------------------------------------
 
 const PAD_TOP: f64 = 6.0;
@@ -228,7 +227,7 @@ struct DataDrawing {
     dirty: bool,
 }
 
-/// A module reading's own ink, as on the surface chart.
+/// A module reading's own ink: which frame was chosen, and what it keeps.
 #[derive(Clone, PartialEq)]
 struct ModHome {
     frame: u32,
@@ -238,7 +237,7 @@ struct ModHome {
 
 /// The selection's ink: the chosen mark, its blast radius up the holding
 /// order (nesting included), what it directly holds, and its uses
-/// neighbours. Same reading as the surface chart's, over this chart's pairs.
+/// neighbours.
 #[derive(Clone, PartialEq)]
 struct DataKin {
     sel: Option<Anchor>,
@@ -550,7 +549,6 @@ impl FoldView {
 fn node_key(anchor: Anchor) -> String {
     match anchor {
         Anchor::Mark(id) => format!("m{id}"),
-        Anchor::Private(frame) => format!("p{frame}"),
         Anchor::Mod(frame) => format!("f{frame}"),
     }
 }
@@ -654,7 +652,7 @@ impl From<&DataModel> for DataDrawing {
             }
         }
 
-        let placed: SurfaceLayout = SurfaceLayout::build(&model.frames, &sizes);
+        let placed: DataLayout = DataLayout::build(&model.frames, &sizes);
 
         // Every drawn anchor's box — the nested blocks' computed off their
         // parents — and every anchor's frame, for the module reading.
@@ -825,6 +823,123 @@ impl From<&DataModel> for DataDrawing {
 // ---------------------------------------------------------------------------
 // Rendering.
 // ---------------------------------------------------------------------------
+
+/// One quoted row, split into token runs: `(class, run, held)`. A mark's field
+/// and variant rows are quotations, so inside them color is token class, by
+/// the plate's own grammar — keywords, uppercase-initial names and lifetimes,
+/// numbers, punctuation. The one run that names the row's held workspace type
+/// is bold on top of its class, so `Vec<FileDetail>` still reads as the
+/// wrapper it is around the type it reaches.
+pub(crate) fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool)> {
+    const KEYWORDS: [&str; 8] = ["dyn", "mut", "impl", "fn", "pub", "crate", "const", "as"];
+    let ident = |c: char| c.is_alphanumeric() || c == '_';
+    let mut out: Vec<(&'static str, String, bool)> = Vec::new();
+    let mut chars = text.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if ident(c) {
+            let mut run = String::new();
+            while chars.peek().copied().is_some_and(ident) {
+                run.push(chars.next().unwrap());
+            }
+            let class = if c.is_ascii_digit() {
+                "tok-num"
+            } else if KEYWORDS.contains(&run.as_str()) {
+                "tok-kw"
+            } else if c.is_uppercase() {
+                "tok-type"
+            } else {
+                ""
+            };
+            let held = !target.is_empty() && run == target;
+            out.push((class, run, held));
+        } else if c == '\'' {
+            let mut run = String::from(chars.next().unwrap());
+            while chars.peek().copied().is_some_and(ident) {
+                run.push(chars.next().unwrap());
+            }
+            out.push(("tok-type", run, false));
+        } else {
+            let mut run = String::new();
+            while chars
+                .peek()
+                .copied()
+                .is_some_and(|c| !ident(c) && c != '\'')
+            {
+                run.push(chars.next().unwrap());
+            }
+            out.push(("tok-punct", run, false));
+        }
+    }
+    out
+}
+
+/// One quoted declaration, drawn as its token runs — and where the run that
+/// names a workspace type has a block on this chart, that run is a link
+/// straight to it (2026-08-24, user): a reader who meets `kind: ItemKind`
+/// inside a block should not have to go find `ItemKind` on the paper by eye.
+/// The link is the same focus the block's own click is, so what follows it is
+/// the chart's ordinary selection — the sheet, the inked blast radius, and a
+/// camera that glides only where the block is not already legible. The row
+/// carries the route with the name, so every row on the chart is quoted
+/// through this one component.
+#[component]
+pub(crate) fn Quoted(text: String, held: Held) -> Element {
+    let runs = spans(&text, &held.name);
+    rsx! {
+        for (j , (class , run , is_held)) in runs.into_iter().enumerate() {
+            if let (true, Some(to)) = (is_held, held.at.clone()) {
+                HeldRun {
+                    key: "{j}",
+                    class: class.to_string(),
+                    run,
+                    to,
+                }
+            } else {
+                span {
+                    key: "{j}",
+                    class: if !class.is_empty() { "{class}" },
+                    class: if is_held { "dm-held" },
+                    "{run}"
+                }
+            }
+        }
+    }
+}
+
+/// The run that names a held type, as its own link inside the row: a span and
+/// not an anchor, because the block around it is already one at this altitude
+/// and an anchor cannot nest. Its own component so the route can be cloned
+/// into the gesture without the row's loop carrying a second copy of it.
+#[component]
+fn HeldRun(class: String, run: String, to: Route) -> Element {
+    let nav = use_navigator();
+    let push = to.clone();
+    let pressed = to.clone();
+    rsx! {
+        span {
+            class: if !class.is_empty() { "{class}" },
+            class: "dm-held is-link",
+            role: "link",
+            tabindex: "0",
+            title: "{run} — go to its block",
+            // The block around this run is a link to itself, and its own
+            // default navigation is the anchor's: a run naming another block
+            // must not select the one it is written in on the way out.
+            onclick: move |e: Event<MouseData>| {
+                e.prevent_default();
+                e.stop_propagation();
+                nav.push(push.clone());
+            },
+            onkeydown: move |e: Event<KeyboardData>| {
+                if e.key() == Key::Enter {
+                    e.stop_propagation();
+                    nav.push(pressed.clone());
+                }
+            },
+            "{run}"
+        }
+    }
+}
 
 /// One block, drawn — and the blocks it contains, drawn inside it by the
 /// same component. The block's own paint (header, rows, foot, locator) sits
@@ -1022,9 +1137,8 @@ fn DataNode(
     }
 }
 
-/// The ground: crate and module frames, the same two border gestures as the
-/// surface chart — the line selects the module, the mark at its other end
-/// folds it — pointed at this altitude's own routes and fold store.
+/// The ground: crate and module frames, with two gestures on every border —
+/// the line selects the module, the mark at its other end folds it.
 #[component]
 fn FrameLayer(frames: Vec<FrameView>, kin: Option<DataKin>) -> Element {
     let nav = use_navigator();
@@ -1328,7 +1442,7 @@ fn WireLayer(
 }
 
 /// Chrome insets at the data altitude: the cartouche column left, the sheet
-/// right while a mark is selected. The same choreography as the surface.
+/// right while a mark is selected — the choreography every altitude keeps.
 fn chrome_insets(narrow: bool, panel: bool) -> (f64, f64, f64, f64) {
     if narrow {
         (312.0, 20.0, 70.0, 12.0)
@@ -1352,7 +1466,7 @@ const FAR_OUT: f64 = 0.55;
 const READ_ZOOM: f64 = 0.5;
 
 /// The camera as the reviewer last left it, surviving route-variant
-/// remounts. Provided by the atlas shell, which outlives every remount.
+/// remounts. Provided by the app shell, which outlives every remount.
 #[derive(Clone, Copy)]
 pub(crate) struct DataCamera {
     pub(crate) viewport: Signal<Option<Viewport>>,
@@ -1747,8 +1861,8 @@ fn FitInsets(top: f64, right: f64, bottom: f64, left: f64) -> Element {
 mod tests {
     use super::*;
     use crate::api::Vis;
+    use crate::views::data::model::RowState;
     use crate::views::data::model::Tier;
-    use crate::views::surface::model::RowState;
 
     fn mark(id: u32, name: &str, fields: Vec<(&str, &str, &str)>, kids: Vec<u32>) -> DataMark {
         DataMark {

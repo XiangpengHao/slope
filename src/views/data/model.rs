@@ -1,11 +1,11 @@
 //! What the data chart reads out of the survey: the workspace's state, tiered.
 //!
-//! The surface chart asks what the code promises; this altitude asks what the
-//! code *keeps*. Its marks are the shapes state can take — structs, enums,
+//! The code map asks where the code is written; this altitude asks what it
+//! *keeps*. Its marks are the shapes state can take — structs, enums,
 //! unions — and the statics that anchor state no type holds. Functions,
 //! traits, consts and aliases have no block here: a signature names state, it
-//! does not keep any, so naming is counted on the mark it names and the
-//! surface chart stays the place where contracts are read.
+//! does not keep any, so naming is counted on the mark it names and read on
+//! the sheet.
 //!
 //! The one organizing move is the tier. **Top-level data is a root**: a
 //! static, or a type no other workspace type keeps in a field. Everything
@@ -26,22 +26,330 @@
 
 use std::collections::{HashMap, HashSet};
 
+use crate::Route;
 use crate::api::{CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, ItemMark, Vis};
 use crate::views::codemap::RefDir;
 use crate::views::codemap::model::Containment;
 use crate::views::data::mark_route;
-use crate::views::surface::model::{
-    Anchor, FieldRow, Folds, Frame, Held, RowState, Seat, mod_key, module_path,
-};
 
 /// Structural holders a standing mark draws before folding them to a count on
 /// its own foot. Past this the type is vocabulary: seating it under one holder
 /// would misread the rest, and its fan-in drawn in full is a star burst.
 const HELD_CAP: usize = 3;
-/// Resting uses edges whose counts are engraved, as on the surface chart.
+/// Resting uses edges whose counts are engraved. Past this the labels are the
+/// chart's texture instead of its data.
 pub(crate) const TIE_LABELS: usize = 12;
 /// Uses edges one mark rests in an anchored reading.
 const TIES_PER_MARK: usize = 2;
+
+// ---------------------------------------------------------------------------
+// The chart's vocabulary: where an edge can land, what a frame is, and how a
+// row is quoted. Pure descriptions of the paper, with no reading of the survey
+// in them — the reading is `DataModel::build`, below.
+// ---------------------------------------------------------------------------
+
+/// Where an edge can land: a drawn mark, or the counted row a folded module
+/// leaves behind. A reader can fold a whole module; the edge lands on the row
+/// that counts it instead of being cut.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
+pub(crate) enum Anchor {
+    /// A type or static with a block of its own.
+    Mark(u32),
+    /// A whole module, folded by hand: the frame's own row, standing for every
+    /// datum inside it and inside the modules nested in it.
+    Mod(u32),
+}
+
+/// The modules the reviewer folded by hand, each named the way a fold has to
+/// survive the next build: the crate, then the module path as rust nests it.
+/// A frame id is an index into one build and says nothing across two.
+pub(crate) type Folds = HashSet<Vec<String>>;
+
+/// A module frame's name in a [`Folds`] set: the crate first, then the module
+/// path. The crate's own frame is the crate name alone.
+pub(crate) fn mod_key(krate: &str, module: &[String]) -> Vec<String> {
+    let mut key = vec![krate.to_string()];
+    key.extend(module.iter().cloned());
+    key
+}
+
+impl Anchor {
+    /// The frame a counted row stands in. `None` on a mark, which stands for
+    /// itself wherever it was seated.
+    pub(crate) fn frame(self) -> Option<u32> {
+        match self {
+            Anchor::Mark(_) => None,
+            Anchor::Mod(frame) => Some(frame),
+        }
+    }
+}
+
+/// One seat in a frame's ownership forest: a block, and the blocks that sit
+/// under it because it owns them. A folded module's counted row is a seat of
+/// its own, with nothing under it — the fold is the whole reading.
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) struct Seat {
+    pub(crate) anchor: Anchor,
+    /// Seated one layer beneath, in the survey's order.
+    pub(crate) children: Vec<Seat>,
+}
+
+impl Seat {
+    /// A seat with nothing under it.
+    pub(crate) fn leaf(anchor: Anchor) -> Self {
+        Self {
+            anchor,
+            children: Vec::new(),
+        }
+    }
+}
+
+/// One frame on the paper: a workspace crate, or one module inside a crate.
+/// Module frames nest the way rust's modules do — `mod views` holds `mod data`
+/// holds the state `views::data` declares — so the ground reads as the tree the
+/// code is written in rather than as one flat row of the crate's first
+/// segments.
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) struct Frame {
+    pub(crate) id: u32,
+    pub(crate) krate: String,
+    /// The module path, segment by segment, as rust names it: `["views",
+    /// "data"]` is `mod views::data`. Empty is the crate's own frame, which
+    /// holds the types its crate root declares.
+    pub(crate) module: Vec<String>,
+    /// The frame this one sits inside: the module one segment up, or the crate
+    /// frame for a top-level module. `None` only on a crate frame.
+    pub(crate) parent: Option<u32>,
+    /// Drawn marks seated here, in the survey's (file, source) order. The
+    /// roster of what the frame draws; `forest` says where each one sits.
+    pub(crate) marks: Vec<u32>,
+    /// The reviewer folded this module by hand: it draws its border, its label
+    /// and one row, and nothing inside it is on the paper. The modules nested
+    /// in it earn no frame of their own — a fold is one boundary, not a stack
+    /// of empty ones.
+    pub(crate) folded: bool,
+    /// What that row counts: every datum inside this module and inside the
+    /// modules nested in it. Zero on an open frame.
+    pub(crate) packed: u32,
+    /// How they seat: the frame's ownership forest, in reading order —
+    /// statics, then roots by how much state stands under them, then the
+    /// vocabulary leaves. Every mark in `marks` sits somewhere in here exactly
+    /// once, and a folded frame's own row is a seat of its own.
+    pub(crate) forest: Vec<Seat>,
+}
+
+impl Frame {
+    /// The label engraved on the frame's border, in rust's own words. A module
+    /// frame wears its last segment alone — `mod data`, drawn inside `mod
+    /// views` — because that is how rust writes it in the file, and the paper's
+    /// own nesting says the rest of the path. A crate frame names its crate
+    /// only where the survey has more than one to tell apart; in a single-crate
+    /// workspace that name is already the cartouche's.
+    pub(crate) fn label(&self, multi_crate: bool) -> Option<String> {
+        match self.module.last() {
+            Some(segment) => Some(format!("mod {segment}")),
+            None => multi_crate.then(|| self.krate.clone()),
+        }
+    }
+
+    /// This frame's name in a [`Folds`] set, and in the URL that selects it.
+    pub(crate) fn key(&self) -> Vec<String> {
+        mod_key(&self.krate, &self.module)
+    }
+
+    /// The frame in prose, where no paper around it says which one it is: the
+    /// whole path as rust would write it in a `use` line (`views::data`), or
+    /// the crate's own name where the frame is the crate's. The border's chip
+    /// says `mod map` and three modules in this workspace answer to that, so
+    /// a line the reader meets away from the chart spells the path out.
+    pub(crate) fn words(&self) -> String {
+        match self.module.is_empty() {
+            true => self.krate.clone(),
+            false => self.module.join("::"),
+        }
+    }
+}
+
+/// One quoted row's own diff state, in the diff's own idiom: an added row
+/// wears `+`, a dropped one is quoted from the base and struck.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(crate) enum RowState {
+    #[default]
+    Same,
+    Added,
+    Removed,
+}
+
+impl RowState {
+    /// The diff's own marker for the row.
+    pub(crate) fn marker(self) -> Option<&'static str> {
+        match self {
+            RowState::Same => None,
+            RowState::Added => Some("+"),
+            RowState::Removed => Some("−"),
+        }
+    }
+
+    /// The row's CSS class, empty for an untouched row.
+    pub(crate) fn class(self) -> &'static str {
+        match self {
+            RowState::Same => "",
+            RowState::Added => "is-add",
+            RowState::Removed => "is-del",
+        }
+    }
+}
+
+/// The workspace type one quoted row reaches: the name to draw in full ink,
+/// and — where this chart draws that type's own block — where that block
+/// stands, so the run can be its own link.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub(crate) struct Held {
+    /// The held type's name — the one run of the declaration drawn in full ink,
+    /// so `Vec<FileDetail>` reads as the wrapper it is around the type it
+    /// holds. Empty where the row reaches nothing this workspace declares.
+    pub(crate) name: String,
+    /// The route that selects the block that run names, at this altitude.
+    /// `Some` makes the run a link of its own — click the type's name inside
+    /// a row and the chart goes to that type (2026-08-24, user), which is the
+    /// same focus the block's own click is, so the camera glides only where
+    /// the block is not already legible. `None` where there is no block to go
+    /// to — a folded module's state — or where the run names the block it is
+    /// written in, which is where the reader already stands.
+    pub(crate) at: Option<Route>,
+}
+
+#[cfg(test)]
+impl Held {
+    /// A held name with no block to go to.
+    pub(crate) fn named(name: &str) -> Self {
+        Held {
+            name: name.to_string(),
+            at: None,
+        }
+    }
+}
+
+/// One quoted row of a block: a field or a variant, as the source writes it.
+/// Nothing here is reconstructed.
+#[derive(Clone, PartialEq, Debug)]
+pub(crate) struct FieldRow {
+    pub(crate) name: String,
+    pub(crate) decl: String,
+    /// What the row declares for itself, drawn in front of its name. A field
+    /// can be narrower than the type holding it — a `pub(crate)` struct may
+    /// publish some fields and keep the rest — and a reader deciding what may
+    /// touch this state has to see which (2026-08-24, user). A variant declares
+    /// nothing of its own: it is as visible as the enum it belongs to.
+    pub(crate) vis: Vis,
+    /// The workspace type this row reaches, and where its block stands.
+    pub(crate) target: Held,
+    /// The row against the diff base. A `Removed` row is the base's, seated
+    /// where it stood.
+    pub(crate) state: RowState,
+}
+
+/// What a block's head opens with and what closes it, so a quotation reads
+/// the way rust writes it (2026-08-24, user): braces around a body, and
+/// nothing at all around a declaration with no rows to bracket — a unit
+/// struct, a static with no type the survey could read. The closer is a line
+/// of its own, which is what makes a long block's end findable.
+pub(crate) fn brackets(kind: ItemKind, rows: usize) -> (&'static str, &'static str) {
+    match kind {
+        _ if rows == 0 => ("", ""),
+        ItemKind::Struct | ItemKind::Union | ItemKind::Enum => ("{", "}"),
+        // No body to bracket: the line under the name is the declared type,
+        // and rust writes a colon in front of it — an alias, an equals.
+        ItemKind::Static | ItemKind::Const => (":", ""),
+        ItemKind::TypeAlias => ("=", ""),
+        _ => ("", ""),
+    }
+}
+
+impl FieldRow {
+    /// The row as the block draws it: what it declares, its name, its type.
+    /// One string, so measuring a row and drawing it can never disagree.
+    pub(crate) fn written(&self) -> String {
+        let body = match self.name.is_empty() {
+            true => self.decl.clone(),
+            false => format!("{}: {}", self.name, self.decl),
+        };
+        match self.vis.keyword() {
+            Some(keyword) => format!("{keyword} {body}"),
+            None => body,
+        }
+    }
+}
+
+/// Every anchor a shape change to `from` could reach, walking holds edges
+/// holder-ward: the transitive holders, and the contracts that name them —
+/// a signature has to change with the shape it quotes. `pairs` are (held,
+/// holder). A counted fold row can join the set — the edge landing on it is
+/// drawn — but the walk ends there: a row is a count, not a type with holders
+/// of its own. So does a function: nothing holds one, so nothing is upstream
+/// of it.
+pub(crate) fn upstream(pairs: &[(Anchor, Anchor)], from: Anchor) -> HashSet<Anchor> {
+    let mut seen: HashSet<Anchor> = HashSet::new();
+    let mut queue: Vec<Anchor> = vec![from];
+    while let Some(at) = queue.pop() {
+        for (held, holder) in pairs {
+            if *held == at
+                && *holder != from
+                && seen.insert(*holder)
+                && matches!(holder, Anchor::Mark(_))
+            {
+                queue.push(*holder);
+            }
+        }
+    }
+    seen
+}
+
+/// The part of a path below the crate's source root — `src/views/shell.rs`
+/// becomes `views/shell.rs`, wherever in the workspace the crate itself sits.
+/// A path with no source root of its own keeps its last segment.
+fn source_rest(path: &str) -> &str {
+    let segments: Vec<&str> = path.split('/').collect();
+    let root = segments
+        .iter()
+        .enumerate()
+        .rev()
+        .find(|(i, seg)| {
+            *i + 1 < segments.len() && matches!(**seg, "src" | "tests" | "benches" | "examples")
+        })
+        .map(|(i, _)| i);
+    match root {
+        Some(i) => {
+            let cut: usize = segments[..=i].iter().map(|s| s.len() + 1).sum();
+            &path[cut..]
+        }
+        None => path.rsplit('/').next().unwrap_or(path),
+    }
+}
+
+/// The module path a file's contracts are framed in, segment by segment: the
+/// directories under the crate's source root, which is exactly the path rust
+/// reads them as. `src/views/data/map.rs` frames in `views::data`, and so does
+/// `src/views/data/mod.rs`; `src/views/shell.rs` frames in `views` beside
+/// them. A file directly under the root has no directory to name it, so
+/// it frames as the module it is — `src/api.rs` is `mod api` — and the crate
+/// root itself (`main.rs`, `lib.rs`) names no module at all and frames in the
+/// crate.
+///
+/// A leaf file's own module is not a frame: the file altitude is two rungs
+/// above, and a frame per file would draw the directory tree twice.
+pub(crate) fn module_path(path: &str) -> Vec<&str> {
+    let rest = source_rest(path);
+    let mut dirs: Vec<&str> = rest.split('/').collect();
+    let file = dirs.pop().unwrap_or_default();
+    if dirs.is_empty() {
+        let stem = file.strip_suffix(".rs").unwrap_or(file);
+        if !matches!(stem, "main" | "lib" | "mod" | "build") {
+            dirs.push(stem);
+        }
+    }
+    dirs
+}
 
 /// Where a drawn mark stands in the holding order — the chart's one verdict.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -103,7 +411,7 @@ pub(crate) struct DataMark {
     /// The base had it, the working copy does not: drawn dashed from the base.
     pub(crate) ghost: bool,
     /// Fields quoted as written, every one of them — this chart's whole
-    /// quotation. Methods are the surface chart's ink and are not here.
+    /// quotation. Methods are not rows here: a block is state only.
     pub(crate) fields: Vec<FieldRow>,
     /// An enum's variants as written, all of them.
     pub(crate) variants: Vec<FieldRow>,
@@ -115,7 +423,7 @@ pub(crate) struct DataMark {
     pub(crate) tier: Tier,
     /// The marks nested inside this block, in the survey's order.
     pub(crate) kids: Vec<u32>,
-    /// Distinct contracts whose declared surface names it — free functions,
+    /// Distinct declarations whose own signature names it — free functions,
     /// method rows, consts, aliases, trait clauses. None of them has a block
     /// here, so the count is the ink the chart will not draw.
     pub(crate) named_by: u32,
@@ -194,7 +502,7 @@ impl Hold {
 }
 
 /// One implementation dependence between two drawn marks: one type's impls
-/// lean on another type. Same dashed family as the surface chart's, same
+/// lean on another type. The dashed family, drawn at every altitude the same
 /// direction — the arrowhead rests on the user.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct Tie {
@@ -202,7 +510,7 @@ pub(crate) struct Tie {
     pub(crate) user: Anchor,
     pub(crate) count: u32,
     /// Which of the def's methods the references name, heaviest first, for
-    /// the sheet. The rows are not drawn here — methods are the surface
+    /// the sheet. The rows are not drawn here — methods are not this
     /// chart's — but which clause a body leans on is still the answer.
     pub(crate) rows: Vec<(String, u32)>,
     pub(crate) rest: bool,
@@ -215,7 +523,7 @@ impl Tie {
     }
 }
 
-/// One undrawn naming: a contract whose declared surface names a drawn type.
+/// One undrawn naming: a declaration whose own signature names a drawn type.
 /// The sheet's rows and the foot's `named by n signatures` both read this.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct Naming {
@@ -290,7 +598,7 @@ impl DataModel {
 }
 
 /// A mark this chart draws: the shapes state takes, and the statics that
-/// anchor it. Everything else is the surface chart's.
+/// anchor it. Everything else names state without keeping any.
 fn data_kind(kind: ItemKind) -> bool {
     matches!(
         kind,
@@ -421,7 +729,6 @@ impl DataModel {
                 module: Vec::new(),
                 parent: None,
                 marks: Vec::new(),
-                private: 0,
                 folded: folds.contains(&mod_key(krate, &[])),
                 packed: 0,
                 forest: Vec::new(),
@@ -442,7 +749,6 @@ impl DataModel {
                 module: key.1.clone(),
                 parent,
                 marks: Vec::new(),
-                private: 0,
                 folded: folds.contains(&mod_key(&key.0, &key.1)),
                 packed: 0,
                 forest: Vec::new(),
@@ -617,7 +923,7 @@ impl DataModel {
         };
 
         // ---- The drawn holds: everything the nesting does not already say. --
-        // Aggregated per (held, holder, kind, via, event) like the surface
+        // Aggregated per (held, holder, kind, via, event) the way the wire
         // chart's, minus the one relation per nested mark the paper says
         // itself: its plain-owns edge from the block it is drawn inside.
         type HoldAgg = (Anchor, Anchor, HoldKind, String, Option<HoldEvent>);
@@ -1152,6 +1458,29 @@ impl DataModel {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The frame a file's marks land in is the directory chain under the
+    /// crate's source root — the vocabulary this module inherited from the
+    /// retired surface chart, and the one piece of it with a rule worth
+    /// restating.
+    #[test]
+    fn a_module_path_is_the_directory_chain_under_src() {
+        // The whole chain, as deep as the code is written: two modules here,
+        // not one flat `views`.
+        assert_eq!(module_path("src/views/data/map.rs"), ["views", "data"]);
+        assert_eq!(
+            module_path("src/views/codemap/map.rs"),
+            ["views", "codemap"]
+        );
+        // A module's own file and a file beside it frame in that module itself.
+        assert_eq!(module_path("src/views/mod.rs"), ["views"]);
+        assert_eq!(module_path("src/views/shell.rs"), ["views"]);
+        // A file under the source root is the module it declares.
+        assert_eq!(module_path("src/api.rs"), ["api"]);
+        assert!(module_path("src/main.rs").is_empty());
+        assert!(module_path("crates/engine/src/lib.rs").is_empty());
+        assert_eq!(module_path("crates/engine/src/parse/lex.rs"), ["parse"]);
+    }
     use crate::api::{DeclRow, FileInfo, HoldEdge, MarkRef, Vis};
 
     fn file(id: u32, path: &str) -> FileInfo {
@@ -1207,7 +1536,7 @@ mod tests {
 
     fn graph(items: Vec<ItemMark>, holds: Vec<HoldEdge>) -> CodeGraph {
         CodeGraph {
-            files: vec![file(0, "src/api.rs"), file(1, "src/views/atlas.rs")],
+            files: vec![file(0, "src/api.rs"), file(1, "src/views/dep/map.rs")],
             refs: Vec::new(),
             items,
             implements: Vec::new(),
@@ -1269,7 +1598,7 @@ mod tests {
         let model = build(&g);
         let held = by_name(&model, "Wire").fields[0].target.clone();
         assert_eq!(held.name, "Nut");
-        assert_eq!(held.at, Some(mark_route("src/views/atlas.rs", "Nut")));
+        assert_eq!(held.at, Some(mark_route("src/views/dep/map.rs", "Nut")));
 
         // A shape that holds itself: the link would go where the reader is.
         let mut g = graph(vec![mark(0, 0, "Node", ItemKind::Struct)], vec![owns(0, 0)]);

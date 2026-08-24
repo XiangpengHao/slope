@@ -1,16 +1,16 @@
 # The data chart — design brief and behavior
 
-The fourth altitude of the review ladder: crates → files/items → contracts →
-**the workspace's state**. Added 2026-08-21 (user decision) beside an
-unchanged surface chart: the surface altitude reads types as contracts, this
-one reads them as data. Route family: `/data`, `/data/mark/:..path?item=`,
-`/data/mod/:..module`. The `/code`, `/surface` and `/data` routes share one
-survey fetch.
+The third altitude of the review ladder: crates → files/items → **the
+workspace's state**. Added 2026-08-21 (user decision) beside a surface chart
+that read the same types as contracts; that chart was removed on 2026-08-24
+(user decision) and this one is the altitude that reads types as data. Route
+family: `/data`, `/data/mark/:..path?item=`, `/data/mod/:..module`. The
+`/code` and `/data` routes share one survey fetch.
 
 ## Job and audience
 
-The same reviewer, asking the question the surface chart holds open: **"what
-state does this workspace keep — and which of it is top-level?"** After an
+The same reviewer, one rung down from the code map: **"what state does this
+workspace keep — and which of it is top-level?"** After an
 agent session the state shape is where quiet damage hides: a new struct
 nobody holds, a field that turns owned state into shared state, a type that
 silently became load-bearing. Visitor mode: **Operate**.
@@ -20,8 +20,8 @@ silently became load-bearing. Visitor mode: **Operate**.
 1. **Marks are state.** One block per struct, enum, union and static —
    whatever its visibility, because state does not fold at a door. Functions,
    traits, consts and aliases have no block: a signature names state, it does
-   not keep any. Methods are not rows either — a block is state only, and
-   what a type promises stays on the surface chart.
+   not keep any. Methods are not rows either — a block is state only, and what
+   a type promises is read on its definition plate, one rung up.
 2. **The tier is the chart.** Top-level data is a **root**: a static, or a
    type no other workspace type keeps in a field (`Owns` or `Shares`; a
    borrow is a view, not a hold). Roots stand at module level and wear the
@@ -55,16 +55,16 @@ silently became load-bearing. Visitor mode: **Operate**.
 
 - **Top-level = ownership root**, not "named by many signatures": the tier is
   decided by holding, and direct code access stays words on the mark.
-- **Fourth rung.** Ladder reads `dependencies · code · surface · data` in
-  every cartouche; the surface chart is untouched. Types appear on both
-  charts — as contracts there, as state here.
+- **Third rung.** Ladder reads `dependencies · code · data` in every
+  cartouche (it read `dependencies · code · surface · data` until the surface
+  chart was removed on 2026-08-24).
 - **Ownership as containment.** A module frame holds only top-level blocks;
   secondary data nests inside its heaviest holder. Additional holders keep
   drawn edges.
 
 ## The chart
 
-- **Blocks** share the surface block's anatomy — keyword + visibility in
+- **Blocks** wear the chart's block anatomy — keyword + visibility in
   keyword-blue, name at 700 (teal product type, purple sum type), the diff's
   letter, token-colored quoted rows with the bold run naming the workspace
   type the row reaches. No method band; the locator lives in the hover words
@@ -93,8 +93,7 @@ silently became load-bearing. Visitor mode: **Operate**.
   never its box, so a lit kid never dims with its holder. The camera moves
   only for a selection the glass cannot show (see the far-edition section).
 - **Module boundary**: click the border to select (`/data/mod/…`), the − / +
-  mark to fold to one counted row. Folds are this chart's own view state, not
-  shared with the surface chart's folds.
+  mark to fold to one counted row. Folds are this chart's own view state.
 - **The structural diff** rides along in the shared grammar: `A`/`M`/`D`
   letters, flare frames, ghosts quoted from the base standing in their frame,
   `+`/struck rows woven in place, added/removed holding edges in flare with
@@ -148,7 +147,7 @@ own legibility floor. The fixes, all user-directed:
   API of`, the reach line ("a shape change here reaches 4 more types
   upstream, and 9 signatures name what it reaches."), `Holds`, `Used by` /
   `Uses` with the undrawn-residue lines, and `open its definition →` — the
-  code plate stays the only quotation surface.
+  code plate stays the only place source is quoted whole.
 - Legend (cut to a key 2026-08-21, distill — about six hundred words to
   ~170): a key strip first (the root's left edge and the nested sample, drawn
   with the chart's own classes; then the two inks), one paragraph of grammar
@@ -161,16 +160,16 @@ own legibility floor. The fixes, all user-directed:
 
 ## Implementation notes
 
-- `src/views/data/{model,map,chrome,mod}.rs`. The model
+- `src/views/data/{model,layout,map,chrome,mod}.rs`. The model
   (`DataModel::build`) classifies tiers off `CodeGraph::holds`
   (`from_method == false` and a data-kind holder = structural; everything
-  else = naming), nests greedily by field weight with cycle checks, and
-  shares `Frame`/`Seat`/`Anchor`/fold machinery with the surface model.
+  else = naming), nests greedily by field weight with cycle checks, and owns
+  the `Frame`/`Seat`/`Anchor`/fold vocabulary (inherited from the removed
+  surface model on 2026-08-24).
 - Blocks are measured in code around their measured kids (post-order); the
-  frame layout reuses `surface::layout` with every top-level block a leaf
-  seat. Nested rects are derived from the parent's placement, so wires can
+  frame layout is `data::layout`, with every top-level block a leaf seat. Nested rects are derived from the parent's placement, so wires can
   land on state drawn three layers deep.
-- `DataState` (own folds) and `DataCamera` live on the atlas shell;
+- `DataState` (own folds) and `DataCamera` live on the app shell;
   `use_code().ref_dir` is shared across altitudes.
 
 ## Open decisions

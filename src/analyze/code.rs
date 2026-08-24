@@ -312,10 +312,6 @@ fn survey_attached(
     // nesting.
     let mut impl_self: HashMap<(u32, u32), u32> = HashMap::new();
     let mut impl_traits: Vec<(u32, String)> = Vec::new();
-    // Which impl blocks are trait impls. A method inside one carries no `pub`
-    // of its own and is not private for it — it is callable wherever the
-    // trait is — so the surface has to be able to tell the two apart.
-    let mut trait_impl: HashSet<(u32, u32)> = HashSet::new();
     let mut implements: Vec<ImplEdge> = Vec::new();
     for (fi, file) in raw.iter().enumerate() {
         if !file.items.iter().any(|i| i.kind == ItemKind::Impl) {
@@ -358,7 +354,6 @@ fn survey_attached(
             impl_self.insert((fi as u32, li as u32), mark);
             if node.trait_().is_some() {
                 impl_traits.push((mark, impl_header(node)));
-                trait_impl.insert((fi as u32, li as u32));
                 // The trait it promises, resolved the way the self type was:
                 // through the impl itself, never off the header's words. A
                 // foreign trait has no mark to land on and stays a string.
@@ -373,7 +368,6 @@ fn survey_attached(
                     implements.push(ImplEdge {
                         trait_mark,
                         ty: mark,
-                        header: impl_header(node),
                         event: None,
                     });
                 }
@@ -512,17 +506,7 @@ fn survey_attached(
                 (ItemKind::Fn | ItemKind::TypeAlias | ItemKind::Const, Some(owner))
                     if charted_type(owner) =>
                 {
-                    let block = item.owner.and_then(|range| {
-                        raw[fi as usize]
-                            .items
-                            .iter()
-                            .position(|it| it.range == range)
-                    });
-                    Some(data::MethodOf {
-                        mark: id as u32,
-                        vis: item.vis,
-                        via_trait: block.is_some_and(|li| trait_impl.contains(&(fi, li as u32))),
-                    })
+                    Some(data::MethodOf { mark: id as u32 })
                 }
                 _ => None,
             };

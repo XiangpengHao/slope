@@ -62,12 +62,10 @@ pub(crate) fn decl_words(vis: Vis, kind: ItemKind) -> String {
 /// Which rung of the ladder a cartouche stands on.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum Altitude {
-    /// `/` — crates on rings of hops.
+    /// `/dep` — crates on rings of hops.
     Deps,
     /// `/code` — files and items as nested territory.
     Code,
-    /// `/surface` — the contracts the code publishes, and what leans on what.
-    Surface,
     /// `/data` — the workspace's state, tiered into roots and what they hold.
     Data,
 }
@@ -91,9 +89,8 @@ pub(crate) fn AltitudeSwitch(at: Altitude) -> Element {
     };
     rsx! {
         p { class: "flex gap-3 font-data text-[9.5px] tracking-[0.14em] uppercase",
-            {rung("dependencies", Route::Overview {}, Altitude::Deps)}
+            {rung("dependencies", Route::DepOverview {}, Altitude::Deps)}
             {rung("code", Route::CodeOverview {}, Altitude::Code)}
-            {rung("surface", Route::SurfaceOverview {}, Altitude::Surface)}
             {rung("data", Route::DataOverview {}, Altitude::Data)}
         }
     }
@@ -585,7 +582,7 @@ pub(crate) fn CratePanel(graph: CodeGraph, name: String) -> Element {
                 }
                 Link {
                     class: "mt-1 inline-block font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
-                    to: Route::Focus { name: name.clone() },
+                    to: Route::DepFocus { name: name.clone() },
                     "its dependencies ↑"
                 }
             }

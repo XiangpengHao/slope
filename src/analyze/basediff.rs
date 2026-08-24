@@ -11,13 +11,13 @@
 //! A full semantic survey of the base would slot in behind the same wire
 //! model; this is the cheap edition, not the final word.
 //!
-//! Scope (the surface altitude): structs, enums, unions, statics, and free
-//! functions — everything that earns a block — plus the method band a type
-//! block wears. A band is compared only against the impls in the type's own
-//! file, because that is the only base edition this pass fetches; a method
-//! written in an impl block in another file is quoted as a row and left out
-//! of the weave. The other item kinds keep `Delta::Same` until the code
-//! altitude takes its pass.
+//! Scope: structs, enums, unions, statics, and free functions — everything
+//! that earns a block at the data altitude — plus the methods a type declares,
+//! which are compared so a rewritten API reads apart from a rewritten shape.
+//! Methods are compared only against the impls in the type's own file, because
+//! that is the only base edition this pass fetches; a method written in an
+//! impl block in another file is quoted and left out of the weave. The other
+//! item kinds keep `Delta::Same` until the code altitude takes its pass.
 
 use std::collections::{HashMap, HashSet};
 
@@ -1030,7 +1030,6 @@ pub(super) fn apply(
                     ty_name,
                     &[ItemKind::Struct, ItemKind::Enum, ItemKind::Union],
                 )?,
-                header: format!("impl {trait_name} for {ty_name}"),
                 event: Some(HoldEvent::Removed),
             })
         })

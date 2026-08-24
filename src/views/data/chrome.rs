@@ -8,11 +8,11 @@ use crate::api::{CodeGraph, Delta, HoldEvent, HoldKind, ItemMark};
 use crate::views::codemap::chrome::{
     Altitude, AltitudeSwitch, Gestures, SurveyLimits, UsageRow, decl_words, kind_words, plural,
 };
-use crate::views::codemap::{item_route, use_code};
-use crate::views::data::model::{DataFacts, DataMark, DataModel, Stand, Tier, Unseen};
+use crate::views::codemap::{RefDir, item_route, use_code};
+use crate::views::data::model::{
+    Anchor, DataFacts, DataMark, DataModel, RowState, Stand, Tier, Unseen, upstream,
+};
 use crate::views::data::{mark_route, mod_route, use_data};
-use crate::views::surface::chrome::{HoldList, HoldRow, RefToggle};
-use crate::views::surface::model::{Anchor, RowState, upstream};
 
 /// Which modules the diff landed in, in plain words.
 fn insight(modules: &[String]) -> Option<String> {
@@ -91,6 +91,45 @@ pub(crate) fn DataCartouche(facts: DataFacts, workspace: String, diff_line: Stri
 }
 
 /// A hold's kind in its own lowercase word; the wrapper's word wins.
+/// Which reading of the chart's uses edges is drawn. It rides on the
+/// cartouche because it acts on the whole plate, and it is the same reading
+/// the code map is set to — one reviewer, one question, at either altitude.
+#[component]
+pub(crate) fn RefToggle() -> Element {
+    let code = use_code();
+    let current = *code.ref_dir.read();
+    let seg = |label: &'static str, hint: &'static str, val: RefDir| {
+        rsx! {
+            button {
+                class: "flex-1 whitespace-nowrap border px-1 py-0.5 font-data text-[9px] tracking-[0.08em] uppercase",
+                class: if current == val { "border-ink text-ink" } else { "border-transparent text-ink-soft hover:text-ink" },
+                "aria-pressed": if current == val { "true" } else { "false" },
+                title: hint,
+                onclick: move |_| {
+                    let mut dir = code.ref_dir;
+                    dir.set(val);
+                },
+                "{label}"
+            }
+        }
+    };
+    rsx! {
+        div {
+            class: "border-t border-ink-line px-4 py-1.5",
+            role: "group",
+            "aria-label": "which reading of the chart's body dependence is drawn",
+            span { class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
+                "references"
+            }
+            div { class: "mt-1 flex items-stretch gap-0.5",
+                {seg("uses", "each mark's heaviest body dependence out — what its own code leans on", RefDir::Uses)}
+                {seg("used by", "each mark's heaviest body dependence in — whose code leans on it", RefDir::UsedBy)}
+                {seg("both", "every body dependence between two marks, unthinned", RefDir::Both)}
+            }
+        }
+    }
+}
+
 fn hold_word(kind: HoldKind, via: &str) -> String {
     if !via.is_empty() {
         return via.to_string();
@@ -103,6 +142,77 @@ fn hold_word(kind: HoldKind, via: &str) -> String {
         HoldKind::Implements => "implements",
     }
     .to_string()
+}
+
+/// One row of the sheet's relation lists: a drawn mark (a link that
+/// re-centers the selection on it), or a folded module's counted row, which is
+/// words.
+#[derive(Clone, PartialEq)]
+pub(crate) struct HoldRow {
+    pub(crate) to: Option<Route>,
+    pub(crate) decl: String,
+    pub(crate) name: String,
+    pub(crate) letter: Option<&'static str>,
+    pub(crate) word: String,
+    /// The relation's own diff event, in its word.
+    pub(crate) event: Option<&'static str>,
+}
+
+/// One chunked list of relation rows: the first eight, then a typographic
+/// "show all n".
+#[component]
+pub(crate) fn HoldList(rows: Vec<HoldRow>) -> Element {
+    let mut all = use_signal(|| false);
+    let total = rows.len();
+    let shown = if all() || total <= 8 { total } else { 8 };
+    rsx! {
+        ul { class: "mt-1",
+            for (i , row) in rows.iter().take(shown).enumerate() {
+                li { key: "{i}",
+                    if let Some(to) = row.to.clone() {
+                        Link {
+                            class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] hover:bg-ink/5",
+                            to,
+                            if !row.decl.is_empty() {
+                                span { class: "shrink-0 text-ink-soft", "{row.decl}" }
+                            }
+                            // The name is the one thing the row exists to
+                            // state: it takes the row's free width, and the
+                            // count-and-clause column truncates against a
+                            // hard cap before the name gives up a pixel.
+                            span { class: "flex-1 shrink-0 font-medium text-ink", "{row.name}" }
+                            if let Some(letter) = row.letter {
+                                span { class: "shrink-0 font-bold text-flare", "{letter}" }
+                            }
+                            span { class: "max-w-[45%] shrink-0 truncate text-right text-[9px] text-ink-soft",
+                                "{row.word}"
+                            }
+                            if let Some(event) = row.event {
+                                span { class: "shrink-0 text-[9px] text-flare", "{event}" }
+                            }
+                        }
+                    } else {
+                        span { class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] text-ink-soft",
+                            span { class: "min-w-0 flex-1 truncate", "{row.name}" }
+                            span { class: "max-w-[45%] shrink-0 truncate text-right text-[9px]",
+                                "{row.word}"
+                            }
+                            if let Some(event) = row.event {
+                                span { class: "shrink-0 text-[9px] text-flare", "{event}" }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if shown < total {
+            button {
+                class: "mt-1 px-1 font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
+                onclick: move |_| all.set(true),
+                "show all {total}"
+            }
+        }
+    }
 }
 
 /// The rows one side of a selection draws, from each relation's far end.
@@ -132,16 +242,16 @@ fn hold_rows(
                         event,
                     }
                 }
-                Anchor::Private(frame) | Anchor::Mod(frame) => {
-                    // Only a folded module leaves a counted row on this
-                    // chart; the row can be selected, so it is a link.
+                Anchor::Mod(frame) => {
+                    // A folded module is the only counted row this chart
+                    // leaves, and the row can be selected, so it is a link.
                     let frame = &model.frames[*frame as usize];
                     let place = match frame.module.is_empty() {
                         true => frame.krate.clone(),
                         false => format!("mod {}", frame.words()),
                     };
                     HoldRow {
-                        to: matches!(anchor, Anchor::Mod(_)).then(|| mod_route(frame.key())),
+                        to: Some(mod_route(frame.key())),
                         decl: String::new(),
                         name: format!("+ {} · {place}", plural(frame.packed as usize, "item")),
                         letter: None,
@@ -320,9 +430,10 @@ pub(crate) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
             .collect(),
     ));
 
-    // The naming ink this chart refuses to draw, in rows: the free contracts
-    // whose declared surface names it (each a link to its definition, since
-    // none has a block here), and the types whose API says the word.
+    // The naming ink this chart refuses to draw, in rows: the free
+    // declarations whose own signature names it (each a link to its
+    // definition, since none has a block here), and the types whose API says
+    // the word.
     let files = &graph.files;
     let namer_row = |namer: u32, event: Option<HoldEvent>| -> Option<HoldRow> {
         let item = graph.items.get(namer as usize)?;

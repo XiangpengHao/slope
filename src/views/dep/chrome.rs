@@ -7,9 +7,9 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
-use crate::views::radial::{DEFAULT_CAP, RadialLayout};
-use crate::views::shell::{DirFilter, step_ring, use_atlas};
-use crate::views::star::StarMark;
+use crate::views::dep::model::{DEFAULT_CAP, RadialLayout};
+use crate::views::dep::star::StarMark;
+use crate::views::dep::{DirFilter, step_ring, use_dep};
 
 /// A synthetic crate for legend samples, so the key is drawn by the exact
 /// same code as the chart and can never drift from it.
@@ -53,7 +53,7 @@ pub(crate) fn TitleBlock(
     graph: WorkspaceGraph,
     #[props(default = true)] changes_open: bool,
 ) -> Element {
-    let atlas = use_atlas();
+    let dep = use_dep();
     let members = graph.crates.iter().filter(|c| c.is_member).count();
     let externals = graph
         .crates
@@ -69,10 +69,10 @@ pub(crate) fn TitleBlock(
 
     let mut changed: Vec<CrateInfo> = graph.crates.iter().filter(|c| c.changed).cloned().collect();
     changed.sort_by(|a, b| a.name.cmp(&b.name));
-    let visited = atlas.visited.read();
+    let visited = dep.visited.read();
     let seen = changed.iter().filter(|c| visited.contains(&c.name)).count();
     let total = changed.len();
-    let focus = atlas.trail.read().current_focus();
+    let focus = dep.trail.read().current_focus();
 
     rsx! {
         section { class: "plate pointer-events-auto w-full",
@@ -108,7 +108,7 @@ pub(crate) fn TitleBlock(
                         for info in changed {
                             li {
                                 Link {
-                                    to: Route::Focus { name: info.name.clone() },
+                                    to: Route::DepFocus { name: info.name.clone() },
                                     class: if focus.as_deref() == Some(info.name.as_str()) {
                                         "flex w-full items-center gap-1.5 px-1.5 py-0.5 bg-ink/5"
                                     } else {
@@ -150,8 +150,8 @@ pub(crate) fn TitleBlock(
 /// Active segment wears a 1px ink border — no fills on this plate, ever.
 #[component]
 fn DirectionToggle() -> Element {
-    let atlas = use_atlas();
-    let current = *atlas.dir.read();
+    let dep = use_dep();
+    let current = *dep.dir.read();
     let seg = |label: &'static str, hint: &'static str, val: DirFilter| {
         rsx! {
             button {
@@ -160,7 +160,7 @@ fn DirectionToggle() -> Element {
                 "aria-pressed": if current == val { "true" } else { "false" },
                 title: hint,
                 onclick: move |_| {
-                    let mut dir = atlas.dir;
+                    let mut dir = dep.dir;
                     dir.set(val);
                 },
                 "{label}"
@@ -389,7 +389,7 @@ pub(crate) fn SearchBox(graph: WorkspaceGraph) -> Element {
     rsx! {
         div { class: "pointer-events-auto relative w-full",
             input {
-                id: "atlas-search",
+                id: "dep-search",
                 class: "plate w-full px-3 py-1.5 font-data text-[11px] text-ink placeholder:text-ink-soft focus:outline-none",
                 r#type: "search",
                 placeholder: "find a crate…   /",
@@ -414,7 +414,7 @@ pub(crate) fn SearchBox(graph: WorkspaceGraph) -> Element {
                         }
                         Key::Enter => {
                             if let Some(hit) = results().get(active().min(n.saturating_sub(1))) {
-                                nav.push(Route::Focus { name: hit.name.clone() });
+                                nav.push(Route::DepFocus { name: hit.name.clone() });
                                 query.set(String::new());
                             }
                         }
@@ -435,7 +435,7 @@ pub(crate) fn SearchBox(graph: WorkspaceGraph) -> Element {
                         for (i , hit) in results().into_iter().enumerate() {
                             li {
                                 Link {
-                                    to: Route::Focus { name: hit.name.clone() },
+                                    to: Route::DepFocus { name: hit.name.clone() },
                                     class: if i == active() {
                                         "flex w-full items-center gap-1.5 px-2.5 py-1 bg-ink/5"
                                     } else {
@@ -526,7 +526,7 @@ fn CrateRow(
                 div { class: "flex w-full items-center gap-1.5 px-1 py-0.5", {row} }
             } else {
                 Link {
-                    to: Route::Focus { name: info.name.clone() },
+                    to: Route::DepFocus { name: info.name.clone() },
                     class: "flex w-full items-center gap-1.5 px-1 py-0.5 hover:bg-ink/5",
                     {row}
                 }
@@ -686,8 +686,8 @@ fn step_label(step: &str) -> String {
 
 fn step_route(step: &str) -> Route {
     match step_ring(step) {
-        Some(hop) => Route::RingSel { hop },
-        None => Route::Focus {
+        Some(hop) => Route::DepRing { hop },
+        None => Route::DepFocus {
             name: step.to_string(),
         },
     }
@@ -698,8 +698,8 @@ fn step_route(step: &str) -> Route {
 /// the review stands now, so the trail never repeats it.
 #[component]
 fn Breadcrumb() -> Element {
-    let atlas = use_atlas();
-    let mut walked = atlas.trail.read().walked();
+    let dep = use_dep();
+    let mut walked = dep.trail.read().walked();
     walked.pop();
 
     rsx! {
@@ -708,7 +708,7 @@ fn Breadcrumb() -> Element {
             "aria-label": "review trail",
             Link {
                 class: "underline-offset-4 hover:text-ink hover:underline",
-                to: Route::Overview {},
+                to: Route::DepOverview {},
                 "← whole chart"
             }
             for step in walked {
@@ -740,7 +740,7 @@ pub(crate) fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
                 p { class: "font-data text-[11px] text-ink", "No crate named “{name}” in this workspace." }
                 Link {
                     class: "mt-2 inline-block font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4",
-                    to: Route::Overview {},
+                    to: Route::DepOverview {},
                     "← whole chart"
                 }
             }
@@ -906,7 +906,7 @@ pub(crate) fn MultiPanel(graph: WorkspaceGraph, joined: String) -> Element {
                                     StarMark { info: info.clone(), focal: false, box_px: 18.0 }
                                 }
                                 Link {
-                                    to: Route::Focus { name: name.clone() },
+                                    to: Route::DepFocus { name: name.clone() },
                                     class: "truncate font-data text-[11px] text-ink underline-offset-4 hover:underline",
                                     "{name}"
                                 }
@@ -914,9 +914,9 @@ pub(crate) fn MultiPanel(graph: WorkspaceGraph, joined: String) -> Element {
                                     to: {
                                         let rest: Vec<&String> = names.iter().filter(|n| *n != &name).collect();
                                         if rest.is_empty() {
-                                            Route::Overview {}
+                                            Route::DepOverview {}
                                         } else {
-                                            Route::Focus {
+                                            Route::DepFocus {
                                                 name: rest
                                                     .iter()
                                                     .map(|s| s.as_str())
@@ -989,7 +989,7 @@ pub(crate) fn RingPanel(graph: WorkspaceGraph, hop: u32) -> Element {
                     for info in crates.into_iter().take(shown) {
                         li {
                             Link {
-                                to: Route::Focus { name: info.name.clone() },
+                                to: Route::DepFocus { name: info.name.clone() },
                                 class: "flex w-full items-center gap-1.5 px-1 py-0.5 hover:bg-ink/5",
                                 StarMark { info: info.clone(), focal: false, box_px: 18.0 }
                                 span { class: "truncate font-data text-[11px] text-ink",

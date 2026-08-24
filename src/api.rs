@@ -191,7 +191,7 @@ impl Vis {
 pub(crate) struct FileInfo {
     /// Stable within one analysis: index into [`CodeGraph::files`].
     pub(crate) id: u32,
-    /// Path relative to the workspace root, e.g. `src/views/atlas.rs`.
+    /// Path relative to the workspace root, e.g. `src/views/dep/map.rs`.
     pub(crate) path: String,
     /// Name of the crate this file belongs to.
     pub(crate) krate: String,
@@ -289,8 +289,8 @@ pub(crate) struct DeclRow {
 }
 
 /// The structural diff's own reading of a row, and the only one: the client
-/// draws from [`crate::views::surface::model::FieldRow`], which carries the
-/// diff state as well.
+/// draws from the data chart's own `FieldRow`, which carries the diff state
+/// as well.
 #[cfg(feature = "server")]
 impl DeclRow {
     /// The row as rust writes it, visibility included — what the diff
@@ -304,10 +304,12 @@ impl DeclRow {
     }
 }
 
-/// One method of a type, as the surface reads it: a clause of the contract
-/// the type publishes, quoted from its own source. Methods are never marks —
-/// a method belongs to its type the way a field does, and giving each one a
-/// block would bury the shapes under their own API.
+/// One method of a type, quoted from its own source. Methods are never marks
+/// — a method belongs to its type the way a field does — and no chart draws
+/// them as rows any more: what they are still needed for is attribution. A
+/// reference resolved to a method is filed under its type, a method naming a
+/// type is a naming rather than a holding, and the structural diff compares
+/// these rows to tell a rewritten API from a rewritten shape.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct MethodRow {
     /// The method's own name, which is what its edges and its callers file
@@ -315,15 +317,8 @@ pub(crate) struct MethodRow {
     pub(crate) name: String,
     /// The signature exactly as written, from the `fn` keyword's line through
     /// the return type, whitespace collapsed — visibility included, body and
-    /// doc comment left where they are.
+    /// doc comment left where they are. What the structural diff compares.
     pub(crate) sig: String,
-    /// As the method declares it. A door decides whether the row is drawn,
-    /// and that decision is the client's.
-    pub(crate) vis: Vis,
-    /// Declared in an `impl Trait for Type` block. Such a method carries no
-    /// `pub` of its own and is not private for it: it is callable wherever
-    /// the trait is, so the surface reads it as published.
-    pub(crate) via_trait: bool,
     /// Its own [`ItemMark::id`] — so a reference the survey resolved to the
     /// method itself can be filed under this row rather than blurred into
     /// its type.
@@ -476,9 +471,6 @@ pub(crate) struct ImplEdge {
     pub(crate) trait_mark: u32,
     /// The implementing type's [`ItemMark::id`] — the dependent.
     pub(crate) ty: u32,
-    /// The header as the impl writes it (`impl Clone for Vis`), for the
-    /// sheet's row.
-    pub(crate) header: String,
     /// This impl against the diff base. A workspace type promising a new
     /// contract, or dropping one, is the kind of change a reviewer came for.
     pub(crate) event: Option<HoldEvent>,
@@ -488,9 +480,9 @@ pub(crate) struct ImplEdge {
 /// cross-file [`ItemEdge`]s carry their endpoints' files because either end
 /// may be a whole file; both ends of one of these is a mark by construction,
 /// so it carries nothing else. The cutaway reads a file's own references from
-/// its [`FileDetail`]; the surface chart reads these, because which file a
-/// reference was written in says nothing about whether one contract leans on
-/// another.
+/// its [`FileDetail`]; the data chart reads these, because which file a
+/// reference was written in says nothing about whether one type's code leans
+/// on another.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct MarkRef {
     /// The [`ItemMark::id`] whose body names the other. A reference written
@@ -539,9 +531,9 @@ pub(crate) struct CodeGraph {
     /// altitude that draws it.
     pub(crate) notes: Vec<String>,
     /// What the survey could not read about the **holds walk**, in plain words
-    /// — the surface and data charts' limits. Kept apart from `notes` so a
-    /// legend states the limits of the ink it actually draws, and so no legend
-    /// has to paraphrase the survey in prose of its own.
+    /// — the data chart's limits. Kept apart from `notes` so a legend states
+    /// the limits of the ink it actually draws, and so no legend has to
+    /// paraphrase the survey in prose of its own.
     pub(crate) walk_notes: Vec<String>,
 }
 

@@ -14,7 +14,12 @@
       flake-utils,
       ...
     }:
-    flake-utils.lib.eachSystem [ "x86_64-linux" ] (
+    # No x86_64-darwin: nixpkgs-unstable dropped it outright in 26.11, so an
+    # Intel Mac cannot evaluate this flake against that input at all.
+    flake-utils.lib.eachSystem [
+      "x86_64-linux"
+      "aarch64-darwin"
+    ] (
       system:
       let
         pkgs = import nixpkgs {
@@ -36,8 +41,9 @@
         };
 
         # `dx` drives three external tools to build the web client. It normally
-        # downloads them itself, but those prebuilt binaries don't run on NixOS,
-        # so they are pinned here and `dx` is pointed at them via NO_DOWNLOADS.
+        # downloads them itself, which the build sandbox has no network for (and
+        # whose binaries don't run on NixOS anyway), so they are pinned here and
+        # `dx` is pointed at them via NO_DOWNLOADS.
         dxToolchain = [
           pkgs.dioxus-cli
           # Must match the pinned wasm-bindgen crate in Cargo.toml exactly.
@@ -88,8 +94,8 @@
           ++ dxToolchain;
 
           # Resolve tailwindcss/wasm-bindgen/wasm-opt from PATH instead of
-          # fetching binaries that would not run here (and could not be fetched
-          # in the sandbox anyway).
+          # fetching binaries the sandbox has no network for (and which would
+          # not run here on NixOS regardless).
           NO_DOWNLOADS = "1";
 
           buildPhase = ''
@@ -175,7 +181,8 @@
 
           ASAN_SYMBOLIZER_PATH = "${llvmPackages.llvm}/bin/llvm-symbolizer";
 
-          # Prebuilt binaries `dx` fetches don't run on NixOS; make it resolve
+          # Prebuilt binaries `dx` fetches don't run on NixOS, and pinning them
+          # keeps every platform on the same versions; make `dx` resolve
           # tailwindcss/wasm-bindgen/wasm-opt from PATH instead.
           NO_DOWNLOADS = "1";
         };

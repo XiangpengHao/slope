@@ -17,9 +17,9 @@ use dioxus_flow::prelude::{
 };
 
 use crate::api::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
-use crate::views::radial::{DEFAULT_CAP, RadialLayout};
-use crate::views::shell::{DirFilter, step_ring, use_atlas, use_graph};
-use crate::views::star::{StarData, StarNode, star_box, star_radius};
+use crate::views::dep::model::{DEFAULT_CAP, RadialLayout};
+use crate::views::dep::star::{StarData, StarNode, star_box, star_radius};
+use crate::views::dep::{DirFilter, step_ring, use_dep};
 
 /// How many of the biggest external stars carry their name at rest. Every
 /// other external is named on hover, on selection, or as a neighbor.
@@ -104,11 +104,11 @@ fn prefers_reduced_motion() -> bool {
     false
 }
 
-/// One drawing of the crate atlas: everything a single selection puts on
+/// One drawing of the dependency chart: everything a single selection puts on
 /// the paper, derived from the graph and the layout. Built once per reading
 /// and read back by the camera, the keys, and every layer.
 #[derive(Clone, PartialEq)]
-struct AtlasDrawing {
+struct DepDrawing {
     stars: Vec<FlowNode<StarData>>,
     lines: Vec<FlowEdge>,
     /// Ids of the selection and its direct neighbors, for framing.
@@ -150,7 +150,7 @@ fn uphill_from<'g>(graph: &'g WorkspaceGraph, sel_ids: &HashSet<&'g str>) -> Has
     seen
 }
 
-impl AtlasDrawing {
+impl DepDrawing {
     /// Derive the drawn chart. Every placed crate is always on the chart as a
     /// star; what changes with the selection is which edges are drawn, which
     /// stars carry the focal ring, and which are named at rest.
@@ -327,7 +327,7 @@ impl AtlasDrawing {
             .collect();
         stars.sort_by(|a, b| a.id.cmp(&b.id));
 
-        AtlasDrawing {
+        DepDrawing {
             stars,
             lines,
             hood,
@@ -465,11 +465,11 @@ fn RingCircles(
                     role: "link",
                     "aria-label": if collapsed && k == last { "select every crate {k} or more hops from the center" } else { "select every crate {k} hops from the center" },
                     onclick: move |_| {
-                        nav.push(crate::Route::RingSel { hop: k as u32 });
+                        nav.push(crate::Route::DepRing { hop: k as u32 });
                     },
                     onkeydown: move |e| {
                         if e.key() == Key::Enter {
-                            nav.push(crate::Route::RingSel { hop: k as u32 });
+                            nav.push(crate::Route::DepRing { hop: k as u32 });
                         }
                     },
                     title {
@@ -584,7 +584,7 @@ fn frame_chart(
     );
 }
 
-impl AtlasDrawing {
+impl DepDrawing {
     /// The bounds the camera should frame: a focused view frames the
     /// selection's neighborhood; the overview frames every ring.
     fn frame_target(&self) -> (Option<Rect>, Option<Point>) {
@@ -618,7 +618,7 @@ window.__slopeKeys = (e) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     if (e.key === '/') {
         e.preventDefault();
-        const s = document.getElementById('atlas-search');
+        const s = document.getElementById('dep-search');
         if (s) s.focus();
         return;
     }
@@ -627,8 +627,8 @@ window.__slopeKeys = (e) => {
 document.addEventListener('keydown', window.__slopeKeys);
 "#;
 
-/// The ring cap the chart last painted. Provided as a context by the atlas
-/// shell because stepping to another altitude (`/` ↔ `/code`) unmounts the
+/// The ring cap the chart last painted. Provided as a context by the app
+/// shell because stepping to another altitude (`/dep` ↔ `/code`) unmounts the
 /// chart and throws its DOM away: without a memory of the geometry the
 /// reader was just looking at, an expansion after a return could only be
 /// drawn as a jump.
@@ -648,7 +648,7 @@ impl DrawnCap {
 /// The rings chart, mounted once for the whole session.
 #[component]
 pub(crate) fn Chart(graph: WorkspaceGraph) -> Element {
-    let atlas = use_atlas();
+    let dep = use_dep();
     let drawn_cap = use_context::<DrawnCap>().cap;
     let flow = dioxus_flow::use_flow_handle::<StarData>();
     let nav = use_navigator();
@@ -677,7 +677,7 @@ pub(crate) fn Chart(graph: WorkspaceGraph) -> Element {
     // band. Selecting into the band expands exact rings down to the
     // selection's true depth; deselecting folds them back.
     let cap = use_memo(move || {
-        let step = atlas.trail.read().current_focus();
+        let step = dep.trail.read().current_focus();
         match step.as_deref() {
             None => DEFAULT_CAP,
             Some(step) => match step_ring(step) {
@@ -762,7 +762,7 @@ pub(crate) fn Chart(graph: WorkspaceGraph) -> Element {
     let chart = use_memo({
         let graph = graph.clone();
         move || {
-            let step = atlas.trail.read().current_focus();
+            let step = dep.trail.read().current_focus();
             let focused = step.is_some();
             let layout = layout.read();
             let (sel_names, ring) = match step.as_deref() {
@@ -784,8 +784,8 @@ pub(crate) fn Chart(graph: WorkspaceGraph) -> Element {
                     None => (step.split('+').map(str::to_string).collect(), None),
                 },
             };
-            let dir = *atlas.dir.read();
-            AtlasDrawing::build(&graph, &layout, sel_names, dir, focused, ring)
+            let dir = *dep.dir.read();
+            DepDrawing::build(&graph, &layout, sel_names, dir, focused, ring)
         }
     });
 
@@ -806,7 +806,7 @@ pub(crate) fn Chart(graph: WorkspaceGraph) -> Element {
         let mut nodes = nodes;
         let mut edges = edges;
         // Materialize the selection for modifier-clicks to toggle against.
-        let mut selected = atlas.selected;
+        let mut selected = dep.selected;
         if *selected.peek() != drawing.names {
             selected.set(drawing.names.clone());
         }
@@ -874,15 +874,15 @@ pub(crate) fn Chart(graph: WorkspaceGraph) -> Element {
                         }
                     }
                     "Escape" => {
-                        let trail = atlas.trail.peek().clone();
+                        let trail = dep.trail.peek().clone();
                         if trail.at > 0 {
                             crate::views::shell::history_back();
                         } else if trail.current_focus().is_some() {
-                            nav.push(crate::Route::Overview {});
+                            nav.push(crate::Route::DepOverview {});
                         }
                     }
                     "n" | "p" if !changed.is_empty() => {
-                        let current = atlas.trail.peek().current_focus();
+                        let current = dep.trail.peek().current_focus();
                         let at = current
                             .as_deref()
                             .and_then(|f| changed.iter().position(|n| n == f));
@@ -892,7 +892,7 @@ pub(crate) fn Chart(graph: WorkspaceGraph) -> Element {
                             ("n", None) => 0,
                             _ => changed.len() - 1,
                         };
-                        nav.push(crate::Route::Focus {
+                        nav.push(crate::Route::DepFocus {
                             name: changed[next].clone(),
                         });
                     }
@@ -902,7 +902,7 @@ pub(crate) fn Chart(graph: WorkspaceGraph) -> Element {
         });
     });
 
-    let step = atlas.trail.read().current_focus();
+    let step = dep.trail.read().current_focus();
     let focused = step.is_some();
     let ring_sel = step.as_deref().and_then(step_ring);
     let hub = if center_name.read().is_none() {
@@ -943,47 +943,6 @@ pub(crate) fn Chart(graph: WorkspaceGraph) -> Element {
                 }
                 Controls {}
             }
-        }
-    }
-}
-
-/// `/` — the whole chart, edges drawn for the center crate. The chart lives
-/// in the shell and the key names the rings, so this route adds nothing: the
-/// overview is the chart, unobstructed.
-#[component]
-pub(crate) fn Overview() -> Element {
-    rsx! {}
-}
-
-/// `/crate/:name` — the selection's edges are drawn on the rings and this
-/// route adds the panel: one crate's fact sheet, or the multi-selection
-/// roster when names are joined with `+`.
-#[component]
-pub(crate) fn Focus(name: String) -> Element {
-    let Some(graph) = use_graph() else {
-        return rsx! {};
-    };
-    rsx! {
-        div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-auto z-10 flex items-end sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:items-start sm:p-3 sm:pt-[58px]",
-            if name.contains('+') {
-                crate::views::chrome::MultiPanel { key: "{name}", graph: graph.clone(), joined: name }
-            } else {
-                crate::views::chrome::FocusPanel { key: "{name}", graph: graph.clone(), name }
-            }
-        }
-    }
-}
-
-/// `/ring/:hop` — every crate on one ring selected; this route adds the
-/// ring's roster panel.
-#[component]
-pub(crate) fn RingSel(hop: u32) -> Element {
-    let Some(graph) = use_graph() else {
-        return rsx! {};
-    };
-    rsx! {
-        div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-auto z-10 flex items-end sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:items-start sm:p-3 sm:pt-[58px]",
-            crate::views::chrome::RingPanel { key: "{hop}", graph: graph.clone(), hop }
         }
     }
 }
@@ -1045,7 +1004,7 @@ mod tests {
     /// id reads `dependency->user`.
     fn drawn(graph: &WorkspaceGraph, sel: &str, dir: DirFilter) -> Vec<String> {
         let layout = RadialLayout::build(graph, DEFAULT_CAP);
-        let drawing = AtlasDrawing::build(graph, &layout, vec![sel.to_string()], dir, true, None);
+        let drawing = DepDrawing::build(graph, &layout, vec![sel.to_string()], dir, true, None);
         let mut ids: Vec<String> = drawing.lines.iter().map(|e| e.id.clone()).collect();
         ids.sort();
         ids

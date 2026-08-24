@@ -927,7 +927,7 @@ const MIN_MAP_ZOOM: f64 = 0.22;
 /// unmounts the map, and coming back must give the reader back their own pan
 /// and zoom, not a fresh framing — the camera carries the mental map (the
 /// Kept-Ground rule). `f` still refits on demand. Provided as a context by
-/// the atlas shell, which outlives every remount.
+/// the app shell, which outlives every remount.
 #[derive(Clone, Copy)]
 pub(crate) struct CodeCamera {
     pub(crate) viewport: Signal<Option<Viewport>>,

@@ -1,22 +1,23 @@
-//! The fourth altitude: the workspace's state, tiered by who holds it.
+//! The third altitude: the workspace's state, tiered by who holds it.
 //!
-//! The fourth rung of the review ladder — crates, files, contracts, then the
-//! **data**: every struct, enum, union and static the workspace keeps,
-//! whatever its visibility, seated by module. It answers the question the
-//! surface chart holds open — *which of this is top-level state, and which is
-//! secondary?* — with one move: a root (a static, or a type no other type
-//! keeps in a field) stands at module level wearing the gate's ink left edge,
-//! and everything held is drawn inside the block of the type that owns it
-//! hardest, the way module frames nest. Reading the tier is reading the
-//! paper.
+//! The third rung of the review ladder — crates, files, then the **data**:
+//! every struct, enum, union and static the workspace keeps, whatever its
+//! visibility, seated by module. It answers one question — *which of this is
+//! top-level state, and which is secondary?* — with one move: a root (a
+//! static, or a type no other type keeps in a field) stands at module level
+//! wearing the gate's ink left edge, and everything held is drawn inside the
+//! block of the type that owns it hardest, the way module frames nest.
+//! Reading the tier is reading the paper.
 //!
-//! The references are the surface chart's two inks exactly: solid holding
-//! lines with the wrapper's word for what nesting cannot say — sharing,
-//! borrowing, cross-module ownership, second holders — and dashed counted
-//! uses edges where one type's impls lean on another. Methods are not here:
-//! a block is state only, and what a type promises stays one rung up.
+//! Two inks run between the blocks, and only two: solid holding lines with the
+//! wrapper's word for what nesting cannot say — sharing, borrowing,
+//! cross-module ownership, second holders — and dashed counted uses edges
+//! where one type's impls lean on another. Methods are not rows here: a block
+//! is state only, and what a type promises is read on its definition plate,
+//! one rung up.
 
 pub(crate) mod chrome;
+pub(crate) mod layout;
 pub(crate) mod map;
 pub(crate) mod model;
 
@@ -27,8 +28,7 @@ use crate::api::CodeGraph;
 use crate::views::codemap::use_code;
 use crate::views::data::chrome::{DataCartouche, DataLegend, DataSearch, DataSheet};
 use crate::views::data::map::DataChart;
-use crate::views::data::model::DataModel;
-use crate::views::surface::model::Folds;
+use crate::views::data::model::{DataModel, Folds};
 use crate::views::survey::use_code_graph;
 
 /// What the route selects on the chart.
@@ -67,9 +67,8 @@ pub(crate) fn mod_route(key: Vec<String>) -> Route {
 }
 
 /// The data chart's own review-session state. The fold store is this
-/// altitude's, not shared with the surface chart: a fold is a reading, and a
-/// reader folding a module out of one question should not lose it from the
-/// other.
+/// altitude's: a fold is a reading, and what the chart draws is the reading,
+/// while the URL carries the selection.
 #[derive(Clone, Copy)]
 pub(crate) struct DataState {
     /// The modules the reviewer folded by hand on this chart.

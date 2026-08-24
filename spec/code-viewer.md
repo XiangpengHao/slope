@@ -12,7 +12,7 @@ the review ladder: crates → **files → items**.
 
 ## Job and audience
 
-The same reviewer as the dependency atlas, one zoom level down. The question
+The same reviewer as the dependency chart, one zoom level down. The question
 this altitude answers: "what is in this code, and what does a change here
 touch?" — territory and coupling first, item precision on demand. Visitor
 mode: **Operate**.
@@ -49,7 +49,7 @@ mode: **Operate**.
   are session state, like the fold toggles: opening a focus plate and coming
   back — by any path, back button included — restores the camera exactly as
   the reviewer left it. The map frames itself only on a fresh session; `f`
-  refits on demand. The same rule holds on `/surface`.
+  refits on demand. The same rule holds on `/data`.
 
 ## The six mechanisms
 
@@ -214,7 +214,7 @@ mode: **Operate**.
 - `/code/crate/:name` — a crate's district emphasized on the map, only its
   own ties drawn (filtered by the sheet's uses / used by / both toggle); the
   sheet lists both directions of its boundary references and links up to the
-  crate's dependency focus (`/crate/:name`).
+  crate's dependency focus (`/dep/crate/:name`).
 - `/code/file/:..path` — one file's focus plate.
 - `/code/file/:..path?item=X` — one item's focus plate (`X` is
   `Type::method` for anything inside a section).
@@ -327,7 +327,7 @@ mode: **Operate**.
   "rust-analyzer is reading every source file and resolving references" —
   and honest about the first survey taking a while. The definition plate says
   `loading…` while an item's source is in flight.
-- Failure: plain-words error plate with retry; the dependency atlas keeps
+- Failure: plain-words error plate with retry; the dependency chart keeps
   working without the code survey.
 - A clean diff draws no amber: the `M` marker and the cartouche's "n files
   changed" only appear when the diff has something to say.
