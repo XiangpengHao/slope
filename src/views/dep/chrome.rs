@@ -9,17 +9,10 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
+use crate::views::chrome::{Altitude, AltitudeSwitch, plural};
 use crate::views::dep::model::{DEFAULT_CAP, RadialLayout};
 use crate::views::dep::star::StarMark;
 use crate::views::dep::{DirFilter, step_ring, use_dep};
-
-fn plural(n: usize, word: &str) -> String {
-    if n == 1 {
-        format!("{n} {word}")
-    } else {
-        format!("{n} {word}s")
-    }
-}
 
 /// The title block and the review agenda in one plate: what workspace this
 /// is, which epoch it is charted against, and every crate that changed in
@@ -64,9 +57,7 @@ pub(super) fn TitleBlock(
                     "{epoch.base} → {epoch.target}"
                 }
                 div { class: "pb-2 pt-1",
-                    crate::views::codemap::chrome::AltitudeSwitch {
-                        at: crate::views::codemap::chrome::Altitude::Deps,
-                    }
+                    AltitudeSwitch { at: Altitude::Deps }
                 }
             }
             details { class: "fold border-t border-ink-line open:pb-3", open: changes_open,
@@ -636,11 +627,14 @@ pub(super) fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
                     "{version_line} · "
                     if focal.is_member { "workspace member" } else { "external crate" }
                 }
+                // The one descent between the altitudes that is not the
+                // ladder: both charts now key a crate on its cargo package
+                // name, so this selects the member's own frame on the paper.
                 if focal.is_member {
                     Link {
                         class: "mt-1 inline-block font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
-                        to: Route::CodeCrate { name: focal.name.clone() },
-                        "its files ↓"
+                        to: Route::DataModFocus { module: vec![focal.name.clone()] },
+                        "its data ↓"
                     }
                 }
                 if versions.len() > 1 {

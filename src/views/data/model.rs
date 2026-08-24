@@ -1,7 +1,7 @@
 //! What the data chart reads out of the survey: the workspace's state, tiered.
 //!
-//! The code map asks where the code is written; this altitude asks what it
-//! *keeps*. Its marks are the shapes state can take — structs, enums,
+//! The rung above asks which crates lean on which; this one asks what the
+//! code *keeps*. Its marks are the shapes state can take — structs, enums,
 //! unions — and the statics that anchor state no type holds. Functions,
 //! traits, consts and aliases have no block here: a signature names state, it
 //! does not keep any, so naming is counted on the mark it names and read on
@@ -28,9 +28,43 @@ use std::collections::{HashMap, HashSet};
 
 use crate::Route;
 use crate::api::{CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, ItemMark, Vis};
-use crate::views::codemap::RefDir;
-use crate::views::codemap::model::Containment;
-use crate::views::data::mark_route;
+use crate::views::data::{RefDir, mark_route};
+
+/// Parent chains are shallow by construction (file → type → method); the
+/// bound only keeps a malformed link from spinning.
+const MAX_DEPTH: usize = 8;
+
+/// Which item of the survey's containment tree (file → type → method) each
+/// mark belongs to, at the outermost turn — the item the file itself holds.
+/// A reference resolved to a method is the type's reference: this is what
+/// climbs it there.
+struct Containment {
+    root: Vec<u32>,
+}
+
+impl Containment {
+    fn build(graph: &CodeGraph) -> Self {
+        let marks = &graph.items;
+        let root = (0..marks.len() as u32)
+            .map(|i| {
+                let mut cur = i;
+                for _ in 0..MAX_DEPTH {
+                    match marks[cur as usize].parent {
+                        Some(p) if (p as usize) < marks.len() && p != cur => cur = p,
+                        _ => break,
+                    }
+                }
+                cur
+            })
+            .collect();
+        Self { root }
+    }
+
+    /// The item the file holds directly — a method's type, a type itself.
+    fn root(&self, mark: u32) -> u32 {
+        self.root.get(mark as usize).copied().unwrap_or(mark)
+    }
+}
 
 /// Structural holders a standing mark draws before folding them to a count on
 /// its own foot. Past this the type is vocabulary: seating it under one holder
@@ -65,8 +99,11 @@ pub(crate) enum Anchor {
 /// A frame id is an index into one build and says nothing across two.
 pub(super) type Folds = HashSet<Vec<String>>;
 
-/// A module frame's name in a [`Folds`] set: the crate first, then the module
-/// path. The crate's own frame is the crate name alone.
+/// A module frame's name in a [`Folds`] set, and in the URL that selects it:
+/// the crate first, then the module path. The crate's own frame is that name
+/// alone — and the name is the cargo package (`slope-cli`), the same word the
+/// dependency chart's star wears, which is what lets its focus panel descend
+/// onto this frame.
 fn mod_key(krate: &str, module: &[String]) -> Vec<String> {
     let mut key = vec![krate.to_string()];
     key.extend(module.iter().cloned());
@@ -160,8 +197,9 @@ impl Frame {
     /// The frame in prose, where no paper around it says which one it is: the
     /// whole path as rust would write it in a `use` line (`views::data`), or
     /// the crate's own name where the frame is the crate's. The border's chip
-    /// says `mod map` and three modules in this workspace answer to that, so
-    /// a line the reader meets away from the chart spells the path out.
+    /// says `mod map` and more than one module in this workspace answers to
+    /// that, so a line the reader meets away from the chart spells the path
+    /// out.
     pub(crate) fn words(&self) -> String {
         match self.module.is_empty() {
             true => self.krate.clone(),
@@ -338,8 +376,9 @@ fn source_rest(path: &str) -> &str {
 /// root itself (`main.rs`, `lib.rs`) names no module at all and frames in the
 /// crate.
 ///
-/// A leaf file's own module is not a frame: the file altitude is two rungs
-/// above, and a frame per file would draw the directory tree twice.
+/// A leaf file's own module is not a frame: a frame per file would draw the
+/// directory tree twice, and this chart is about what the code keeps, not
+/// where it is filed.
 fn module_path(path: &str) -> Vec<&str> {
     let rest = source_rest(path);
     let mut dirs: Vec<&str> = rest.split('/').collect();
@@ -405,7 +444,7 @@ pub(super) struct DataMark {
     pub(crate) kind: ItemKind,
     pub(crate) vis: crate::api::Vis,
     pub(crate) name: String,
-    /// The label its definition plate selects by, for the URL.
+    /// The label its selection sheet selects by, for the URL.
     pub(crate) label: String,
     pub(crate) path: String,
     pub(crate) line: u32,
@@ -504,8 +543,8 @@ impl Hold {
 }
 
 /// One implementation dependence between two drawn marks: one type's impls
-/// lean on another type. The dashed family, drawn at every altitude the same
-/// direction — the arrowhead rests on the user.
+/// lean on another type. The dashed family, always drawn the same direction —
+/// the arrowhead rests on the user.
 #[derive(Clone, PartialEq, Debug)]
 pub(crate) struct Tie {
     pub(crate) def: Anchor,
@@ -1460,7 +1499,7 @@ impl DataModel {
 }
 
 #[cfg(test)]
-/// The survey builders the data altitude's tests share: `/data`'s model and
+/// The survey builders this altitude's tests share: `/data`'s model and
 /// its sheet both read one `CodeGraph`, so both build theirs the same way.
 pub(in crate::views::data) mod tests {
     use super::*;
@@ -1474,10 +1513,7 @@ pub(in crate::views::data) mod tests {
         // The whole chain, as deep as the code is written: two modules here,
         // not one flat `views`.
         assert_eq!(module_path("src/views/data/map.rs"), ["views", "data"]);
-        assert_eq!(
-            module_path("src/views/codemap/map.rs"),
-            ["views", "codemap"]
-        );
+        assert_eq!(module_path("src/views/data/map.rs"), ["views", "data"]);
         // A module's own file and a file beside it frame in that module itself.
         assert_eq!(module_path("src/views/mod.rs"), ["views"]);
         assert_eq!(module_path("src/views/shell.rs"), ["views"]);
@@ -1494,10 +1530,6 @@ pub(in crate::views::data) mod tests {
             id,
             path: path.to_string(),
             krate: "slope".to_string(),
-            changed: false,
-            lines: 100,
-            items: 2,
-            refs_in_files: 0,
         }
     }
 
@@ -1543,7 +1575,6 @@ pub(in crate::views::data) mod tests {
     pub(in crate::views::data) fn graph(items: Vec<ItemMark>, holds: Vec<HoldEdge>) -> CodeGraph {
         CodeGraph {
             files: vec![file(0, "src/api.rs"), file(1, "src/views/dep/map.rs")],
-            refs: Vec::new(),
             items,
             implements: Vec::new(),
             item_edges: Vec::new(),

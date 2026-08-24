@@ -120,7 +120,7 @@ pub(crate) async fn workspace_graph() -> Result<WorkspaceGraph, ServerFnError> {
 }
 
 // ---------------------------------------------------------------------------
-// The code altitude: files, items, and semantically resolved references.
+// The code survey: files, items, and semantically resolved references.
 // ---------------------------------------------------------------------------
 
 /// What kind of thing one item in a file is.
@@ -172,29 +172,19 @@ impl ItemKind {
 }
 
 /// How widely an item is declared visible. `pub(crate)`, `pub(super)`, and
-/// `pub(in path)` are not `pub`: the altitude's interest bar reads them
-/// apart, and privacy is a permanent fold.
+/// `pub(in path)` are not `pub`, and the survey keeps them apart: a chart may
+/// read visibility, and none of them may guess it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum Vis {
     /// `pub` — visible outside its own crate.
     Pub,
     /// `pub(crate)`, `pub(super)`, `pub(in path)`.
     Crate,
-    /// No `pub` at all. Never a mark on the map; its references lift.
+    /// No `pub` at all.
     Private,
 }
 
 impl Vis {
-    /// Weight the interest bar adds for visibility: the wider the door, the
-    /// more the map owes the reader a name.
-    pub(crate) fn weight(self) -> u32 {
-        match self {
-            Vis::Pub => 2,
-            Vis::Crate => 1,
-            Vis::Private => 0,
-        }
-    }
-
     /// The visibility as rust writes it. Private declares nothing, so it has
     /// no keyword: rust writes nothing at all, and so does the interface.
     pub(crate) fn keyword(self) -> Option<&'static str> {
@@ -202,15 +192,6 @@ impl Vis {
             Vis::Pub => Some("pub"),
             Vis::Crate => Some("pub(crate)"),
             Vis::Private => None,
-        }
-    }
-
-    /// The same fact in a sentence, for tooltips and titles.
-    pub(crate) fn words(self) -> &'static str {
-        match self {
-            Vis::Pub => "pub",
-            Vis::Crate => "pub(crate)",
-            Vis::Private => "private",
         }
     }
 }
@@ -222,25 +203,11 @@ pub(crate) struct FileInfo {
     pub(crate) id: u32,
     /// Path relative to the workspace root, e.g. `src/views/dep/map.rs`.
     pub(crate) path: String,
-    /// Name of the crate this file belongs to.
+    /// The cargo **package** that owns this file — `slope-cli`, not the
+    /// `slope` binary target rust-analyzer resolved it under. The dependency
+    /// altitude draws packages, so this is the one name both altitudes can
+    /// key a crate on, and every cross-altitude link depends on it.
     pub(crate) krate: String,
-    /// Touched between the epoch base and the working copy.
-    pub(crate) changed: bool,
-    pub(crate) lines: u32,
-    /// How many items the file defines (functions, types, traits, …).
-    pub(crate) items: u32,
-    /// How many other files reference this one. Drives the mark's magnitude:
-    /// the more of the workspace leans on a file, the bigger its star.
-    pub(crate) refs_in_files: u32,
-}
-
-/// A file-level reference edge: `from` uses something defined in `to`.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct FileRef {
-    pub(crate) from: u32,
-    pub(crate) to: u32,
-    /// Resolved references aggregated over the whole file pair.
-    pub(crate) count: u32,
 }
 
 /// How an item's own declaration differs from the diff base — the structural
@@ -281,7 +248,7 @@ pub(crate) struct GhostMark {
     /// The file that declared it at the base, relative to the workspace root.
     /// The file itself may be gone too.
     pub(crate) path: String,
-    /// The crate that file belongs to.
+    /// The cargo package that owns that file, as [`FileInfo::krate`].
     pub(crate) krate: String,
     pub(crate) name: String,
     pub(crate) kind: ItemKind,
@@ -360,16 +327,16 @@ pub(crate) struct MethodRow {
     pub(crate) section: String,
 }
 
-/// One landmark the map may engrave: an item, seated in the containment tree
-/// (crate → directory → file → type → method), with the weight that decides
-/// whether it clears the altitude's bar.
+/// One landmark a chart may engrave: an item, seated in the containment tree
+/// (crate → directory → file → type → method), with the weight of what leans
+/// on it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ItemMark {
     /// Index into [`CodeGraph::items`].
     pub(crate) id: u32,
     /// The file whose source defines it.
     pub(crate) file: u32,
-    /// Index into that file's [`FileDetail::items`].
+    /// Index into that file's own items, in source order.
     pub(crate) local: u32,
     /// Display name, without any section prefix.
     pub(crate) name: String,
@@ -383,8 +350,8 @@ pub(crate) struct ItemMark {
     /// resolved through the impl's self type even when the impl sits in
     /// another file. `None` for items the file itself contains.
     pub(crate) parent: Option<u32>,
-    /// Item-level references reaching it from other files. Drives the
-    /// engraved weight of its mark.
+    /// Item-level references reaching it from other files: how much of the
+    /// workspace leans on it.
     pub(crate) fan_in: u32,
     /// Hand-written trait impls of this type, as their headers are written
     /// (`impl Clone for Vis`), gathered from every impl anywhere in the
@@ -514,10 +481,9 @@ pub(crate) struct ImplEdge {
 /// A reference between two items of one file, at mark precision, summed. The
 /// cross-file [`ItemEdge`]s carry their endpoints' files because either end
 /// may be a whole file; both ends of one of these is a mark by construction,
-/// so it carries nothing else. The cutaway reads a file's own references from
-/// its [`FileDetail`]; the data chart reads these, because which file a
-/// reference was written in says nothing about whether one type's code leans
-/// on another.
+/// so it carries nothing else. The chart needs them apart from the cross-file
+/// list because which file a reference was written in says nothing about
+/// whether one type's code leans on another.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct MarkRef {
     /// The [`ItemMark::id`] whose body names the other. A reference written
@@ -528,13 +494,10 @@ pub(crate) struct MarkRef {
 }
 
 /// The code-structure survey: every workspace source file, every resolved
-/// reference at both file and item precision, and every item the map can
-/// engrave. Item *bodies* — fields, variants, signatures — ship separately,
-/// per file, when a focus asks for them.
+/// reference at item precision, and every item a chart can engrave.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct CodeGraph {
     pub(crate) files: Vec<FileInfo>,
-    pub(crate) refs: Vec<FileRef>,
     /// Every chartable item, in (file, source) order. Impl blocks are not
     /// here: they are attribution, not geometry.
     pub(crate) items: Vec<ItemMark>,
@@ -562,8 +525,7 @@ pub(crate) struct CodeGraph {
     /// not on the chart; the words on the plate must say so.
     pub(crate) unresolved: u32,
     /// What the survey could not read about **references**, in plain words —
-    /// the code map's limits, and the limits of the dashed ink at every
-    /// altitude that draws it.
+    /// the limits of the dashed uses ink.
     pub(crate) notes: Vec<String>,
     /// What the survey could not read about the **holds walk**, in plain words
     /// — the data chart's limits. Kept apart from `notes` so each cartouche's
@@ -572,144 +534,14 @@ pub(crate) struct CodeGraph {
     pub(crate) walk_notes: Vec<String>,
 }
 
-/// One item inside a file.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ItemInfo {
-    /// Index into [`FileDetail::items`].
-    pub(crate) id: u32,
-    /// Display name; inline-module items carry their path (`tests::sample`).
-    pub(crate) name: String,
-    /// The impl or trait header this item sits under, e.g. `impl Trail`;
-    /// empty for top-level items.
-    pub(crate) section: String,
-    pub(crate) kind: ItemKind,
-    /// 1-based line in the source file.
-    pub(crate) line: u32,
-    pub(crate) vis: Vis,
-    /// Index into [`CodeGraph::items`]; `None` for impl blocks.
-    pub(crate) mark: Option<u32>,
-    /// Byte offsets of the item's own source text, doc comment and attributes
-    /// included. The focus plate quotes exactly this range.
-    pub(crate) start: u32,
-    pub(crate) end: u32,
-}
-
-/// A reference between two items of the same file.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ItemRef {
-    pub(crate) from: u32,
-    pub(crate) to: u32,
-    pub(crate) count: u32,
-}
-
-/// Everything the cutaway needs for one file: its items in source order and
-/// the references between them. Cross-file references are not here — they are
-/// on [`CodeGraph::item_edges`], where the map can lift them to any fold state
-/// without fetching a file's detail at all.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct FileDetail {
-    pub(crate) file: u32,
-    pub(crate) items: Vec<ItemInfo>,
-    /// References between this file's own items.
-    pub(crate) item_refs: Vec<ItemRef>,
-}
-
 /// Survey the workspace's code structure with rust-analyzer: every workspace
 /// source file, its items, and semantically resolved references. The first
 /// call runs the survey (tens of seconds on a large workspace); later calls
 /// answer from the cache.
 #[server]
 pub(crate) async fn code_graph() -> Result<CodeGraph, ServerFnError> {
-    crate::analyze::code::index()
+    crate::analyze::code::graph()
         .await
-        .map(|idx| idx.graph.clone())
+        .map(|graph| (*graph).clone())
         .map_err(ServerFnError::new)
-}
-
-/// One file's cutaway: items and item-level references. `file` is the id the
-/// last [`code_graph`] call handed out.
-#[server]
-pub(crate) async fn file_detail(file: u32) -> Result<FileDetail, ServerFnError> {
-    let idx = crate::analyze::code::index()
-        .await
-        .map_err(ServerFnError::new)?;
-    idx.details
-        .get(file as usize)
-        .cloned()
-        .ok_or_else(|| ServerFnError::new(format!("no file with id {file} in this survey")))
-}
-
-/// What one run of source text is, for colouring. The classes are a lexer's,
-/// not a palette's: the client decides how each one is inked.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub(crate) enum Tok {
-    /// A rust keyword.
-    Kw,
-    Comment,
-    /// A doc comment: `///`, `//!`, `/** */`.
-    Doc,
-    /// A string, char, or byte literal.
-    Str,
-    Num,
-    Lifetime,
-    /// Anything inside an attribute, `#[derive(Clone)]` included.
-    Attr,
-    /// A name whose first letter is uppercase.
-    Type,
-    /// The name in a `fn` declaration.
-    Fn,
-    /// A macro name, called or declared.
-    Macro,
-    Ident,
-    Punct,
-    Space,
-}
-
-/// One run of quoted source: its text, its colour class, and — when the run
-/// is a resolved reference to something in the workspace — where it goes,
-/// as an index into [`ItemSource::links`].
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct SrcRun {
-    pub(crate) text: String,
-    pub(crate) tok: Tok,
-    pub(crate) link: Option<u32>,
-}
-
-/// Where a clickable run of quoted source navigates.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct SrcLink {
-    /// Target file path relative to the workspace root.
-    pub(crate) path: String,
-    /// Target item's URL label (`Type::method`), matching [`ItemMark::label`];
-    /// empty when the reference targets the file as a whole.
-    pub(crate) label: String,
-}
-
-/// One item's own source text, lexed into coloured runs — what Go to
-/// Definition lands on. The interface quotes the file rather than describing
-/// it, so nothing here is reconstructed: the runs concatenate back to exactly
-/// the bytes on disk, minus the shared indent every line was stripped of.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ItemSource {
-    /// Path relative to the workspace root, for the locator.
-    pub(crate) path: String,
-    /// 1-based line the first quoted line is, in the real file. Equal to
-    /// [`ItemInfo::line`].
-    pub(crate) first_line: u32,
-    /// Per line, its runs of text in order. A run whose name resolved to
-    /// something in the workspace carries a link.
-    pub(crate) lines: Vec<Vec<SrcRun>>,
-    /// The navigation targets the runs link to, deduplicated.
-    pub(crate) links: Vec<SrcLink>,
-}
-
-/// One item's source, lexed. `file` is a [`FileInfo::id`] and `item` is that
-/// item's [`ItemMark::local`] index inside the file.
-#[server]
-pub(crate) async fn item_source(file: u32, item: u32) -> Result<ItemSource, ServerFnError> {
-    let idx = crate::analyze::code::index()
-        .await
-        .map_err(ServerFnError::new)?;
-    idx.item_source(file, item)
-        .ok_or_else(|| ServerFnError::new(format!("no item {item} in file {file} in this survey")))
 }

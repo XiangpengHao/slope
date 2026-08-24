@@ -8,12 +8,11 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{CodeGraph, Delta, HoldEvent, HoldKind, ItemMark};
-use crate::views::codemap::chrome::{Altitude, AltitudeSwitch, SurveyLimits, plural};
-use crate::views::codemap::{RefDir, item_route, use_code};
+use crate::views::chrome::{Altitude, AltitudeSwitch, plural};
 use crate::views::data::model::{
     Anchor, DataFacts, DataMark, DataModel, RowState, Stand, Tier, Unseen, upstream,
 };
-use crate::views::data::{mark_route, mod_route, use_data};
+use crate::views::data::{RefDir, mark_route, mod_route, use_data};
 
 /// Which modules the diff landed in, in plain words.
 fn insight(modules: &[String]) -> Option<String> {
@@ -100,14 +99,36 @@ pub(super) fn DataCartouche(
     }
 }
 
-/// A hold's kind in its own lowercase word; the wrapper's word wins.
+/// The survey's own limits, folded at the cartouche's foot. They are read
+/// once, to trust the chart — not consulted while reading it — so they rest
+/// behind one line, and the words are the survey's, never a paraphrase.
+#[component]
+fn SurveyLimits(notes: Vec<String>) -> Element {
+    if notes.is_empty() {
+        return rsx! {};
+    }
+    rsx! {
+        details { class: "fold border-t border-ink-line px-4 py-2",
+            summary { class: "cursor-pointer select-none font-data text-[9.5px] tracking-[0.1em] uppercase text-ink-soft hover:text-ink",
+                "what the survey cannot read"
+            }
+            div { class: "mt-1.5 space-y-1 pb-1 font-data text-[10px] leading-snug text-ink-soft",
+                for (i , note) in notes.iter().enumerate() {
+                    p { key: "{i}", "{note}" }
+                }
+            }
+        }
+    }
+}
+
 /// Which reading of the chart's uses edges is drawn. It rides on the
-/// cartouche because it acts on the whole plate, and it is the same reading
-/// the code map is set to — one reviewer, one question, at either altitude.
+/// cartouche because it acts on the whole plate: each block draws its heaviest
+/// edges in the chosen direction, and hovering a block reveals the rest.
+/// `both` is the unthinned picture.
 #[component]
 fn RefToggle() -> Element {
-    let code = use_code();
-    let current = *code.ref_dir.read();
+    let data = use_data();
+    let current = *data.ref_dir.read();
     let seg = |label: &'static str, hint: &'static str, val: RefDir| {
         rsx! {
             button {
@@ -116,7 +137,7 @@ fn RefToggle() -> Element {
                 "aria-pressed": if current == val { "true" } else { "false" },
                 title: hint,
                 onclick: move |_| {
-                    let mut dir = code.ref_dir;
+                    let mut dir = data.ref_dir;
                     dir.set(val);
                 },
                 "{label}"
@@ -413,7 +434,9 @@ impl DataMark {
 
 /// What the selected type offers, and neither ink on this paper draws: the
 /// contracts it promises, and the methods written for it. A block is state
-/// only — the sheet is a list, so both are rows with links (2026-08-24, user).
+/// only — the sheet is a list, so both are rows (2026-08-24, user), each one
+/// naming the file and line its own source is written on, since a trait and a
+/// method keep no state and this chart draws them no block to open.
 struct Offers {
     /// One row per hand-written trait impl, wherever in the workspace it is
     /// written. A derive is not here: it stands in the type's own source.
@@ -430,18 +453,21 @@ impl DataMark {
     fn offers(&self, graph: &CodeGraph) -> Offers {
         let mut promises: Vec<HoldRow> = Vec::new();
         let mut methods: Vec<HoldRow> = Vec::new();
+        let where_written = |m: &ItemMark| {
+            graph
+                .files
+                .get(m.file as usize)
+                .map(|f| format!("{}:{}", f.path, m.line))
+        };
         let trait_row =
             |t: &ItemMark, event: Option<HoldEvent>, name: String, word: String| HoldRow {
-                to: graph
-                    .files
-                    .get(t.file as usize)
-                    .map(|f| item_route(&f.path, &t.label)),
+                to: None,
                 decl: t.kind.decl_words(t.vis),
                 name,
                 letter: t.delta.letter(),
                 word,
                 event: event.map(HoldEvent::word),
-                hint: None,
+                hint: where_written(t),
             };
         if let Some(item) = graph.items.get(self.id as usize) {
             // Which promises the workspace declares itself: those the survey
@@ -519,18 +545,18 @@ impl DataMark {
                 let row = &item.method_rows[at];
                 let own = graph.items.get(row.mark as usize);
                 HoldRow {
-                    to: own.and_then(|m| {
-                        graph
-                            .files
-                            .get(m.file as usize)
-                            .map(|f| item_route(&f.path, &m.label))
-                    }),
+                    to: None,
                     decl: own.map_or_else(String::new, |m| m.kind.decl_words(m.vis)),
                     name: row.name.clone(),
                     letter: added.contains(&(at as u32)).then_some("A"),
                     word: promise.to_string(),
                     event: None,
-                    hint: Some(row.sig.clone()),
+                    // The signature first, then where it is written: an impl
+                    // block sits wherever it likes, so the file is a fact.
+                    hint: Some(match own.and_then(where_written) {
+                        Some(at) => format!("{} · {at}", row.sig),
+                        None => row.sig.clone(),
+                    }),
                 }
             }));
             // What the base wrote for it and this copy does not, quoted from the
@@ -570,10 +596,9 @@ impl DataMark {
 /// and a reviewer must never mistake for silence.
 #[component]
 pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
-    let code = use_code();
     let data = use_data();
     let model = use_memo(use_reactive((&graph,), move |(graph,)| {
-        DataModel::build(&graph, *code.ref_dir.peek(), &data.folds.read())
+        DataModel::build(&graph, *data.ref_dir.peek(), &data.folds.read())
     }));
     let model = model.read();
 
@@ -663,13 +688,13 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
         let item = graph.items.get(namer as usize)?;
         let file = files.get(item.file as usize)?;
         Some(HoldRow {
-            to: Some(item_route(&file.path, &item.label)),
+            to: None,
             decl: item.kind.decl_words(item.vis),
             name: item.name.clone(),
             letter: None,
             word: "names it".to_string(),
             event: event.map(HoldEvent::word),
-            hint: None,
+            hint: Some(format!("{}:{}", file.path, item.line)),
         })
     };
     let contracts: Vec<HoldRow> = model
@@ -698,22 +723,23 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
 
     // The implementation ink, both ways round — and then the same ink from
     // the ends this chart draws no block for (2026-08-23, user). A free
-    // function's body is a real item with a definition, so it gets a row like
-    // any other and links to its code; the sheet used to spend a sentence
-    // counting them instead, which named nothing a reviewer could open.
+    // function's body is a real item, so it gets a row like any other and
+    // names the file and line it is written on; the sheet used to spend a
+    // sentence counting them instead, which named nothing a reviewer could go
+    // and read.
     let unseen_row = |end: &Unseen| -> Option<(u32, HoldRow)> {
         let item = graph.items.get(end.item as usize)?;
         let file = files.get(item.file as usize)?;
         Some((
             end.count,
             HoldRow {
-                to: Some(item_route(&file.path, &item.label)),
+                to: None,
                 decl: item.kind.decl_words(item.vis),
                 name: item.name.clone(),
                 letter: None,
                 word: plural(end.count as usize, "reference"),
                 event: None,
-                hint: None,
+                hint: Some(format!("{}:{}", file.path, item.line)),
             },
         ))
     };
@@ -949,16 +975,10 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
                     }
                 }
             }
-            div { class: "border-t border-ink-line px-4 py-2",
-                if mark.ghost {
+            if mark.ghost {
+                div { class: "border-t border-ink-line px-4 py-2",
                     p { class: "font-data text-[9.5px] text-ink-soft",
                         "its definition left the working copy."
-                    }
-                } else {
-                    Link {
-                        class: "font-data text-[9.5px] tracking-[0.12em] uppercase text-ink underline underline-offset-4 hover:text-ink-soft",
-                        to: item_route(&mark.path, &mark.label),
-                        "open its definition →"
                     }
                 }
             }
@@ -1161,13 +1181,14 @@ mod tests {
         let offers = by_name(&model, "Wire").offers(&g);
 
         // The promises, in the order the headers stand. A foreign trait has no
-        // mark, so its row is a name; the workspace's own is a link, and this
-        // epoch's promise takes the flare.
+        // mark, so its row is a name and nothing else; the workspace's own
+        // names where the contract is written, and this epoch's promise takes
+        // the flare.
         let names: Vec<&str> = offers.promises.iter().map(|r| r.name.as_str()).collect();
         assert_eq!(names, ["Clone", "Held"]);
-        assert!(offers.promises[0].to.is_none());
+        assert!(offers.promises[0].hint.is_none());
         assert_eq!(offers.promises[0].event, None);
-        assert!(offers.promises[1].to.is_some());
+        assert_eq!(offers.promises[1].hint.as_deref(), Some("src/api.rs:2"));
         assert_eq!(offers.promises[1].decl, "trait");
         assert_eq!(offers.promises[1].event, Some("added"));
         // The self type is not restated where it is simply this mark.
@@ -1183,13 +1204,13 @@ mod tests {
         assert_eq!(rows, [("note", ""), ("clone", "Clone"), ("gone", "")]);
         assert_eq!(offers.methods[0].decl, "pub(crate) fn");
         assert_eq!(offers.methods[0].letter, Some("A"));
+        // The signature as written, then where it is written: an impl block
+        // sits wherever it likes.
         assert_eq!(
             offers.methods[0].hint.as_deref(),
-            Some("pub(crate) fn note(&self) -> String")
+            Some("pub(crate) fn note(&self) -> String · src/api.rs:3")
         );
-        assert!(offers.methods[0].to.is_some());
         assert_eq!(offers.methods[2].event, Some("removed"));
-        assert!(offers.methods[2].to.is_none());
     }
 
     #[test]
@@ -1213,8 +1234,8 @@ mod tests {
         assert!(offers.promises.is_empty());
         assert_eq!(offers.methods.len(), 1);
         assert_eq!(offers.methods[0].name, "tighten");
-        // Nothing to open: the definition left the working copy.
-        assert!(offers.methods[0].to.is_none());
+        // No place to name: the definition left the working copy, so the row
+        // is the base's signature and nothing more.
         assert_eq!(
             offers.methods[0].hint.as_deref(),
             Some("fn tighten(&mut self)")

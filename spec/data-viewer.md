@@ -1,15 +1,16 @@
 # The data chart — design brief and behavior
 
-The third altitude of the review ladder: crates → files/items → **the
-workspace's state**. Added 2026-08-21 (user decision) beside a surface chart
-that read the same types as contracts; that chart was removed on 2026-08-24
-(user decision) and this one is the altitude that reads types as data. Route
-family: `/data`, `/data/mark/:..path?item=`, `/data/mod/:..module`. The
-`/code` and `/data` routes share one survey fetch.
+The second altitude of the review ladder: crates → **the workspace's
+state**. Added 2026-08-21 (user decision) beside a surface chart that read the
+same types as contracts; that chart was removed on 2026-08-24 (user decision)
+and this one is the altitude that reads types as data. The code map that stood
+between this rung and the crates was removed the same day — see
+`spec/spec.md`. Route family: `/data`, `/data/mark/:..path?item=`,
+`/data/mod/:..module`.
 
 ## Job and audience
 
-The same reviewer, one rung down from the code map: **"what state does this
+The same reviewer, one rung down from the crates: **"what state does this
 workspace keep — and which of it is top-level?"** After an
 agent session the state shape is where quiet damage hides: a new struct
 nobody holds, a field that turns owned state into shared state, a type that
@@ -21,7 +22,7 @@ silently became load-bearing. Visitor mode: **Operate**.
    whatever its visibility, because state does not fold at a door. Functions,
    traits, consts and aliases have no block: a signature names state, it does
    not keep any. Methods are not rows either — a block is state only, and what
-   a type promises is read on its definition plate, one rung up.
+   a type promises is read on its selection sheet.
 2. **The tier is the chart.** Top-level data is a **root**: a static, or a
    type no other workspace type keeps in a field (`Owns` or `Shares`; a
    borrow is a view, not a hold). Roots stand at module level and wear the
@@ -46,18 +47,17 @@ silently became load-bearing. Visitor mode: **Operate**.
    has no block to draw a line to. On the sheet the words become **names**
    (2026-08-23): `Used by` and `Uses` list every reference — drawn types and
    free functions, traits and consts in one weight-ranked list, each row
-   saying its keyword and its count and linking to its definition (the code
-   viewer for the ones with no block, since the chart cannot re-centre on
-   what it does not draw). No sentence is left counting what a reviewer
-   cannot open.
+   saying its keyword and its count, a link where the chart draws that end a
+   block and the file and line it is written on where it does not. No
+   sentence is left counting what a reviewer cannot go and read.
 
 ## Decisions (user-confirmed 2026-08-21)
 
 - **Top-level = ownership root**, not "named by many signatures": the tier is
   decided by holding, and direct code access stays words on the mark.
-- **Third rung.** Ladder reads `dependencies · code · data` in every
-  cartouche (it read `dependencies · code · surface · data` until the surface
-  chart was removed on 2026-08-24).
+- **Second rung.** Ladder reads `dependencies · data` in every cartouche (it
+  read `dependencies · code · surface · data` until the surface chart and then
+  the code map were removed on 2026-08-24).
 - **Ownership as containment.** A module frame holds only top-level blocks;
   secondary data nests inside its heaviest holder. Additional holders keep
   drawn edges.
@@ -95,6 +95,11 @@ silently became load-bearing. Visitor mode: **Operate**.
   only for a selection the glass cannot show (see the far-edition section).
 - **Module boundary**: click the border to select (`/data/mod/…`), the − / +
   mark to fold to one counted row. Folds are this chart's own view state.
+  A module key is the cargo **package** name, then the module path as rust
+  nests it — `/data/mod/slope-cli`, `/data/mod/slope-cli/views/data`. The
+  package name and not rust-analyzer's crate display name, so a crate is
+  called the same thing here and one rung up and the dep chart's focus
+  panel can descend into a member's frame with "its data ↓".
 - **The structural diff** rides along in the shared grammar: `A`/`M`/`D`
   letters, flare frames, ghosts quoted from the base standing in their frame,
   `+`/struck rows woven in place, added/removed holding edges in flare with
@@ -146,26 +151,27 @@ own legibility floor. The fixes, all user-directed:
   not name the holder, which is the first row of the section right below
   it), the diff's rows,
   then kept strictly apart: `Held by` (nesting first, then drawn relations),
-  `In the contract of` (each namer a link to its definition plate), `In the
-  API of`, the reach line ("a shape change here reaches 4 more types
-  upstream, and 9 signatures name what it reaches."), `Holds`, what the type
-  itself offers as `Implements` / `Methods` (2026-08-24, user), `Used by` /
-  `Uses` with the undrawn-residue lines, and `open its definition →` — the
-  code plate stays the only place source is quoted whole.
+  `In the contract of` (each namer naming the file and line it is written
+  on), `In the API of`, the reach line ("a shape change here reaches 4 more
+  types upstream, and 9 signatures name what it reaches."), `Holds`, what the
+  type itself offers as `Implements` / `Methods` (2026-08-24, user), and
+  `Used by` / `Uses` with the undrawn-residue lines. The header's own
+  `src/api.rs:67` locator is where the mark itself is written; the sheet had
+  an `open its definition →` foot to the code plate until that chart was
+  removed (2026-08-24).
 - **`Implements`** is one row per hand-written trait impl gathered from
   anywhere in the workspace, quoting the trait as its header writes it
-  (`From<Option<ast::Visibility>>`), linking to the trait's definition when
-  the workspace declares it, wearing that trait's own `A`/`M` and this
+  (`From<Option<ast::Visibility>>`), naming where the contract is written
+  when the workspace declares it, wearing that trait's own `A`/`M` and this
   epoch's `added` / `removed` on the promise. A derive is not one of these: it
-  stands in the type's own source, which the definition plate quotes whole. A
-  contract the base promised and the working copy dropped keeps its row, from
-  the removed impl edge alone.
+  stands in the type's own source. A contract the base promised and the
+  working copy dropped keeps its row, from the removed impl edge alone.
 - **`Methods`** is one row per method the survey read for the type, wherever
   its impl block is written: the keyword and visibility, the name, `A` where
   the epoch added it, the contract it answers where a trait asked for it, and
   `removed` rows quoted from the base for what the epoch dropped. The
-  signature as written is the row's hover words — the sheet column is a name's
-  width. The type's own methods read first, then the trait ones under their
+  signature as written, then the file and line the impl block is written in,
+  are the row's hover words — the sheet column is a name's width. The type's own methods read first, then the trait ones under their
   promise; a ghost lists the API that left with it. Nothing here is on the
   paper: a block is state only, and the sheet is a list.
 - No legend (retired 2026-08-24; it had already been cut from ~600 words
@@ -194,15 +200,18 @@ own legibility floor. The fixes, all user-directed:
 - Blocks are measured in code around their measured kids (post-order); the
   frame layout is `data::layout`, with every top-level block a leaf seat. Nested rects are derived from the parent's placement, so wires can
   land on state drawn three layers deep.
-- `DataState` (own folds) and `DataCamera` live on the app shell;
-  `use_code().ref_dir` is shared across altitudes.
+- `DataState` (the folds and the `references` reading) and `DataCamera` live
+  on the app shell; `DataSurvey` — the survey gate that fetches
+  `code_graph()` and holds its loading and failure plates — is mounted there
+  too, above the routes, so a selection change never re-runs rust-analyzer.
 
 ## Open decisions
 
 - A ghost stands at module level whatever held it in the base; seating a
   ghost inside its base holder would need base-edition holds at full
   precision.
-- `dyn Trait` fields draw no line here (traits live one rung up). If review
+- `dyn Trait` fields draw no line here (a trait keeps no state, so it has no
+  block). If review
   shows reviewers missing that coupling, a counted `holds n dyn` foot line
   is the grammar-consistent fix.
 - Generic payloads (`Vec<T>`) stay holes, as everywhere.

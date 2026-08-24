@@ -17,8 +17,45 @@
 
 use std::collections::HashMap;
 
-use crate::views::codemap::tree::Placed;
+use dioxus_flow::prelude::Point;
+
 use crate::views::data::model::{Anchor, Frame, Seat};
+
+/// One placed box on the paper.
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub(super) struct Placed {
+    pub(crate) x: f64,
+    pub(crate) y: f64,
+    pub(crate) w: f64,
+    pub(crate) h: f64,
+}
+
+impl Placed {
+    pub(crate) fn center(&self) -> Point {
+        Point::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
+    }
+
+    /// Which sides of two boxes face each other, so an edge leaves and lands
+    /// on open paper instead of crossing its own block. It lives with the box
+    /// because it is a fact about two boxes, not about either ink drawn
+    /// between them.
+    pub(crate) fn tie_ends(self, other: Self) -> (Point, Point) {
+        let (ac, bc) = (self.center(), other.center());
+        if (ac.x - bc.x).abs() > (ac.y - bc.y).abs() {
+            let left = ac.x < bc.x;
+            (
+                Point::new(if left { self.x + self.w } else { self.x }, ac.y),
+                Point::new(if left { other.x } else { other.x + other.w }, bc.y),
+            )
+        } else {
+            let top = ac.y < bc.y;
+            (
+                Point::new(ac.x, if top { self.y + self.h } else { self.y }),
+                Point::new(bc.x, if top { other.y } else { other.y + other.h }),
+            )
+        }
+    }
+}
 
 /// Frame furniture, in flow units — one unit is one CSS pixel at zoom 1.
 const PAD: f64 = 14.0;

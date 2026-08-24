@@ -9,7 +9,7 @@ mod vcs;
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::env;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use cargo_metadata::{DependencyKind, MetadataCommand};
 
@@ -49,6 +49,55 @@ pub(super) fn workspace_dir() -> PathBuf {
     env::var_os("SLOPE_WORKSPACE")
         .map(PathBuf::from)
         .unwrap_or_else(|| env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
+}
+
+/// Every workspace member, as its package name and the directory it owns
+/// relative to the workspace root — `.` for a root package, which owns every
+/// path no deeper member claims. Deepest directory first, so the innermost
+/// member owning a file is the one a lookup finds.
+///
+/// This is the name both altitudes have to key a crate on. Cargo's *package*
+/// name is what the dependency graph draws, what a manifest writes, and what
+/// `cargo install` takes; rust-analyzer's crate display name is a *target*
+/// name, which a manifest is free to rename — this workspace's `slope-cli`
+/// package builds a binary called `slope`. Label a surveyed file with the
+/// target name and the two altitudes disagree about what the crate is called,
+/// so no link between them can be keyed on one.
+pub(super) fn member_dirs(dir: &Path) -> Result<Vec<(String, String)>, String> {
+    let meta = MetadataCommand::new()
+        .manifest_path(dir.join("Cargo.toml"))
+        .no_deps()
+        .exec()
+        .map_err(|e| format!("cargo metadata failed: {e}"))?;
+    let root = meta.workspace_root.as_std_path();
+    let members: HashSet<_> = meta.workspace_members.iter().cloned().collect();
+    let mut dirs: Vec<(String, String)> = meta
+        .packages
+        .iter()
+        .filter(|pkg| members.contains(&pkg.id))
+        .filter_map(|pkg| {
+            // Spelled exactly as `workspace_rel` spells a surveyed file, or
+            // the two would never match.
+            let rel = pkg
+                .manifest_path
+                .parent()?
+                .as_std_path()
+                .strip_prefix(root)
+                .ok()?
+                .to_string_lossy()
+                .into_owned();
+            let rel = if rel.is_empty() { ".".to_string() } else { rel };
+            Some((pkg.name.to_string(), rel))
+        })
+        .collect();
+    // A root package's `.` is the workspace root itself, so it is no
+    // directories deep and sorts last, behind every member nested under it.
+    let depth = |rel: &str| match rel {
+        "." => 0,
+        rel => rel.split('/').count(),
+    };
+    dirs.sort_by(|a, b| depth(&b.1).cmp(&depth(&a.1)).then_with(|| a.0.cmp(&b.0)));
+    Ok(dirs)
 }
 
 pub(crate) fn analyze() -> Result<WorkspaceGraph, String> {

@@ -5,13 +5,10 @@ use dioxus::prelude::*;
 
 use crate::Route;
 use crate::api::{WorkspaceGraph, workspace_graph};
-use crate::views::codemap::CodeState;
-use crate::views::codemap::map::CodeCamera;
-use crate::views::data::DataState;
 use crate::views::data::map::DataCamera;
+use crate::views::data::{DataState, DataSurvey};
 use crate::views::dep::map::DrawnCap;
 use crate::views::dep::{DepShell, DepState};
-use crate::views::survey::SurveyShell;
 
 type GraphResource = Resource<Result<WorkspaceGraph, ServerFnError>>;
 
@@ -63,8 +60,6 @@ pub(crate) fn AppShell() -> Element {
     // test can mount any view under a provider of its own.
     use_context_provider(DepState::new);
     use_context_provider(DrawnCap::new);
-    use_context_provider(CodeState::new);
-    use_context_provider(CodeCamera::new);
     use_context_provider(DataState::new);
     use_context_provider(DataCamera::new);
 
@@ -75,16 +70,12 @@ pub(crate) fn AppShell() -> Element {
     });
 
     let route = use_route::<Route>();
-    // The altitudes that read the code survey. One shell serves all of them, so
-    // stepping between them never re-runs the survey fetch.
+    // The altitude that reads the rust-analyzer survey. Its gate is mounted
+    // here, above the routes, so stepping between selections never re-runs
+    // the survey fetch.
     let survey_route = matches!(
         &route,
-        Route::CodeOverview {}
-            | Route::CodeCrate { .. }
-            | Route::CodeFile { .. }
-            | Route::DataOverview {}
-            | Route::DataFocus { .. }
-            | Route::DataModFocus { .. }
+        Route::DataOverview {} | Route::DataFocus { .. } | Route::DataModFocus { .. }
     );
     let state = resource.read();
 
@@ -98,10 +89,9 @@ pub(crate) fn AppShell() -> Element {
                     SurveyFailed { message: err.to_string(), resource }
                 },
                 Some(Ok(graph)) if survey_route => {
-                    // The altitudes that read the code survey: one survey
-                    // shell, and its own chart and furniture inside. The
-                    // workspace's identity and epoch ride along so every
-                    // altitude stamps the same cartouche facts.
+                    // The data altitude, behind its own survey gate. The
+                    // workspace's identity and epoch ride along so both
+                    // altitudes stamp the same cartouche facts.
                     // Each side of the arrow is one quoted idiom — the plate
                     // may break the line at the arrow, never inside
                     // `master @ 1a2b3c4` or `working copy`.
@@ -112,7 +102,7 @@ pub(crate) fn AppShell() -> Element {
                         nb(&graph.epoch.target)
                     );
                     rsx! {
-                        SurveyShell { workspace: graph.name.clone(), diff_line }
+                        DataSurvey { workspace: graph.name.clone(), diff_line }
                     }
                 }
                 Some(Ok(graph)) => rsx! {

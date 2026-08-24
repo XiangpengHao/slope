@@ -7,8 +7,8 @@ slope is a code reviewer for large LLM-made changes.
 The thesis: a human cannot read every line of a big agent-written change.
 That takes too much time and cognitive load. Instead, slope works above
 the raw rust code. The reviewer navigates from high level (crate
-dependencies) down to details (function call graph), and gains confidence
-by checking code structure without reading every line.
+dependencies) down to what the code keeps (the workspace's state), and
+gains confidence by checking structure without reading every line.
 
 The dependency graph viewer is the first step. It bootstraps the tool.
 It is not the end goal.
@@ -85,8 +85,47 @@ Frontend (`src/views/`): one living chart that blooms.
   cargo, or the VCS already uses — `pub(crate)`, `fn`, `(dev)`,
   `dev-dependencies`, `M`, `3 files changed`, `src/api.rs:10`. Invented
   uppercase abbreviations (EXT, DEV, GATE, `12 L`, "epoch") are retired,
-  and the code altitude's focus plate quotes an item's own source instead
-  of describing it. See spec/code-viewer.md and DESIGN.md.
+  and a quoted row is the source's own bytes, never a paraphrase of them.
+  See DESIGN.md.
+
+## The code map, removed (2026-08-24)
+
+there was a third viewer between the two: a **code map** at `/code`, which
+drew the workspace's files as blocks inside nested directory frames, with
+resolved reference ties between them, and a definition plate that quoted
+an item's own source with every resolved name in it a link. it is gone
+(user decision), along with `spec/code-viewer.md`, the `/code` route
+family, the `file_detail` and `item_source` server functions, and the
+source lexer that coloured the quoted plate.
+
+the ladder is now **`dependencies · data`**, two rungs. what went with the
+map:
+
+- the dep chart's focus panel offered "its files ↓", to the code map's
+  crate sheet. it went with the map, and on 2026-08-24 came back as
+  **"its data ↓"** — `/data/mod/:package`, the member's own frame on the
+  data chart. the link needed a fix first: the two altitudes did not share
+  a key for a crate. cargo names the **package** (`slope-cli`); the survey
+  named the **crate** rust-analyzer resolved (`slope` — this workspace's
+  bin target is renamed), so `/data/mod/slope-cli` selected nothing, and
+  the old link had the same bug silently — `/code/crate/slope-cli` printed
+  "No crate named "slope-cli" in this survey." the survey now labels every
+  file with the cargo member whose directory owns it (`member_dirs` in
+  `src/analyze/mod.rs`, `package_of` in `src/analyze/code.rs`), matching a
+  workspace-relative path against each member's `rel_path`, deepest member
+  first. one consequence: `/data/mod/slope` is now `/data/mod/slope-cli`,
+  and the crate frame's label and the cartouche's insight line say
+  `slope-cli` with the dep cartouche.
+- the data sheet's rows for what this chart draws no block for — a trait
+  it promises, a method written for it, a free function that names or uses
+  it — linked to the code plate. they keep their row and now name the file
+  and line the declaration is written on, as the row's hover words. the
+  sheet's `open its definition →` foot is gone; the header's own
+  `src/api.rs:67` locator is what a reviewer reads instead.
+- the survey still runs rust-analyzer and still resolves every reference
+  at item precision: the data chart's dashed uses edges are those. what
+  went is the file-precision reference list, each file's per-item cutaway,
+  and the quoted source — none of it read by the data chart.
 
 ## Name (renamed 2026-08-20)
 

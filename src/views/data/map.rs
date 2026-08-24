@@ -7,7 +7,7 @@
 //! the paper's own nesting before any words are. A block quotes its whole
 //! declaration — fields, variants, a static's type — and contains the blocks
 //! it owns under a hairline rule. No methods: what a type promises is read on
-//! its definition plate, one rung up.
+//! its selection sheet.
 //!
 //! Two families run between the blocks, and only two:
 //! solid holding lines with the wrapper's word (`Arc`, `&`) for what the
@@ -15,8 +15,8 @@
 //! leaning on another. Both rest on the dependent. What has no block here —
 //! a function naming or using state — is counted on the mark it touches,
 //! `named by n signatures · used by n bodies`, never silently cut; the
-//! sheet spends those counts back out as rows, one per item, each linking to
-//! the code the paper had no block for.
+//! sheet spends those counts back out as rows, one per item, each naming the
+//! file and line the paper had no block for.
 
 use std::collections::HashMap;
 
@@ -28,11 +28,8 @@ use dioxus_flow::prelude::{
 
 use crate::Route;
 use crate::api::{CodeGraph, HoldEvent, HoldKind, ItemKind};
-use crate::views::codemap::chrome::plural;
-use crate::views::codemap::map::{narrow_viewport, prefers_reduced_motion, window_size};
-use crate::views::codemap::tree::{Placed, text_w};
-use crate::views::codemap::use_code;
-use crate::views::data::layout::{self, DataLayout, Sizes};
+use crate::views::chrome::{narrow_viewport, plural, prefers_reduced_motion, window_size};
+use crate::views::data::layout::{self, DataLayout, Placed, Sizes};
 use crate::views::data::model::{Anchor, DataMark, DataModel, FieldRow, Held, Tier, upstream};
 use crate::views::data::{DataSel, mark_route, mod_route, use_data};
 
@@ -101,6 +98,17 @@ impl HoldKind {
             HoldKind::Implements => "is-impl",
         }
     }
+}
+
+/// One em of advance in the data face (JetBrains Mono is monospaced). Every
+/// measured label on this chart is data, so this is the only advance the
+/// layout needs.
+const MONO_ADVANCE: f64 = 0.6;
+
+/// Estimated width of mono text at a given size. The chart would rather carry
+/// slack than clip a name.
+fn text_w(text: &str, px: f64) -> f64 {
+    text.chars().count() as f64 * px * MONO_ADVANCE
 }
 
 /// Lines a text needs at `px` in `usable` width, with the browser's own
@@ -1556,7 +1564,6 @@ document.addEventListener('keydown', window.__slopeKeys);
 /// The data chart, mounted for `/data`.
 #[component]
 pub(super) fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
-    let code = use_code();
     let data = use_data();
     let camera = use_context::<DataCamera>();
     let flow = dioxus_flow::use_flow_handle::<DataNodeData>();
@@ -1564,7 +1571,7 @@ pub(super) fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
 
     let chart = use_memo(use_reactive((&graph,), {
         move |(graph,)| {
-            let model = DataModel::build(&graph, *code.ref_dir.read(), &data.folds.read());
+            let model = DataModel::build(&graph, *data.ref_dir.read(), &data.folds.read());
             DataDrawing::from(&model)
         }
     }));

@@ -20,8 +20,8 @@ slope is a code reviewer for massive LLM-generated changes. The thesis: a
 human cannot read every line of a large agent-written change — it costs too
 much time and cognitive load. slope sits above the raw Rust implementation
 and lets the reviewer navigate between altitudes — from high level (crate
-dependencies) down to detail (function call graph) — so they gain confidence
-by checking code structure without reading every line.
+dependencies) down to what the code keeps (the workspace's state) — so they
+gain confidence by checking structure without reading every line.
 
 Mechanically, it is a CLI pointed at a cargo workspace: it analyzes the
 workspace and opens a browser window that visualizes it. Success means the
@@ -31,8 +31,10 @@ zoom level the question demands.
 Sharpened 2026-08-19: slope is a **diff tool** first. Its claim over an
 ordinary diff: it keeps the important thing visible and helps the reviewer
 understand what changed, what the consequences are, and whether the change
-landed in the right place. The dep view and the code view are instruments in
-service of that diff story, with the code view the most important surface.
+landed in the right place. The dep view and the data view are instruments in
+service of that diff story. A code view — files as blocks, with a plate that
+quoted an item's source — was built 2026-08-19 and removed 2026-08-24 (user
+decision); the data view is the rung below the crates now.
 
 ## Positioning
 
@@ -54,8 +56,9 @@ artifact.
   (1) diff the uncommitted changes — working copy vs trunk base — so a
   developer reviews code before commit (build this now); (2) diff two
   branches, e.g. a PR in CI (later, explicitly out of scope for now). The
-  dependency viewer and code viewer exist (built 2026-08-18/19) but neither
-  yet tells a real diff story beyond file-level change marks.
+  dependency viewer and data viewer exist (built 2026-08-18 and 2026-08-21);
+  the structural diff is what carries the diff story past file-level change
+  marks.
 
 ## Capabilities and Constraints
 

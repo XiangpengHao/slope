@@ -1,9 +1,6 @@
 use dioxus::prelude::*;
 
-use views::{
-    AppShell, CodeCrate, CodeFile, CodeOverview, DataFocus, DataModFocus, DataOverview, DepFocus,
-    DepOverview, DepRing,
-};
+use views::{AppShell, DataFocus, DataModFocus, DataOverview, DepFocus, DepOverview, DepRing};
 
 /// Server-side analysis: cargo metadata, VCS diff, manifest events.
 #[cfg(feature = "server")]
@@ -19,11 +16,10 @@ mod views;
 /// altitude, each named for what it charts: `/dep` is the dependency
 /// altitude — crates on rings of hops, a multi-selection joining crate names
 /// with `+` (impossible in a crate name), a whole ring as `/dep/ring/:hop`.
-/// `/code` is the code altitude: the file map, one crate's district, one file
-/// (its path segments), one item (`?item=`). `/data` is the data altitude:
-/// every struct, enum, union and static the workspace keeps, tiered into roots
-/// and the state nested inside them; selecting one is
-/// `/data/mark/:..path?item=` (its defining file, then its label). `/` is the
+/// `/data` is the data altitude: every struct, enum, union and static the
+/// workspace keeps, tiered into roots and the state nested inside them;
+/// selecting one is `/data/mark/:..path?item=` (its defining file, then its
+/// label), and a whole module boundary is `/data/mod/:..module`. `/` is the
 /// dependency chart, the rung a review starts on.
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
@@ -36,12 +32,6 @@ enum Route {
         DepFocus { name: String },
         #[route("/dep/ring/:hop")]
         DepRing { hop: u32 },
-        #[route("/code")]
-        CodeOverview {},
-        #[route("/code/crate/:name")]
-        CodeCrate { name: String },
-        #[route("/code/file/:..path?:item")]
-        CodeFile { path: Vec<String>, item: String },
         #[route("/data")]
         DataOverview {},
         #[route("/data/mark/:..path?:item")]

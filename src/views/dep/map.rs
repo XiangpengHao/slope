@@ -17,6 +17,7 @@ use dioxus_flow::prelude::{
 };
 
 use crate::api::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
+use crate::views::chrome::{narrow_viewport, prefers_reduced_motion, window_size};
 use crate::views::dep::model::{DEFAULT_CAP, RadialLayout};
 use crate::views::dep::star::{StarData, StarNode};
 use crate::views::dep::{DirFilter, step_ring, use_dep};
@@ -82,35 +83,6 @@ impl DepEvent {
             DepEvent::Bumped(old, new) => format!("{old} → {new}"),
         }
     }
-}
-
-/// A phone-width viewport gets tighter chrome insets. Charts only render on
-/// the client, so the server value is never hydrated against.
-fn narrow_viewport() -> bool {
-    #[cfg(target_arch = "wasm32")]
-    {
-        web_sys::window()
-            .and_then(|w| w.inner_width().ok())
-            .and_then(|v| v.as_f64())
-            .map(|w| w < 640.0)
-            .unwrap_or(false)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    false
-}
-
-/// Authored motion stands down when the reader asked it to.
-fn prefers_reduced_motion() -> bool {
-    #[cfg(target_arch = "wasm32")]
-    {
-        web_sys::window()
-            .and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok())
-            .flatten()
-            .map(|m| m.matches())
-            .unwrap_or(false)
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    false
 }
 
 /// One drawing of the dependency chart: everything a single selection puts on
@@ -563,19 +535,6 @@ const MIN_FOCUS_ZOOM: f64 = 0.7;
 /// much further out — names fold away; the rings and the flares carry it.
 const MIN_OVERVIEW_ZOOM: f64 = 0.22;
 
-/// The window's inner size; `None` off the client, where nothing frames.
-fn window_size() -> Option<(f64, f64)> {
-    #[cfg(target_arch = "wasm32")]
-    {
-        let window = web_sys::window()?;
-        let w = window.inner_width().ok()?.as_f64()?;
-        let h = window.inner_height().ok()?.as_f64()?;
-        Some((w, h))
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    None
-}
-
 /// Frame the given flow-space bounds in the screen area the furniture leaves
 /// free. Never zooms lettering below the legibility floor (the chart pans for
 /// the rest, seated on the focal star) and never above natural scale.
@@ -662,7 +621,7 @@ document.addEventListener('keydown', window.__slopeKeys);
 "#;
 
 /// The ring cap the chart last painted. Provided as a context by the app
-/// shell because stepping to another altitude (`/dep` ↔ `/code`) unmounts the
+/// shell because stepping to the other altitude (`/dep` ↔ `/data`) unmounts the
 /// chart and throws its DOM away: without a memory of the geometry the
 /// reader was just looking at, an expansion after a return could only be
 /// drawn as a jump.

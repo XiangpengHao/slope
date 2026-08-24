@@ -1,8 +1,8 @@
 //! The first altitude: the workspace's crates as concentric dependency rings.
 //!
-//! The first rung of the review ladder — crates, then files and items, then the
-//! data. The crate under review sits at the center (the workspace's root crate
-//! by default) and every ring outward is one more dependency hop, so a change's
+//! The first rung of the review ladder — the crates, then the data they keep.
+//! The crate under review sits at the center (the workspace's root crate by
+//! default) and every ring outward is one more dependency hop, so a change's
 //! blast radius is a distance a reader can measure by eye. Stars never move.
 //! Selecting one draws its edges — ink lines to what it depends on, hairlines
 //! from what depends on it — and manifest events are always drawn, in flare.
@@ -196,8 +196,8 @@ pub(crate) fn DepShell(graph: WorkspaceGraph) -> Element {
 
     // Keep the trail in step with the URL. An effect, not a render-time
     // write: writes during the hydration render do not stick, which would
-    // silently drop the trail's first step. The other altitudes keep their own
-    // selection state; none of them writes this trail.
+    // silently drop the trail's first step. The data altitude keeps its own
+    // selection state; it never writes this trail.
     let step: Option<TrailStep> = match &route {
         Route::DepOverview {} => Some(None),
         Route::DepFocus { name } => Some(Some(name.clone())),

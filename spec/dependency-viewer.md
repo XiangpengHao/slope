@@ -7,7 +7,7 @@ was replaced by the word rust, cargo, or the VCS already uses. Nothing about
 the geometry, the rings, the edges, or the interactions changed.
 
 - "epoch" is gone from the surface. The cartouche reads
-  `diff main @ 1a2b3c4 → working copy`; the code cartouche carries the same
+  `diff main @ 1a2b3c4 → working copy`; the data cartouche carries the same
   line. The internal `Epoch` type keeps its name.
 - State words are counts and nouns, lowercase: `3 files changed`,
   `2 hops downstream`, `removed`, `added`, `1.0 → 1.2` (the arrow form is
@@ -244,9 +244,13 @@ flaring — orientation and diff in the same first glance.
 ## Scope and boundaries
 
 - Fidelity: production-ready surface (backend analysis + frontend chart).
-- Breadth: the dependency viewer only. The code structure viewer and call
-  graph are later altitudes; design so drilling deeper can reuse the same
-  focus/expand gesture and atlas grammar.
+- Breadth: the dependency viewer only. Deeper altitudes come later; design
+  so drilling deeper can reuse the same focus/expand gesture and atlas
+  grammar. (What came was a code map, added 2026-08-19 and removed
+  2026-08-24, and the data chart — `spec/data-viewer.md`. The focus panel's
+  "its files ↓" descent link went with the code map and came back the same
+  day as "its data ↓", to a member's own frame on the data chart, once both
+  altitudes named a crate by its cargo package; see `spec/spec.md`.)
 - Untouched: AGENTS.md. The scaffold navbar/home are placeholders and will
   be replaced by the full-bleed chart.
 - Anti-goals: never render the whole resolved graph at once; no neon

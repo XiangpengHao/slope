@@ -18,7 +18,7 @@
 //! Methods are compared only against the impls in the type's own file, because
 //! that is the only base edition this pass fetches; a method written in an
 //! impl block in another file is quoted and left out of the weave. The other
-//! item kinds keep `Delta::Same` until the code altitude takes its pass.
+//! item kinds keep `Delta::Same`: this pass says nothing it cannot read.
 
 use std::collections::{HashMap, HashSet};
 
@@ -27,8 +27,8 @@ use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 
 use super::vcs::Diff;
 use crate::api::{
-    CodeGraph, DeclRow, Delta, FileDetail, GhostMark, HoldEdge, HoldEvent, HoldKind, ImplEdge,
-    ItemKind, ItemMark, Vis,
+    CodeGraph, DeclRow, Delta, GhostMark, HoldEdge, HoldEvent, HoldKind, ImplEdge, ItemKind,
+    ItemMark, Vis,
 };
 
 /// One declaration as the base edition wrote it.
@@ -581,7 +581,7 @@ impl CodeGraph {
         dir: &std::path::Path,
         diff: &Diff,
         sources: &[String],
-        details: &[FileDetail],
+        spans: &[Vec<(u32, u32)>],
     ) {
         if diff.base_ref.is_none() || diff.changed_files.is_empty() {
             return;
@@ -711,7 +711,7 @@ impl CodeGraph {
                 })
                 .collect();
             // A function's block quotes its signature, so its signature is what
-            // this altitude reads: a rewritten body is the code altitude's news,
+            // this pass reads: a rewritten body moves no row the chart draws,
             // and an `M` here would point at rows that did not move. A type's
             // block quotes its methods too, and an impl block lives outside the
             // declaration's own text, so the band is compared beside it.
@@ -723,13 +723,13 @@ impl CodeGraph {
                 // flare a trait whose promise never moved.
                 item.vis == decl.vis && live_methods == decl.method_rows
             } else {
-                let live_text = details
+                let live_text = spans
                     .get(item.file as usize)
-                    .and_then(|d| d.items.get(item.local as usize))
-                    .and_then(|info| {
+                    .and_then(|f| f.get(item.local as usize))
+                    .and_then(|&(start, end)| {
                         sources
                             .get(item.file as usize)
-                            .and_then(|src| src.get(info.start as usize..info.end as usize))
+                            .and_then(|src| src.get(start as usize..end as usize))
                     })
                     .map(collapsed)
                     .unwrap_or_default();
@@ -942,8 +942,8 @@ impl CodeGraph {
         self.holds.extend(gone);
 
         // ---- Implements: what the base promised, and what it does not. ----------
-        // A type taking on a contract, or dropping one, is the loudest thing this
-        // altitude can say about a change, so it is diff ink either way. The base
+        // A type taking on a contract, or dropping one, is the loudest thing the
+        // data chart can say about a change, so it is diff ink either way. The base
         // edition is read for the pair of names an impl block writes — the live
         // side resolved them properly, but the base has only syntax, so the two
         // are compared as `(trait, type)` names and an ambiguous name is left

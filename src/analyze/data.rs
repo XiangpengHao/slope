@@ -1,8 +1,7 @@
 //! The data walk: which types hold which, and through what.
 //!
-//! The code survey answers where the items are and who names whom; this
-//! answers the altitude below it — what state exists, and what the boundary
-//! of sharing is. In rust that answer is statically readable, because
+//! The reference walk answers who names whom; this answers what state exists,
+//! and what the boundary of sharing is. In rust that answer is statically readable, because
 //! ownership is written in the types: `Arc<Mutex<T>>` says shared mutable
 //! state in the signature, `&'a T` says view. Every surveyed struct, enum,
 //! union, and static has its fields' semantic types walked, and every
@@ -11,8 +10,8 @@
 //! A free function is walked the same way, because a pub fn is a contract
 //! just as a pub struct is: its parameters and its return type are declared
 //! types, so they are walked exactly as a field declaration is. Only the
-//! signature — a body names things at the code altitude, and that is where
-//! those names stay.
+//! signature — a body's own names are references, counted as references and
+//! nothing else.
 //!
 //! A method is walked as one row of its *type's* contract: the edges leave the
 //! type, filed under the method's own name, and the row is the signature as
@@ -24,7 +23,7 @@
 //! plain type; a field whose walk reaches no workspace type is counted, not
 //! invented. The walk runs on the survey's already-loaded database and
 //! reuses its def → mark resolution, so an edge lands on exactly the mark the
-//! code altitude engraved.
+//! reference walk resolved to.
 
 use std::collections::HashMap;
 

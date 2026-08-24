@@ -1,12 +1,12 @@
 //! The code survey: rust-analyzer as a library over the workspace sources.
 //!
-//! `cargo metadata` answers the crate altitude; this module answers the two
-//! below it — files and items. It loads the workspace into a rust-analyzer
-//! database, walks every workspace-member source file, collects its items
-//! (functions, types, traits, impls), and resolves every reference it can:
-//! paths, method calls, and field accesses. References that reach outside the
-//! workspace are dropped — this altitude charts the reviewer's own code, not
-//! its dependencies.
+//! `cargo metadata` answers the crate altitude; this module answers the one
+//! below it — the items themselves. It loads the workspace into a
+//! rust-analyzer database, walks every workspace-member source file, collects
+//! its items (functions, types, traits, impls), and resolves every reference
+//! it can: paths, method calls, and field accesses. References that reach
+//! outside the workspace are dropped — the survey reads the reviewer's own
+//! code, not its dependencies.
 //!
 //! Every name is read where rust-analyzer really resolved it, which for a
 //! dioxus app is usually not where it is written: `rsx!` bodies are unparsed
@@ -22,7 +22,7 @@
 //! rustc sees them), but not omniscient: names that type inference cannot
 //! settle are counted and reported in words, never silently invented.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
@@ -33,51 +33,26 @@ use ra_ap_load_cargo::{LoadCargoConfig, ProcMacroServerChoice, load_workspace_at
 use ra_ap_project_model::{CargoConfig, RustLibSource};
 use ra_ap_syntax::ast::{HasName, HasVisibility, VisibilityKind};
 use ra_ap_syntax::{
-    AstNode, AstToken, Edition, SyntaxKind, SyntaxNode, SyntaxToken, TextRange, TextSize, ast,
+    AstNode, AstToken, SyntaxKind, SyntaxNode, SyntaxToken, TextRange, TextSize, ast,
 };
 use ra_ap_vfs::{FileId, Vfs};
 use tokio::sync::OnceCell;
 
 use super::data;
-use crate::api::{
-    CodeGraph, FileDetail, FileInfo, FileRef, ImplEdge, ItemEdge, ItemInfo, ItemKind, ItemMark,
-    ItemRef, ItemSource, MarkRef, SrcLink, SrcRun, Tok, Vis,
-};
+use crate::api::{CodeGraph, FileInfo, ImplEdge, ItemEdge, ItemKind, ItemMark, MarkRef, Vis};
 
-/// The whole survey, precomputed once: the shipped graph plus every file's
-/// cutaway detail, ready to answer per-file queries from memory.
-pub(crate) struct CodeIndex {
-    pub(crate) graph: CodeGraph,
-    /// Indexed by [`FileInfo::id`].
-    pub(crate) details: Vec<FileDetail>,
-    /// Every surveyed file's source text, indexed by [`FileInfo::id`]. The
-    /// focus plate quotes it; it never crosses the wire whole.
-    pub(crate) sources: Vec<String>,
-    /// Clickable reference spans per file: (start byte, end byte, target file,
-    /// target item label), sorted by start. The focus plate turns the ones
-    /// inside a quoted item into links.
-    pub(crate) ref_spans: Vec<Vec<RefSpan>>,
-}
+/// Byte range of one item's own source text, doc comment and attributes
+/// included — exactly the range the structural diff compares against the base
+/// edition. Indexed by file, then by the item's index inside its file.
+type ItemSpans = Vec<Vec<(u32, u32)>>;
 
-/// One clickable reference in a file's real source: the byte range of the
-/// reference's name token, and where it resolves. Server-side only — the
-/// focus plate translates the ones a quoted item contains into [`SrcLink`]s.
-pub(crate) struct RefSpan {
-    pub(crate) start: u32,
-    pub(crate) end: u32,
-    /// Target file, a [`FileInfo::id`].
-    pub(crate) file: u32,
-    /// Target item's URL label; empty for a whole-file target.
-    pub(crate) label: String,
-}
-
-static INDEX: OnceCell<Result<Arc<CodeIndex>, String>> = OnceCell::const_new();
+static SURVEY: OnceCell<Result<Arc<CodeGraph>, String>> = OnceCell::const_new();
 
 /// The cached survey. The first caller pays for it (tens of seconds on a
 /// large workspace — rust-analyzer loads the whole workspace); everyone
 /// after answers from memory.
-pub(crate) async fn index() -> Result<Arc<CodeIndex>, String> {
-    INDEX
+pub(crate) async fn graph() -> Result<Arc<CodeGraph>, String> {
+    SURVEY
         .get_or_init(|| async {
             tokio::task::spawn_blocking(|| {
                 let dir = super::workspace_dir();
@@ -113,15 +88,6 @@ impl LineStarts {
         let off = u32::from(offset);
         self.0.partition_point(|&s| s <= off) as u32
     }
-
-    /// Byte offset where a 1-based line starts.
-    fn start_of(&self, line: u32) -> Option<u32> {
-        self.0.get(line.checked_sub(1)? as usize).copied()
-    }
-
-    fn count(&self) -> u32 {
-        self.0.len() as u32
-    }
 }
 
 /// One item as collected from the syntax tree, before ids are assigned.
@@ -143,7 +109,6 @@ struct RawFile {
     krate: String,
     efid: EditionedFileId,
     items: Vec<RawItem>,
-    lines: u32,
     /// Source ranges the walk left out as test-only. Nothing written inside
     /// one is a declaration or a reference this survey knows about.
     test_ranges: Vec<TextRange>,
@@ -161,7 +126,7 @@ struct RefTarget {
 /// Where a reference comes from: (source file, source item, target).
 type RefSource = (u32, Option<u32>, RefTarget);
 
-pub(crate) fn survey(dir: &std::path::Path) -> Result<CodeIndex, String> {
+pub(crate) fn survey(dir: &std::path::Path) -> Result<CodeGraph, String> {
     let manifest = dir.join("Cargo.toml");
     if !manifest.exists() {
         return Err(format!(
@@ -170,6 +135,10 @@ pub(crate) fn survey(dir: &std::path::Path) -> Result<CodeIndex, String> {
             dir.display()
         ));
     }
+
+    // Which cargo package owns which directory, read before the expensive
+    // load so a manifest cargo cannot parse fails in a second, not a minute.
+    let members = super::member_dirs(dir)?;
 
     // All features on: a file behind `#[cfg(feature = …)]` is still the
     // reviewer's code, and a survey that silently skips it lies by omission.
@@ -198,7 +167,7 @@ pub(crate) fn survey(dir: &std::path::Path) -> Result<CodeIndex, String> {
     // The new trait solver reads the database through a thread-local; every
     // Semantics call must run with it attached or inference panics.
     ra_ap_hir::attach_db(&db, || {
-        survey_attached(dir, &db, &vfs, proc_macro.is_some())
+        survey_attached(dir, &db, &vfs, proc_macro.is_some(), &members)
     })
 }
 
@@ -207,7 +176,8 @@ fn survey_attached(
     db: &RootDatabase,
     vfs: &Vfs,
     proc_macros: bool,
-) -> Result<CodeIndex, String> {
+    members: &[(String, String)],
+) -> Result<CodeGraph, String> {
     let root = dunce_canonical(dir);
     let sema = Semantics::new(db);
 
@@ -243,12 +213,15 @@ fn survey_attached(
             let Some(rel) = workspace_rel(vfs, fid, &root) else {
                 continue;
             };
+            // The cargo package that owns the file on disk, not the crate
+            // rust-analyzer resolved: a target a manifest renamed would name
+            // this crate something the dependency altitude has never heard of.
+            let package = package_of(members, &rel).unwrap_or(krate_name.as_str());
             raw.push(RawFile {
                 path: rel,
-                krate: krate_name.clone(),
+                krate: package.to_string(),
                 efid,
                 items: Vec::new(),
-                lines: 0,
                 test_ranges: Vec::new(),
             });
         }
@@ -262,16 +235,14 @@ fn survey_attached(
         .collect();
 
     let mut starts: Vec<LineStarts> = Vec::with_capacity(raw.len());
-    // The text is read once here and kept: the focus plate quotes an item's
-    // own source, and re-reading the file later would risk quoting something
-    // the survey never saw.
+    // The text is read once here and kept: the structural diff compares a
+    // declaration's own bytes against the base edition, and re-reading the
+    // file later would risk comparing something the survey never saw.
     let mut sources: Vec<String> = Vec::with_capacity(raw.len());
     for file in raw.iter_mut() {
         let source = sema.parse(file.efid);
         let text = source.syntax().text().to_string();
-        let lines = LineStarts::new(&text);
-        file.lines = lines.count();
-        starts.push(lines);
+        starts.push(LineStarts::new(&text));
         sources.push(text);
         let mut items = Vec::new();
         let mut skipped = Vec::new();
@@ -376,9 +347,9 @@ fn survey_attached(
     }
 
     // Containment: an item's parent is the type its impl names, or the trait
-    // that declares it. Inline modules are not containers at this altitude.
+    // that declares it. Inline modules are not containers in the survey.
     // The data walk below reads it: a function with no parent is free, and a
-    // free function's signature is a contract the data altitude charts.
+    // free function's signature is a contract the data chart draws.
     let mut parent_of: Vec<Option<u32>> = vec![None; mark_at.len()];
     for (fi, file) in raw.iter().enumerate() {
         let by_range: HashMap<TextRange, u32> = file
@@ -410,9 +381,6 @@ fn survey_attached(
     // (source file, source item, target) → count.
     let mut acc: HashMap<(u32, Option<u32>, RefTarget), u32> = HashMap::new();
     let mut unresolved: u32 = 0;
-    // Each recorded reference's name token, as a byte range in the real
-    // source file, with its target — the raw material for clickable spans.
-    let mut raw_spans: Vec<Vec<(u32, u32, RefTarget)>> = vec![Vec::new(); raw.len()];
 
     for (src_file, file) in raw.iter().enumerate() {
         let source = sema.parse(file.efid);
@@ -427,46 +395,14 @@ fn survey_attached(
             source.syntax(),
             &mut acc,
             &mut unresolved,
-            &mut raw_spans[src_file],
         );
     }
-
-    // Order the spans and keep at most one per range: two references cannot
-    // share one token on screen, so the first (leftmost, then longest kept
-    // first by the sort) wins and anything overlapping it is dropped.
-    let ref_spans: Vec<Vec<RefSpan>> = raw_spans
-        .into_iter()
-        .map(|mut spans| {
-            spans.sort_by_key(|&(s, e, _)| (s, e));
-            let mut out: Vec<RefSpan> = Vec::new();
-            for (start, end, target) in spans {
-                if out.last().is_some_and(|prev| start < prev.end) {
-                    continue;
-                }
-                let label = target
-                    .item
-                    .map(|it| &raw[target.file as usize].items[it as usize])
-                    // An impl block has no mark to land on; fall back to the
-                    // file as a whole.
-                    .filter(|item| item.kind != ItemKind::Impl)
-                    .map(RawItem::label)
-                    .unwrap_or_default();
-                out.push(RefSpan {
-                    start,
-                    end,
-                    file: target.file,
-                    label,
-                });
-            }
-            out
-        })
-        .collect();
 
     // ---- Pass C: the data walk. -------------------------------------------
 
     // Which types hold which, and through what. A field's type resolves to a
     // mark through the very same def → mark path a reference does, so the
-    // data altitude never invents a landmark the code altitude does not have.
+    // holds walk never invents a landmark the reference walk does not have.
     let data_mark = |def: ModuleDef| -> Option<u32> {
         let want: &[ItemKind] = match def {
             ModuleDef::Adt(_) => &[ItemKind::Struct, ItemKind::Enum, ItemKind::Union],
@@ -543,16 +479,13 @@ fn survey_attached(
 
     // ---- Assemble the wire model. -----------------------------------------
 
-    let mut file_pair: HashMap<(u32, u32), u32> = HashMap::new();
-    let mut item_refs: Vec<Vec<ItemRef>> = vec![Vec::new(); raw.len()];
     // Cross-file references at item precision, aggregated per pair. Several
     // impl blocks for one type collapse onto the same endpoint, so the pairs
     // must be summed, not pushed.
     let mut edge_acc: HashMap<(u32, Option<u32>, u32, Option<u32>), u32> = HashMap::new();
-    // The same thing for two items of one file. The cutaway reads those from
-    // the file's own detail, but a chart that draws dependence needs them on
-    // the wire: which file a reference was written in says nothing about
-    // whether one contract leans on another.
+    // The same thing for two items of one file, kept apart because which file
+    // a reference was written in says nothing about whether one contract leans
+    // on another.
     let mut local_acc: HashMap<(u32, u32), u32> = HashMap::new();
 
     let mut ordered: Vec<(RefSource, u32)> = acc.into_iter().collect();
@@ -560,16 +493,14 @@ fn survey_attached(
 
     for ((src_file, src_item, target), count) in ordered {
         if target.file == src_file {
-            // Within one file: an item-level edge for the cutaway. A file
-            // referencing itself as a whole says nothing; drop that.
+            // Within one file, at mark precision. An impl block is
+            // attribution, so a reference written inside one comes from the
+            // type it names; a reference *to* an impl block is a reference to
+            // nothing a chart can land on. A file referencing itself as a
+            // whole says nothing; drop that.
             if let (Some(from), Some(to)) = (src_item, target.item)
                 && from != to
             {
-                item_refs[src_file as usize].push(ItemRef { from, to, count });
-                // The same reference at mark precision. An impl block is
-                // attribution, so a reference written inside one comes from
-                // the type it names; a reference *to* an impl block is a
-                // reference to nothing the chart can land on.
                 let from = mark_of[src_file as usize][from as usize]
                     .or_else(|| impl_self.get(&(src_file, from)).copied());
                 let to = mark_of[src_file as usize][to as usize];
@@ -581,9 +512,8 @@ fn survey_attached(
             }
             continue;
         }
-        *file_pair.entry((src_file, target.file)).or_default() += count;
 
-        // The same edge at item precision, for the map's lifting. A reference
+        // The same edge at item precision, aggregated. A reference
         // written inside an impl block belongs to the type that impl names —
         // which is how `impl Trait for Type` becomes a type → trait tie.
         let from = src_item.and_then(|l| {
@@ -665,16 +595,10 @@ fn survey_attached(
         });
     }
 
-    let mut in_files: HashMap<u32, u32> = HashMap::new();
-    for &(_, to) in file_pair.keys() {
-        *in_files.entry(to).or_default() += 1;
-    }
-
     // The epoch's touch — the same diff the crate altitude reads. The full
     // diff stays around: the structural pass below reads base editions of the
     // changed files through it.
     let diff = super::vcs::Diff::detect(dir);
-    let changed: HashSet<String> = diff.changed_files.iter().cloned().collect();
 
     let files: Vec<FileInfo> = raw
         .iter()
@@ -683,56 +607,24 @@ fn survey_attached(
             id: i as u32,
             path: f.path.clone(),
             krate: f.krate.clone(),
-            changed: changed.contains(&f.path),
-            lines: f.lines,
-            items: f
-                .items
-                .iter()
-                .filter(|it| it.kind != ItemKind::Impl)
-                .count() as u32,
-            refs_in_files: in_files.get(&(i as u32)).copied().unwrap_or(0),
         })
         .collect();
 
-    let mut refs: Vec<FileRef> = file_pair
-        .into_iter()
-        .map(|((from, to), count)| FileRef { from, to, count })
-        .collect();
-    refs.sort_by_key(|r| (r.from, r.to));
-
-    let details: Vec<FileDetail> = raw
+    // What the structural diff reads the working copy back through.
+    let spans: ItemSpans = raw
         .iter()
-        .enumerate()
-        .map(|(i, f)| {
-            let lines = &starts[i];
-            FileDetail {
-                file: i as u32,
-                items: f
-                    .items
-                    .iter()
-                    .enumerate()
-                    .map(|(id, it)| ItemInfo {
-                        id: id as u32,
-                        name: it.name.clone(),
-                        section: it.section.clone(),
-                        kind: it.kind,
-                        line: lines.line(it.range.start()),
-                        vis: it.vis,
-                        mark: mark_of[i][id],
-                        start: u32::from(it.range.start()),
-                        end: u32::from(it.range.end()),
-                    })
-                    .collect(),
-                item_refs: std::mem::take(&mut item_refs[i]),
-            }
+        .map(|f| {
+            f.items
+                .iter()
+                .map(|it| (u32::from(it.range.start()), u32::from(it.range.end())))
+                .collect()
         })
         .collect();
 
     // Two lists, because each cartouche's survey fold should state the limits
-    // of the ink its own chart draws: references are the code map's whole
-    // subject and the dashed ink at the two altitudes above it, while the
-    // holds walk is theirs alone. Said once here, in the survey's own words,
-    // so no chrome paraphrases it.
+    // of the ink its own chart draws: the dashed uses ink is what the
+    // reference walk can see, while the holds walk is the solid ink's alone.
+    // Said once here, in the survey's own words, so no chrome paraphrases it.
     let mut notes = vec![
         "rust-analyzer resolves every reference; only references between \
          workspace files are charted"
@@ -786,13 +678,12 @@ fn survey_attached(
          body is on either chart"
             .to_string(),
         "what a macro declares, the survey cannot read: a type's derived \
-         impls stand on its definition plate, and nothing here counts them"
+         impls stand on its own selection sheet, and nothing here counts them"
             .to_string(),
     ];
 
     let mut graph = CodeGraph {
         files,
-        refs,
         items,
         implements,
         item_edges,
@@ -805,14 +696,9 @@ fn survey_attached(
     };
     // The structural diff: per-declaration deltas, ghosts for what the base
     // had, and added/removed hold events, read syntactically from the base.
-    graph.apply_base_diff(dir, &diff, &sources, &details);
+    graph.apply_base_diff(dir, &diff, &sources, &spans);
 
-    Ok(CodeIndex {
-        graph,
-        details,
-        sources,
-        ref_spans,
-    })
+    Ok(graph)
 }
 
 /// Canonicalize for prefix-stripping; fall back to the path as given.
@@ -831,6 +717,22 @@ fn workspace_rel(vfs: &Vfs, fid: FileId, root: &std::path::Path) -> Option<Strin
         return None;
     }
     Some(rel)
+}
+
+/// The cargo package a workspace-relative path belongs to: the member whose
+/// directory is the longest prefix of it, the members having arrived deepest
+/// first. `None` where no member claims the path at all — a virtual
+/// workspace has no root package to fall back on.
+fn package_of<'a>(members: &'a [(String, String)], path: &str) -> Option<&'a str> {
+    members
+        .iter()
+        .find(|(_, dir)| match dir.as_str() {
+            "." => true,
+            dir => path
+                .strip_prefix(dir)
+                .is_some_and(|rest| rest.starts_with('/')),
+        })
+        .map(|(name, _)| name.as_str())
 }
 
 impl RawItem {
@@ -857,8 +759,8 @@ fn section_type(section: &str) -> &str {
 
 /// Collapse whitespace and cap length, for impl headers used as names. The
 /// only place the survey rewrites source text: an impl header is a label,
-/// and a label is one line. Everything a reader reads as code — an item's
-/// definition — is quoted whole instead, by [`item_source`].
+/// and a label is one line. Every other quoted row — a field, a variant, a
+/// signature — is the source's own bytes.
 fn compact(text: impl ToString) -> String {
     const CAP: usize = 48;
     let text = text.to_string();
@@ -975,7 +877,7 @@ pub(super) fn test_only(node: &SyntaxNode) -> bool {
 }
 
 /// Collect the file's items in tree order. Inline modules contribute their
-/// path to item names but are not containers at this altitude: their items
+/// path to item names but are not containers in the survey: their items
 /// stay on the file's own shelf.
 ///
 /// Test-only declarations are left out unless [`super::charts_tests`] says
@@ -1118,8 +1020,7 @@ enum Resolved {
 }
 
 /// Walk one file's syntax tree and record every reference that resolves to a
-/// workspace file. Every recorded reference lands in `spans` too, keyed by its
-/// own name token in the real file, so the focus plate can turn it into a link.
+/// workspace file.
 #[allow(clippy::too_many_arguments)]
 fn scan_refs(
     sema: &Semantics<'_, RootDatabase>,
@@ -1132,13 +1033,11 @@ fn scan_refs(
     node: &SyntaxNode,
     acc: &mut HashMap<RefSource, u32>,
     unresolved: &mut u32,
-    spans: &mut Vec<(u32, u32, RefTarget)>,
 ) {
     let src_items = &raw[src_file as usize].items;
     let test_ranges = &raw[src_file as usize].test_ranges;
     fn record(
         acc: &mut HashMap<RefSource, u32>,
-        spans: &mut Vec<(u32, u32, RefTarget)>,
         src_items: &[RawItem],
         test_ranges: &[TextRange],
         src_file: u32,
@@ -1157,7 +1056,6 @@ fn scan_refs(
             return;
         }
         *acc.entry((src_file, src_item, target)).or_default() += 1;
-        spans.push((at.start().into(), at.end().into(), target));
     }
 
     for tok in node
@@ -1173,7 +1071,6 @@ fn scan_refs(
             Resolved::Target(target) => {
                 record(
                     acc,
-                    spans,
                     src_items,
                     test_ranges,
                     src_file,
@@ -1209,7 +1106,7 @@ fn scan_refs(
                 continue;
             };
             if let Some(target) = def_target(sema, db, vfs, root, file_of, raw, def) {
-                record(acc, spans, src_items, test_ranges, src_file, at, target);
+                record(acc, src_items, test_ranges, src_file, at, target);
             }
         }
     }
@@ -1428,243 +1325,40 @@ fn target_at(
     Some(RefTarget { file, item })
 }
 
-// ---------------------------------------------------------------------------
-// The definition plate: an item's own source, quoted.
-// ---------------------------------------------------------------------------
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl CodeIndex {
-    /// One item's source text, dedented and lexed into coloured runs — what Go to
-    /// Definition lands on. The plate quotes the file whole: nothing is rewritten
-    /// or cut. Every run whose name resolved to something in the workspace
-    /// carries a link, so the quoted code navigates like the code it quotes.
-    pub(crate) fn item_source(&self, file: u32, item: u32) -> Option<ItemSource> {
-        let info = self.details.get(file as usize)?.items.get(item as usize)?;
-        let text = self.sources.get(file as usize)?;
-        let path = self.graph.files.get(file as usize)?.path.clone();
+    /// As `member_dirs` hands them over: deepest directory first.
+    fn members() -> Vec<(String, String)> {
+        vec![
+            ("inner".to_string(), "crates/outer/inner".to_string()),
+            ("outer".to_string(), "crates/outer".to_string()),
+            ("slope-cli".to_string(), ".".to_string()),
+        ]
+    }
 
-        let (start, end) = (info.start as usize, info.end as usize);
-        if start > end
-            || end > text.len()
-            || !text.is_char_boundary(start)
-            || !text.is_char_boundary(end)
-        {
-            return None;
-        }
+    #[test]
+    fn a_file_belongs_to_the_deepest_member_that_owns_it() {
+        let m = members();
+        assert_eq!(
+            package_of(&m, "crates/outer/inner/src/lib.rs"),
+            Some("inner")
+        );
+        assert_eq!(package_of(&m, "crates/outer/src/lib.rs"), Some("outer"));
+        // A root package owns everything no deeper member claims — including
+        // the directory that only looks like a member's.
+        assert_eq!(package_of(&m, "src/analyze/code.rs"), Some("slope-cli"));
+        assert_eq!(
+            package_of(&m, "crates/outerly/src/lib.rs"),
+            Some("slope-cli")
+        );
+    }
 
-        // A method inside an impl starts mid-line: give it back the indent its own
-        // line begins with before stripping what every line shares, or its first
-        // line hangs out to the left of its body.
-        let bol = text[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let indent = &text[bol..start];
-        let restored = indent.is_empty() || indent.chars().all(char::is_whitespace);
-        let mut snippet = String::with_capacity(end - start + indent.len());
-        if restored {
-            snippet.push_str(indent);
-        }
-        snippet.push_str(&text[start..end]);
-        let common = common_indent(&snippet);
-        let mut lines: Vec<Vec<SrcRun>> = lex_lines(&dedent(&snippet, common))
-            .into_iter()
-            .map(|line| {
-                line.into_iter()
-                    .map(|(text, tok)| SrcRun {
-                        text,
-                        tok,
-                        link: None,
-                    })
-                    .collect()
-            })
-            .collect();
-
-        // Attach the file's clickable spans to the runs they name. A span's
-        // position translates from file bytes to plate bytes by the line it is on
-        // and the indent the plate stripped; a span that does not land cleanly on
-        // one run is silently left unlinked rather than guessed at.
-        let own_label = if info.section.is_empty() {
-            info.name.clone()
-        } else {
-            format!("{}::{}", section_type(&info.section), info.name)
-        };
-        let starts = LineStarts::new(text);
-        let mut links: Vec<SrcLink> = Vec::new();
-        let mut link_of: HashMap<(u32, String), u32> = HashMap::new();
-        for span in &self.ref_spans[file as usize] {
-            if (span.start as usize) < start || (span.end as usize) > end {
-                continue;
-            }
-            // The quoted item linking to itself would navigate nowhere.
-            if span.file == file && span.label == own_label {
-                continue;
-            }
-            let file_line = starts.line(TextSize::new(span.start));
-            let Some(li) = file_line.checked_sub(info.line) else {
-                continue;
-            };
-            let Some(line) = lines.get_mut(li as usize) else {
-                continue;
-            };
-            // When the first line's indent was not restored (non-whitespace
-            // before the item on its own line), its columns are shifted; skip
-            // rather than mislink.
-            if li == 0 && !restored {
-                continue;
-            }
-            let Some(col) = starts
-                .start_of(file_line)
-                .and_then(|ls| span.start.checked_sub(ls))
-                .and_then(|c| c.checked_sub(common as u32))
-            else {
-                continue;
-            };
-            let (col, len) = (col as usize, (span.end - span.start) as usize);
-            // The name token lexes as exactly one run, so full containment is the
-            // normal case; runs are never split.
-            let mut at = 0usize;
-            for run in line.iter_mut() {
-                if at >= col && at + run.text.len() <= col + len {
-                    let key = (span.file, span.label.clone());
-                    let id = *link_of.entry(key).or_insert_with(|| {
-                        links.push(SrcLink {
-                            path: self.graph.files[span.file as usize].path.clone(),
-                            label: span.label.clone(),
-                        });
-                        links.len() as u32 - 1
-                    });
-                    run.link = Some(id);
-                }
-                at += run.text.len();
-            }
-        }
-
-        Some(ItemSource {
-            path,
-            first_line: info.line,
-            lines,
-            links,
-        })
+    #[test]
+    fn a_virtual_workspace_claims_only_what_its_members_hold() {
+        let m = vec![("outer".to_string(), "crates/outer".to_string())];
+        assert_eq!(package_of(&m, "crates/outer/src/lib.rs"), Some("outer"));
+        assert_eq!(package_of(&m, "xtask/src/main.rs"), None);
     }
-}
-
-/// The indent every non-blank line shares, in bytes — what [`dedent`] strips.
-fn common_indent(text: &str) -> usize {
-    text.lines()
-        .filter(|line| !line.trim().is_empty())
-        .map(|line| line.len() - line.trim_start().len())
-        .min()
-        .unwrap_or(0)
-}
-
-/// Strip the indent every line shares, so a method quoted out of its impl
-/// block starts at the plate's left edge instead of four spaces into it.
-fn dedent(text: &str, common: usize) -> String {
-    if common == 0 {
-        return text.to_string();
-    }
-    text.lines()
-        .map(|line| line.get(common..).unwrap_or(""))
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
-/// Lex a snippet into per-line runs. A fragment that does not parse as a whole
-/// file is fine: the parser always produces a tree, and the token stream is
-/// the source text either way.
-fn lex_lines(snippet: &str) -> Vec<Vec<(String, Tok)>> {
-    let parsed = ra_ap_syntax::SourceFile::parse(snippet, Edition::CURRENT);
-    let tokens: Vec<SyntaxToken> = parsed
-        .syntax_node()
-        .descendants_with_tokens()
-        .filter_map(|element| element.into_token())
-        .collect();
-
-    let mut lines: Vec<Vec<(String, Tok)>> = vec![Vec::new()];
-    for (i, token) in tokens.iter().enumerate() {
-        let class = classify(&tokens, i);
-        for (n, part) in token.text().split('\n').enumerate() {
-            if n > 0 {
-                lines.push(Vec::new());
-            }
-            let part = part.trim_end_matches('\r');
-            if !part.is_empty() {
-                lines
-                    .last_mut()
-                    .expect("a line is always open")
-                    .push((part.to_string(), class));
-            }
-        }
-    }
-    if lines.len() > 1 && lines.last().is_some_and(Vec::is_empty) {
-        lines.pop();
-    }
-    lines
-}
-
-/// The nearest token before `i` that is neither whitespace nor a comment.
-fn before(tokens: &[SyntaxToken], i: usize) -> Option<SyntaxKind> {
-    tokens[..i]
-        .iter()
-        .rev()
-        .map(SyntaxToken::kind)
-        .find(|kind| !kind.is_trivia())
-}
-
-/// The nearest token after `i` that is neither whitespace nor a comment.
-fn after(tokens: &[SyntaxToken], i: usize) -> Option<SyntaxKind> {
-    tokens[i + 1..]
-        .iter()
-        .map(SyntaxToken::kind)
-        .find(|kind| !kind.is_trivia())
-}
-
-/// What one token is, for colouring. Rust's own categories: the palette that
-/// draws them is the client's business.
-fn classify(tokens: &[SyntaxToken], i: usize) -> Tok {
-    let token = &tokens[i];
-    let kind = token.kind();
-    if kind == SyntaxKind::WHITESPACE {
-        return Tok::Space;
-    }
-    if kind == SyntaxKind::COMMENT {
-        let text = token.text();
-        let doc = ["///", "//!", "/**", "/*!"]
-            .iter()
-            .any(|p| text.starts_with(p));
-        return if doc { Tok::Doc } else { Tok::Comment };
-    }
-    // An attribute is one thing to a reader — `#[derive(Clone, Copy)]` reads
-    // as a unit — so everything inside it takes one class.
-    if token
-        .parent_ancestors()
-        .any(|n| n.kind() == SyntaxKind::ATTR)
-    {
-        return Tok::Attr;
-    }
-    if kind.is_literal() {
-        return match kind {
-            SyntaxKind::INT_NUMBER | SyntaxKind::FLOAT_NUMBER => Tok::Num,
-            _ => Tok::Str,
-        };
-    }
-    if kind == SyntaxKind::LIFETIME_IDENT {
-        return Tok::Lifetime;
-    }
-    if kind.is_keyword(Edition::CURRENT) {
-        return Tok::Kw;
-    }
-    if kind == SyntaxKind::IDENT {
-        if after(tokens, i) == Some(SyntaxKind::BANG) {
-            return Tok::Macro;
-        }
-        if before(tokens, i) == Some(SyntaxKind::FN_KW) {
-            return Tok::Fn;
-        }
-        if token.text().starts_with(char::is_uppercase) {
-            return Tok::Type;
-        }
-        return Tok::Ident;
-    }
-    if kind.is_punct() {
-        return Tok::Punct;
-    }
-    Tok::Ident
 }
