@@ -180,9 +180,9 @@ pub(super) struct Block {
 impl Block {
     /// The fold's own words: counts in rust's vocabulary, and nothing else. A
     /// fold that does not count what it hides is a lie by omission — but the
-    /// sentence explaining what "pub" means here, and where a private item's
-    /// references go, belongs to the legend, said once, not to fifteen blocks
-    /// saying it at each other.
+    /// sentence explaining where the folded items went belongs to the fold's
+    /// own hover words, said once, not to fifteen blocks saying it at each
+    /// other.
     pub(crate) fn fold_words(&self) -> Option<String> {
         match (self.quiet, self.private) {
             (0, 0) => None,

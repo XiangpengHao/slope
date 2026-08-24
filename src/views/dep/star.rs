@@ -68,8 +68,9 @@ fn state_words(info: &CrateInfo) -> Option<String> {
     None
 }
 
-/// The engraved star mark for one crate, reused by the chart nodes and the
-/// legend so the key and the chart can never drift apart.
+/// The engraved star mark for one crate, reused by the chart nodes and every
+/// chrome row (the changes list, search hits, dependency lists) so the rows
+/// and the chart can never drift apart.
 #[component]
 pub(super) fn StarMark(
     info: CrateInfo,
@@ -242,7 +243,24 @@ pub(super) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
     let state = state_words(&info)
         .map(|w| format!(" · {w}"))
         .unwrap_or_default();
-    let title = format!("{} v{} · {hops}{state}", info.name, info.version);
+    // The hover words carry what the mark encodes — the size is fan-in, the
+    // hop is the ring — and teach the one gesture no mark can show.
+    let held = match info.dependents {
+        0 => String::new(),
+        1 => " · used by 1 crate".to_string(),
+        n => format!(" · used by {n} crates"),
+    };
+    let gesture = if info.ghost {
+        ""
+    } else if focal {
+        " · click again to deselect"
+    } else {
+        " · ctrl-click adds it to the selection"
+    };
+    let title = format!(
+        "{} v{} · {hops}{state}{held}{gesture}",
+        info.name, info.version
+    );
     let aria = if focal {
         format!(
             "deselect {} — ctrl-click removes it from a wider selection",

@@ -102,8 +102,8 @@ enum WrapperHome {
 /// tuples, arrays, slices, and every unknown external type — is transparent:
 /// the walk passes through into its arguments and the hold stays plain.
 /// Interior mutability without a shared handle is still ownership; sharing
-/// needs a shared handle. The legend on `/data` quotes this table, so the two
-/// must agree.
+/// needs a shared handle. The wire words on `/data` quote this table, so the
+/// two must agree.
 const WRAPPERS: &[(&str, WrapperHome, HoldKind)] = &[
     // A shared handle: the state behind it has more than one possible reader.
     ("Arc", WrapperHome::Std, HoldKind::Shares),

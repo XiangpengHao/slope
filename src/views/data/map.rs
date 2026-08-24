@@ -970,8 +970,15 @@ fn DataPlate(
     } else {
         // The locator and the undrawn-ink counts live here and on the sheet;
         // stamped on every resting block they were the chart's loudest text.
+        // A root also says what its ink left edge draws — the one mark on
+        // this chart whose word is not already written beside it.
+        let tier = if view.is_root {
+            " · a root — no type holds it"
+        } else {
+            ""
+        };
         format!(
-            "{} {} — {}{} · select it",
+            "{} {} — {}{}{tier} · select it",
             view.decl, view.name, view.locator, view.counts
         )
     };

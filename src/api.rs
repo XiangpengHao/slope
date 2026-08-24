@@ -531,9 +531,9 @@ pub(crate) struct CodeGraph {
     /// altitude that draws it.
     pub(crate) notes: Vec<String>,
     /// What the survey could not read about the **holds walk**, in plain words
-    /// — the data chart's limits. Kept apart from `notes` so a legend states
-    /// the limits of the ink it actually draws, and so no legend has to
-    /// paraphrase the survey in prose of its own.
+    /// — the data chart's limits. Kept apart from `notes` so each cartouche's
+    /// "what the survey cannot read" fold states the limits of the ink its own
+    /// chart draws, and never paraphrases the survey in prose of its own.
     pub(crate) walk_notes: Vec<String>,
 }
 

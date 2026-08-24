@@ -537,7 +537,7 @@ pub(crate) struct Naming {
     pub(crate) event: Option<HoldEvent>,
 }
 
-/// What the cartouche and the legend state about the survey.
+/// What the cartouche states about the survey.
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct DataFacts {
     pub(crate) structs: usize,
