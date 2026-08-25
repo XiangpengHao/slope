@@ -8,3 +8,7 @@
 - try to use minimal visibility for functions and variables, e.g., a pub function under a private mod is essentially private, but it is confusing, prefer to make it private. 
 
 - try to avoid public fields, prefer to use getters and setters, unless the field is truly public.
+
+- organize the code by features, not by technical buckets, e.g., don't have `api.rs`, `views.rs`, `data.rs`, etc. Instead, do `settings.rs`, `data_panel.rs`, `code_map.rs`, etc.
+
+- No static variables, no exceptions.

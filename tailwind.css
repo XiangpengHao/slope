@@ -1134,6 +1134,13 @@ details.fold:not([open]) > summary::after {
   -webkit-user-select: text;
   padding-right: 16px;
 }
+/* The lines between a block's header and the item written inside it are not
+   quoted; the gutter says so with the engraver's own elision and nothing else.
+   A count here would be a number nobody acts on. Hairline ink, the weight
+   every other open mark on this plate takes — the faint ink is the ghosts'. */
+.slope .quote-ln.is-gap {
+  color: var(--color-ink-line);
+}
 .slope .quote-pane .tok-kw {
   color: var(--color-tok-kw);
 }

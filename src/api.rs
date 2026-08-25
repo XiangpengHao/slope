@@ -597,20 +597,39 @@ pub(crate) struct SrcLink {
     pub(crate) label: String,
 }
 
-/// One item's own source text, lexed into coloured runs — what Go to
-/// Definition lands on. The interface quotes the file rather than describing
-/// it, so nothing here is reconstructed: the runs concatenate back to exactly
-/// the bytes on disk, minus the shared indent every line was stripped of.
+/// One run of quoted lines, and where in the file they stand.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ItemSource {
-    /// Path relative to the workspace root, for the locator.
-    pub(crate) path: String,
-    /// 1-based line the first quoted line is, in the real file.
+pub(crate) struct SrcBlock {
+    /// 1-based line the first of these lines is, in the real file.
     pub(crate) first_line: u32,
     /// Per line, its runs of text in order. A run whose name resolved to
     /// something in the workspace carries a link.
     pub(crate) lines: Vec<Vec<SrcRun>>,
-    /// The navigation targets the runs link to, deduplicated.
+}
+
+/// One item's own source text, lexed into coloured runs — what Go to
+/// Definition lands on. The interface quotes the file rather than describing
+/// it, so nothing here is reconstructed: the runs concatenate back to exactly
+/// the bytes on disk, minus the indent the outermost quoted block was
+/// stripped of.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ItemSource {
+    /// Path relative to the workspace root, for the locator.
+    pub(crate) path: String,
+    /// What to draw, in source order, each block keeping the indent it is
+    /// written at: the `impl` or `trait` header the item sits under, the item
+    /// itself, then the brace that closes that block. A free item is one
+    /// block on its own.
+    ///
+    /// The header is not decoration: an associated item's span holds none of
+    /// it — the block is its own item — so a method quoted alone reads as a
+    /// free function that could not compile (`fn edge_style(self, …)` is not
+    /// rust) and says nothing about whose method it is. Whatever the file
+    /// writes between two blocks is not quoted, and the client says so rather
+    /// than closing the gap silently.
+    pub(crate) blocks: Vec<SrcBlock>,
+    /// The navigation targets the runs link to, deduplicated. Every block
+    /// indexes into this one list.
     pub(crate) links: Vec<SrcLink>,
 }
 

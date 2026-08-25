@@ -17,7 +17,7 @@
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, ItemMark, ItemSource, SrcLink, Tok, item_source};
+use crate::api::{CodeGraph, ItemMark, ItemSource, SrcLink, SrcRun, Tok, item_source};
 use crate::views::data::{Sel, mark_route, peek_route};
 
 impl Tok {
@@ -54,6 +54,10 @@ fn run_route(graph: &CodeGraph, sel: &Sel, link: &SrcLink) -> Option<Route> {
         false => Some(peek_route(sel, &link.path, &link.label)),
     }
 }
+
+/// What the gutter says where the file has lines this quotation does not
+/// carry: the engraver's own elision, and nothing else.
+const GAP: &str = "⋮";
 
 /// The item a (file, label) pair names in this survey.
 fn find<'g>(graph: &'g CodeGraph, path: &str, label: &str) -> Option<&'g ItemMark> {
@@ -150,15 +154,41 @@ fn Quoted(graph: CodeGraph, sel: Sel, item: u32, path: String) -> Element {
 /// counting from its first line in the real file, no wrapping, and the text
 /// selectable so it can be copied straight off the plate. A long definition
 /// scrolls inside the pane; nothing is cut.
+///
+/// A method is drawn inside the `impl` or `trait` block it is written in —
+/// the header, the method at the indent it stands at, the brace that closes
+/// the block — because `fn edge_style(self, …)` alone is not rust and says
+/// nothing about whose method it is.
 #[component]
 fn Pane(graph: CodeGraph, sel: Sel, source: ItemSource) -> Element {
     let nav = use_navigator();
+    // The rows the pane draws: every block in source order, and — wherever the
+    // file writes lines between two of them that this quotation does not carry
+    // — one row whose gutter says so. Not how many: a count of skipped lines
+    // is a number nobody acts on, and the gutter's own numbers already say how
+    // far the jump is.
+    let no_runs: &[SrcRun] = &[];
+    let mut rows: Vec<(String, &[SrcRun])> = Vec::new();
+    let mut quoted: Option<u32> = None;
+    for block in source.blocks.iter() {
+        if quoted.is_some_and(|last| last + 1 < block.first_line) {
+            rows.push((GAP.to_string(), no_runs));
+        }
+        for (i, line) in block.lines.iter().enumerate() {
+            rows.push(((block.first_line + i as u32).to_string(), line));
+        }
+        quoted = Some(block.first_line + block.lines.len().saturating_sub(1) as u32);
+    }
     rsx! {
         div { class: "quote-pane min-h-0 flex-1",
             div { class: "quote-lines",
-                for (i , line) in source.lines.iter().enumerate() {
+                for (i , (at , line)) in rows.iter().enumerate() {
                     div { key: "{i}", class: "quote-line",
-                        span { class: "quote-ln", "{source.first_line as usize + i}" }
+                        span {
+                            class: "quote-ln",
+                            class: if at == GAP { "is-gap" },
+                            "{at}"
+                        }
                         span { class: "quote-src",
                             for (n , run) in line.iter().enumerate() {
                                 {

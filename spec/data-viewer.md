@@ -157,11 +157,19 @@ do?*
 - **The plate**: the item's kind and name (`fn AltitudeSwitch` — the kind's
   word alone, because the survey reads `pub(super)` as `pub(crate)` and the
   head must not contradict the source quoted under it), the locator
-  (`src/views/chrome.rs:37`), then the item's own source — the bytes
-  the survey read, dedented by the indent every line shares and nothing else
-  — with a gutter counting from its first line in the real file. Long lines
-  scroll; nothing wraps and nothing is cut. It caps at the room between the
-  cartouche and the sheet and at the glass's height.
+  (`src/views/chrome.rs:37`), then the item's own source — the bytes the
+  survey read, dedented by the outermost quoted block's indent and nothing
+  else — with a gutter counting from its first line in the real file. Long
+  lines scroll; nothing wraps and nothing is cut. It caps at the room between
+  the cartouche and the sheet and at the glass's height.
+- **A method is quoted inside its block** (2026-08-25, user): the `impl` or
+  `trait` header, the method at the indent it stands at, then the brace that
+  closes the block. An associated item's span holds none of its header — the
+  block is its own item in the survey — so quoting the span alone printed `fn
+  edge_style(self, …)`, which is not rust and never says whose method it is.
+  Lines the file writes between two quoted blocks are not carried, and the
+  gutter marks the jump with `⋮` — not with a count of them, which is a
+  number nobody acts on; the line numbers already say how far it is.
 - **The row stays inked** while its quotation is open (2px ink left edge,
   `bg-ink/5`), so the plate is never loose from the row that asked for it.
 - **Every resolved name inside is a link**: to that datum's block where the

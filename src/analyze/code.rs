@@ -40,8 +40,8 @@ use tokio::sync::OnceCell;
 
 use super::data;
 use crate::api::{
-    CodeGraph, FileInfo, ImplEdge, ItemEdge, ItemKind, ItemMark, ItemSource, MarkRef, SrcLink,
-    SrcRun, Tok, Vis,
+    CodeGraph, FileInfo, ImplEdge, ItemEdge, ItemKind, ItemMark, ItemSource, MarkRef, SrcBlock,
+    SrcLink, SrcRun, Tok, Vis,
 };
 
 /// Byte range of one item's own source text, doc comment and attributes
@@ -61,6 +61,10 @@ pub(crate) struct CodeIndex {
     sources: Vec<String>,
     /// Each item's own byte range in its file.
     spans: ItemSpans,
+    /// The `impl` or `trait` block each item sits inside, by byte range —
+    /// `None` for an item the file itself contains. A quotation reads its
+    /// header off this: a method without one reads as a free function.
+    owners: Vec<Vec<Option<(u32, u32)>>>,
     /// Every resolved reference's own name token, as a byte range in the file
     /// it is written in, sorted by start. A quotation turns the ones inside
     /// the item it quotes into links.
@@ -683,13 +687,26 @@ fn survey_attached(
         })
         .collect();
 
-    // What the structural diff reads the working copy back through.
+    // What the structural diff reads the working copy back through, and — for
+    // the quotation plate — which block each item is written inside.
     let spans: ItemSpans = raw
         .iter()
         .map(|f| {
             f.items
                 .iter()
                 .map(|it| (u32::from(it.range.start()), u32::from(it.range.end())))
+                .collect()
+        })
+        .collect();
+    let owners: Vec<Vec<Option<(u32, u32)>>> = raw
+        .iter()
+        .map(|f| {
+            f.items
+                .iter()
+                .map(|it| {
+                    it.owner
+                        .map(|at| (u32::from(at.start()), u32::from(at.end())))
+                })
                 .collect()
         })
         .collect();
@@ -775,6 +792,7 @@ fn survey_attached(
         graph,
         sources,
         spans,
+        owners,
         ref_spans,
     })
 }
@@ -1413,20 +1431,45 @@ fn target_at(
 // The quotation: one item's own source, lexed.
 // ---------------------------------------------------------------------------
 
+/// The link table one quotation builds as it goes: both of its blocks index
+/// into the same list, so a name reached twice is one target.
+#[derive(Default)]
+struct Links {
+    list: Vec<SrcLink>,
+    of: HashMap<(u32, String), u32>,
+}
+
+impl Links {
+    fn id(&mut self, file: u32, label: &str, path: &str) -> u32 {
+        *self.of.entry((file, label.to_string())).or_insert_with(|| {
+            self.list.push(SrcLink {
+                path: path.to_string(),
+                label: label.to_string(),
+            });
+            self.list.len() as u32 - 1
+        })
+    }
+}
+
 impl CodeIndex {
-    /// One item's source text, dedented and lexed into coloured runs — what Go
-    /// to Definition lands on. Nothing is rewritten or cut: the runs
-    /// concatenate back to the bytes the survey read, minus the indent every
-    /// line shared. Every run whose name resolved to something in the
-    /// workspace carries a link, so a quotation navigates like the code it
-    /// quotes.
+    /// One item's source, dedented and lexed into coloured runs — what Go to
+    /// Definition lands on. The plate quotes the file: nothing is rewritten or
+    /// cut, and every run whose name resolved to something in the workspace
+    /// carries a link, so the quoted code navigates like the code it quotes.
+    ///
+    /// A method is quoted with the `impl` or `trait` block it is written in
+    /// (2026-08-25, user): the span of an associated item does not include its
+    /// block, so quoting it alone printed `fn edge_style(self, …)` — not rust,
+    /// and not something a reader can place. The block's header and its
+    /// closing brace are quoted from their own lines, and everything is
+    /// dedented by the block's indent, so the item stands inside it the way
+    /// the file writes it.
     pub(crate) fn item_source(&self, item: u32) -> Option<ItemSource> {
         let mark = self.graph.items.get(item as usize)?;
-        let file = mark.file;
-        let text = self.sources.get(file as usize)?;
-        let path = self.graph.files.get(file as usize)?.path.clone();
-        let &(start, end) = self.spans.get(file as usize)?.get(mark.local as usize)?;
-
+        let file = mark.file as usize;
+        let text = self.sources.get(file)?;
+        let path = self.graph.files.get(file)?.path.clone();
+        let &(start, end) = self.spans.get(file)?.get(mark.local as usize)?;
         let (start, end) = (start as usize, end as usize);
         if start > end
             || end > text.len()
@@ -1436,19 +1479,65 @@ impl CodeIndex {
             return None;
         }
 
-        // A method inside an impl starts mid-line: give it back the indent its
-        // own line begins with before stripping what every line shares, or its
-        // first line hangs out to the left of its body.
-        let bol = text[..start].rfind('\n').map(|i| i + 1).unwrap_or(0);
-        let indent = &text[bol..start];
-        let restored = indent.is_empty() || indent.chars().all(char::is_whitespace);
-        let mut snippet = String::with_capacity(end - start + indent.len());
-        if restored {
-            snippet.push_str(indent);
+        // The block it is written inside, down to the brace that opens the
+        // body: `impl Role {`, `impl Clone for Vis {`, `trait Held {`.
+        let head = self
+            .owners
+            .get(file)
+            .and_then(|f| f.get(mark.local as usize).copied().flatten())
+            .and_then(|(from, to)| {
+                let (from, to) = (from as usize, to as usize);
+                let brace = text.get(from..to)?.find('{')?;
+                Some((from, from + brace + 1))
+            })
+            .filter(|&(from, to)| to <= start && text.is_char_boundary(from));
+
+        // What every quoted line gives up: the indent of the outermost block
+        // quoted, so a method keeps the one step it stands in. Without a
+        // header the item is the outermost block, and it gives up whatever
+        // indent all of its own lines share.
+        let strip = match head {
+            Some((from, _)) => indent_at(text, from).map_or(0, str::len),
+            None => common_indent(&indented(text, start, end).0),
+        };
+
+        // And the brace that closes the block, so the quotation is balanced
+        // rust rather than an `impl` nothing shuts.
+        let foot = self
+            .owners
+            .get(file)
+            .and_then(|f| f.get(mark.local as usize).copied().flatten())
+            .map(|(_, to)| to as usize)
+            .filter(|&to| to > end && text.get(to - 1..to) == Some("}"))
+            .map(|to| (to - 1, to));
+
+        let mut links = Links::default();
+        let mut blocks = Vec::new();
+        for at in [head, Some((start, end)), foot].into_iter().flatten() {
+            blocks.push(self.quote(file, at, strip, &mark.label, &mut links)?);
         }
-        snippet.push_str(&text[start..end]);
-        let common = common_indent(&snippet);
-        let mut lines: Vec<Vec<SrcRun>> = lex_lines(&dedent(&snippet, common))
+        Some(ItemSource {
+            path,
+            blocks,
+            links: links.list,
+        })
+    }
+
+    /// One byte range of one file, lexed into lines of coloured runs with the
+    /// references inside it turned into links. `strip` is the indent every
+    /// line gives up; `own` is the quoted item's own label, whose references
+    /// to itself would navigate nowhere.
+    fn quote(
+        &self,
+        file: usize,
+        (from, to): (usize, usize),
+        strip: usize,
+        own: &str,
+        links: &mut Links,
+    ) -> Option<SrcBlock> {
+        let text = self.sources.get(file)?;
+        let (snippet, restored) = indented(text, from, to);
+        let mut lines: Vec<Vec<SrcRun>> = lex_lines(&dedent(&snippet, strip))
             .into_iter()
             .map(|line| {
                 line.into_iter()
@@ -1461,30 +1550,29 @@ impl CodeIndex {
             })
             .collect();
 
-        // Attach the file's clickable spans to the runs they name. A span's
+        // Attach this file's clickable spans to the runs they name. A span's
         // position translates from file bytes to quoted bytes by the line it is
         // on and the indent that was stripped; a span that does not land
         // cleanly on one run is left unlinked rather than guessed at.
         let starts = LineStarts::new(text);
-        let mut links: Vec<SrcLink> = Vec::new();
-        let mut link_of: HashMap<(u32, String), u32> = HashMap::new();
-        for span in &self.ref_spans[file as usize] {
-            if (span.start as usize) < start || (span.end as usize) > end {
+        let first_line = starts.line(TextSize::new(from as u32));
+        for span in &self.ref_spans[file] {
+            if (span.start as usize) < from || (span.end as usize) > to {
                 continue;
             }
             // The quoted item linking to itself would navigate nowhere.
-            if span.file == file && span.label == mark.label {
+            if span.file as usize == file && span.label == own {
                 continue;
             }
             let file_line = starts.line(TextSize::new(span.start));
-            let Some(li) = file_line.checked_sub(mark.line) else {
+            let Some(li) = file_line.checked_sub(first_line) else {
                 continue;
             };
             let Some(line) = lines.get_mut(li as usize) else {
                 continue;
             };
             // When the first line's indent was not restored (something else is
-            // written before the item on its own line), its columns are
+            // written before the block on its own line), its columns are
             // shifted; skip rather than mislink.
             if li == 0 && !restored {
                 continue;
@@ -1492,7 +1580,7 @@ impl CodeIndex {
             let Some(col) = starts
                 .start_of(file_line)
                 .and_then(|ls| span.start.checked_sub(ls))
-                .and_then(|c| c.checked_sub(common as u32))
+                .and_then(|c| c.checked_sub(strip as u32))
             else {
                 continue;
             };
@@ -1502,27 +1590,35 @@ impl CodeIndex {
             let mut at = 0usize;
             for run in line.iter_mut() {
                 if at >= col && at + run.text.len() <= col + len {
-                    let key = (span.file, span.label.clone());
-                    let id = *link_of.entry(key).or_insert_with(|| {
-                        links.push(SrcLink {
-                            path: self.graph.files[span.file as usize].path.clone(),
-                            label: span.label.clone(),
-                        });
-                        links.len() as u32 - 1
-                    });
-                    run.link = Some(id);
+                    let path = &self.graph.files[span.file as usize].path;
+                    run.link = Some(links.id(span.file, &span.label, path));
                 }
                 at += run.text.len();
             }
         }
-
-        Some(ItemSource {
-            path,
-            first_line: mark.line,
-            lines,
-            links,
-        })
+        Some(SrcBlock { first_line, lines })
     }
+}
+
+/// One block's own bytes, given back the indent its first line begins with —
+/// a method starts mid-line — and the flag saying whether that was possible.
+/// Nothing else is added: the runs concatenate back to the file's own text.
+fn indented(text: &str, from: usize, to: usize) -> (String, bool) {
+    let indent = indent_at(text, from);
+    let mut out = String::with_capacity(to - from + indent.map_or(0, str::len));
+    if let Some(indent) = indent {
+        out.push_str(indent);
+    }
+    out.push_str(&text[from..to]);
+    (out, indent.is_some())
+}
+
+/// The whitespace between the start of `off`'s line and `off` — `None` when
+/// something other than whitespace is written before it on that line.
+fn indent_at(text: &str, off: usize) -> Option<&str> {
+    let bol = text[..off].rfind('\n').map(|i| i + 1).unwrap_or(0);
+    let indent = &text[bol..off];
+    indent.chars().all(char::is_whitespace).then_some(indent)
 }
 
 /// The indent every non-blank line shares, in bytes — what [`dedent`] strips.
@@ -1698,6 +1794,46 @@ mod tests {
             .collect::<Vec<_>>()
             .join("\n");
         assert_eq!(joined, dedent(snippet, 4));
+    }
+
+    /// A method's own span holds no `impl` header — the block is a separate
+    /// item — so a quotation reads the header off the block it sits inside and
+    /// dedents both by *its* indent. The method keeps the one step it stands
+    /// in, and the pair reads as the nesting the file writes.
+    #[test]
+    fn a_method_is_quoted_under_its_header_at_the_indent_it_stands_at() {
+        let text = [
+            "mod dep {",
+            "    impl Role {",
+            "        fn note(&self) -> u32 {",
+            "            self.n",
+            "        }",
+            "    }",
+            "}",
+            "",
+        ]
+        .join("\n");
+        let text = text.as_str();
+        let head = text.find("impl").expect("a header");
+        let brace = head + text[head..].find('{').expect("its brace") + 1;
+        let item = text.find("fn note").expect("a method");
+        let end = item + text[item..].find("\n    }").expect("its end");
+
+        // The header's own indent is what every quoted line gives up.
+        let strip = indent_at(text, head).map_or(0, str::len);
+        assert_eq!(strip, 4);
+        let (header, restored) = indented(text, head, brace);
+        assert!(restored);
+        assert_eq!(dedent(&header, strip), "impl Role {");
+        let (body, restored) = indented(text, item, end);
+        assert!(restored);
+        assert_eq!(
+            dedent(&body, strip),
+            "    fn note(&self) -> u32 {\n        self.n\n    }"
+        );
+        // Something written before the item on its own line cannot have an
+        // indent restored, and a quotation says so rather than mislinking.
+        assert!(indent_at("let x = 1; fn f() {}", 11).is_none());
     }
 
     /// The lexer's classes are rust's own categories, read off the token
