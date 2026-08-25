@@ -7,7 +7,7 @@
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, Delta, HoldEvent, HoldKind, ItemMark};
+use crate::graph::data::{CodeGraph, Delta, HoldEvent, HoldKind, ItemMark};
 use crate::views::chrome::{Altitude, AltitudeSwitch, plural};
 use crate::views::data::model::{
     Anchor, DataFacts, DataMark, DataModel, RowState, Stand, Tier, Unseen, upstream,
@@ -1087,13 +1087,13 @@ pub(super) fn DataSearch(graph: CodeGraph) -> Element {
         if q.is_empty() {
             return Vec::new();
         }
-        let datum = |kind: crate::api::ItemKind| {
+        let datum = |kind: crate::graph::data::ItemKind| {
             matches!(
                 kind,
-                crate::api::ItemKind::Struct
-                    | crate::api::ItemKind::Enum
-                    | crate::api::ItemKind::Union
-                    | crate::api::ItemKind::Static
+                crate::graph::data::ItemKind::Struct
+                    | crate::graph::data::ItemKind::Enum
+                    | crate::graph::data::ItemKind::Union
+                    | crate::graph::data::ItemKind::Static
             )
         };
         let mut hits: Vec<(Rank, (ItemMark, String))> = graph
@@ -1189,7 +1189,7 @@ pub(super) fn DataSearch(graph: CodeGraph) -> Element {
 #[cfg(test)]
 mod tests {
     use super::{bare_trait, header_promise};
-    use crate::api::{GhostMark, HoldEvent, ImplEdge, ItemKind, MethodRow, Vis};
+    use crate::graph::data::{GhostMark, HoldEvent, ImplEdge, ItemKind, MethodRow, Vis};
     use crate::views::data::model::tests::{build, by_name, graph, mark};
 
     #[test]
@@ -1216,7 +1216,7 @@ mod tests {
         assert_eq!(bare_trait("Clone"), "Clone");
         assert_eq!(bare_trait("fmt::Display"), "Display");
         assert_eq!(bare_trait("From<&str>"), "From");
-        assert_eq!(bare_trait("crate::api::Held<'a>"), "Held");
+        assert_eq!(bare_trait("crate::views::data::model::Held<'a>"), "Held");
         // A mark's own name carries its inline-module path; the survey's
         // structural diff bares it the same way.
         assert_eq!(bare_trait("tests::Held"), "Held");
@@ -1272,7 +1272,10 @@ mod tests {
         assert_eq!(names, ["Clone", "Held"]);
         assert!(offers.promises[0].hint.is_none());
         assert_eq!(offers.promises[0].event, None);
-        assert_eq!(offers.promises[1].hint.as_deref(), Some("src/api.rs:2"));
+        assert_eq!(
+            offers.promises[1].hint.as_deref(),
+            Some("src/graph/data.rs:2")
+        );
         assert_eq!(offers.promises[1].decl, "trait");
         assert_eq!(offers.promises[1].event, Some("added"));
         // The self type is not restated where it is simply this mark.
@@ -1292,7 +1295,7 @@ mod tests {
         // sits wherever it likes.
         assert_eq!(
             offers.methods[0].hint.as_deref(),
-            Some("pub(crate) fn note(&self) -> String · src/api.rs:3")
+            Some("pub(crate) fn note(&self) -> String · src/graph/data.rs:3")
         );
         assert_eq!(offers.methods[2].event, Some("removed"));
     }
@@ -1302,7 +1305,7 @@ mod tests {
         let mut g = graph(vec![mark(0, 0, "Wire", ItemKind::Struct)], Vec::new());
         g.ghosts = vec![GhostMark {
             id: 1,
-            path: "src/api.rs".to_string(),
+            path: "src/graph/data.rs".to_string(),
             krate: "slope".to_string(),
             name: "Nut".to_string(),
             kind: ItemKind::Struct,

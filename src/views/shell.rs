@@ -4,7 +4,8 @@
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{WorkspaceGraph, workspace_graph};
+use crate::graph::dep::WorkspaceGraph;
+use crate::load::workspace_graph;
 use crate::views::data::map::DataCamera;
 use crate::views::data::{DataState, DataSurvey};
 use crate::views::dep::map::DrawnCap;

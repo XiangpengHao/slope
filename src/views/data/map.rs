@@ -27,7 +27,7 @@ use dioxus_flow::prelude::{
 };
 
 use crate::Route;
-use crate::api::{CodeGraph, HoldEvent, HoldKind, ItemKind};
+use crate::graph::data::{CodeGraph, HoldEvent, HoldKind, ItemKind};
 use crate::views::chrome::{narrow_viewport, plural, prefers_reduced_motion, window_size};
 use crate::views::data::layout::{self, DataLayout, Placed, Sizes};
 use crate::views::data::model::{Anchor, DataMark, DataModel, FieldRow, Held, Tier, upstream};
@@ -1915,7 +1915,7 @@ fn FitInsets(top: f64, right: f64, bottom: f64, left: f64) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::Vis;
+    use crate::graph::data::Vis;
     use crate::views::data::model::RowState;
     use crate::views::data::model::Tier;
 
@@ -1927,16 +1927,16 @@ mod tests {
             vis: Vis::Pub,
             name: name.to_string(),
             label: name.to_string(),
-            path: "src/api.rs".to_string(),
+            path: "src/graph/data.rs".to_string(),
             line: 1,
-            delta: crate::api::Delta::Same,
+            delta: crate::graph::data::Delta::Same,
             ghost: false,
             fields: fields
                 .into_iter()
                 .map(|(name, decl, target)| FieldRow {
                     name: name.to_string(),
                     decl: decl.to_string(),
-                    vis: crate::api::Vis::Private,
+                    vis: crate::graph::data::Vis::Private,
                     target: Held::named(target),
                     state: RowState::Same,
                 })

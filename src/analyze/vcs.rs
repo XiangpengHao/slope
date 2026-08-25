@@ -4,7 +4,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::api::Epoch;
+use crate::graph::dep::Epoch;
 
 pub(super) struct Diff {
     pub(crate) epoch: Epoch,

@@ -39,10 +39,10 @@ use ra_ap_vfs::{FileId, Vfs};
 use tokio::sync::OnceCell;
 
 use super::data;
-use crate::api::{
-    CodeGraph, FileInfo, ImplEdge, ItemEdge, ItemKind, ItemMark, ItemSource, MarkRef, SrcBlock,
-    SrcLink, SrcRun, Tok, Vis,
+use crate::graph::data::{
+    CodeGraph, FileInfo, ImplEdge, ItemEdge, ItemKind, ItemMark, MarkRef, Vis,
 };
+use crate::graph::quote::{ItemSource, SrcBlock, SrcLink, SrcRun, Tok};
 
 /// Byte range of one item's own source text, doc comment and attributes
 /// included — exactly the range the structural diff compares against the base
@@ -662,7 +662,7 @@ fn survey_attached(
             ty: std::mem::take(&mut walk.ty[id]),
             method_rows: std::mem::take(&mut walk.method_rows[id]),
             // The structural diff writes these once the graph stands.
-            delta: crate::api::Delta::Same,
+            delta: crate::graph::data::Delta::Same,
             fields_added: Vec::new(),
             fields_removed: Vec::new(),
             variants_added: Vec::new(),

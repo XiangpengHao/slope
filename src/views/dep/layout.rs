@@ -1,4 +1,5 @@
-//! The radial layout: dependency distance as concentric rings.
+//! Where the dependency chart's stars sit on the paper: dependency distance
+//! as concentric rings.
 //!
 //! The chart's one organizing idea: the crate under review sits at the
 //! center, and every other crate sits on the ring of its dependency
@@ -15,7 +16,7 @@ use std::f64::consts::TAU;
 
 use dioxus_flow::prelude::Point;
 
-use crate::api::{DepEvent, WorkspaceGraph};
+use crate::graph::dep::{DepEvent, WorkspaceGraph};
 
 /// How many rings the chart shows by default: everything farther collapses
 /// onto the outermost ring as one "N+ hops" band, so the plate stays
@@ -308,7 +309,7 @@ impl RadialLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{CrateInfo, DepKind, DepLink, Epoch};
+    use crate::graph::dep::{CrateInfo, DepKind, DepLink, Epoch};
 
     fn krate(id: &str, is_member: bool) -> CrateInfo {
         CrateInfo {

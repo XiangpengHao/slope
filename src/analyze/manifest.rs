@@ -1,7 +1,7 @@
 //! Compare two versions of a Cargo.toml and report dependency events:
 //! added, removed, and version-bumped dependencies, per dependency table.
 
-use crate::api::{DepEvent, DepKind};
+use crate::graph::dep::{DepEvent, DepKind};
 use std::collections::HashMap;
 
 pub(super) struct ManifestEvent {

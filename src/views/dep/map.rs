@@ -16,9 +16,9 @@ use dioxus_flow::prelude::{
     Point, Rect, Side, Size,
 };
 
-use crate::api::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
+use crate::graph::dep::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
 use crate::views::chrome::{narrow_viewport, prefers_reduced_motion, window_size};
-use crate::views::dep::model::{DEFAULT_CAP, RadialLayout};
+use crate::views::dep::layout::{DEFAULT_CAP, RadialLayout};
 use crate::views::dep::star::{StarData, StarNode};
 use crate::views::dep::{DirFilter, step_ring, use_dep};
 
@@ -943,7 +943,7 @@ pub(super) fn Chart(graph: WorkspaceGraph) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::{DepLink, Epoch};
+    use crate::graph::dep::{DepLink, Epoch};
 
     fn krate(id: &str) -> CrateInfo {
         CrateInfo {

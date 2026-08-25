@@ -33,13 +33,31 @@ use ra_ap_ide_db::base_db::EditionedFileId;
 use ra_ap_syntax::ast::{HasName, HasVisibility};
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, TextRange, ast};
 
-use crate::api::{DeclRow, HoldEdge, HoldKind, ItemKind, MethodRow, Vis};
+use crate::graph::data::{DeclRow, HoldEdge, HoldKind, ItemKind, MethodRow, Vis};
+
+impl HoldKind {
+    /// How loudly a wrapper speaks. An edge takes the strongest wrapper met
+    /// anywhere on the path: `Arc<Vec<&dyn Trait>>` shares, whatever else it
+    /// passed through on the way. The base-edition walk ranks the words it
+    /// reads by the same order, or the two editions would disagree about
+    /// which word an edge carries.
+    pub(super) fn rank(self) -> u8 {
+        match self {
+            HoldKind::Owns => 0,
+            HoldKind::Borrows => 1,
+            HoldKind::Dyn => 2,
+            HoldKind::Shares => 3,
+            // Never met on a type walk: an impl block draws it, not a row.
+            HoldKind::Implements => 4,
+        }
+    }
+}
 
 /// One item the walk starts from: a struct, enum, union, static, or free
 /// function the survey has already given a mark — or one method, which starts
 /// from the type its impl names.
 pub(super) struct Holder {
-    /// The [`crate::api::ItemMark::id`] the rows and the edges belong to. For
+    /// The [`crate::graph::data::ItemMark::id`] the rows and the edges belong to. For
     /// a method that is its *type's* mark: a method is a clause of the type's
     /// contract, never a landmark of its own.
     pub(crate) mark: u32,
@@ -66,7 +84,7 @@ pub(super) struct MethodOf {
 }
 
 /// What the walk found. Everything but `holds` is indexed by mark id, so the
-/// survey can lift it straight onto the [`crate::api::ItemMark`]s.
+/// survey can lift it straight onto the [`crate::graph::data::ItemMark`]s.
 pub(super) struct DataWalk {
     /// Holding edges, aggregated per (from, to, kind, via, rows) and sorted.
     pub(crate) holds: Vec<HoldEdge>,

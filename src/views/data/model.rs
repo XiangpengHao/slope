@@ -27,7 +27,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::Route;
-use crate::api::{CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, ItemMark, Vis};
+use crate::graph::data::{
+    CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, ItemMark, Vis,
+};
 use crate::views::data::{RefDir, mark_route};
 
 /// Parent chains are shallow by construction (file → type → method); the
@@ -372,7 +374,7 @@ fn source_rest(path: &str) -> &str {
 /// reads them as. `src/views/data/map.rs` frames in `views::data`, and so does
 /// `src/views/data/mod.rs`; `src/views/shell.rs` frames in `views` beside
 /// them. A file directly under the root has no directory to name it, so
-/// it frames as the module it is — `src/api.rs` is `mod api` — and the crate
+/// it frames as the module it is — `src/load.rs` is `mod load` — and the crate
 /// root itself (`main.rs`, `lib.rs`) names no module at all and frames in the
 /// crate.
 ///
@@ -442,7 +444,7 @@ pub(super) struct DataMark {
     pub(crate) id: u32,
     pub(crate) frame: u32,
     pub(crate) kind: ItemKind,
-    pub(crate) vis: crate::api::Vis,
+    pub(crate) vis: crate::graph::data::Vis,
     pub(crate) name: String,
     /// The label its selection sheet selects by, for the URL.
     pub(crate) label: String,
@@ -1518,12 +1520,12 @@ pub(in crate::views::data) mod tests {
         assert_eq!(module_path("src/views/mod.rs"), ["views"]);
         assert_eq!(module_path("src/views/shell.rs"), ["views"]);
         // A file under the source root is the module it declares.
-        assert_eq!(module_path("src/api.rs"), ["api"]);
+        assert_eq!(module_path("src/load.rs"), ["load"]);
         assert!(module_path("src/main.rs").is_empty());
         assert!(module_path("crates/engine/src/lib.rs").is_empty());
         assert_eq!(module_path("crates/engine/src/parse/lex.rs"), ["parse"]);
     }
-    use crate::api::{DeclRow, FileInfo, HoldEdge, MarkRef, Vis};
+    use crate::graph::data::{DeclRow, FileInfo, HoldEdge, MarkRef, Vis};
 
     pub(in crate::views::data) fn file(id: u32, path: &str) -> FileInfo {
         FileInfo {
@@ -1574,7 +1576,10 @@ pub(in crate::views::data) mod tests {
 
     pub(in crate::views::data) fn graph(items: Vec<ItemMark>, holds: Vec<HoldEdge>) -> CodeGraph {
         CodeGraph {
-            files: vec![file(0, "src/api.rs"), file(1, "src/views/dep/map.rs")],
+            files: vec![
+                file(0, "src/graph/data.rs"),
+                file(1, "src/views/dep/map.rs"),
+            ],
             items,
             implements: Vec::new(),
             item_edges: Vec::new(),

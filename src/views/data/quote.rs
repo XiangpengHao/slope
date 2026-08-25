@@ -17,7 +17,9 @@
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, ItemMark, ItemSource, SrcLink, SrcRun, Tok, item_source};
+use crate::graph::data::{CodeGraph, ItemMark};
+use crate::graph::quote::{ItemSource, SrcLink, SrcRun, Tok};
+use crate::load::item_source;
 use crate::views::data::{Sel, mark_route, peek_route};
 
 impl Tok {

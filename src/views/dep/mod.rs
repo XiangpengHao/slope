@@ -9,8 +9,8 @@
 //! Every selection is a URL, so the browser's back button retraces the review.
 
 pub(crate) mod chrome;
+pub(crate) mod layout;
 pub(crate) mod map;
-pub(crate) mod model;
 pub(crate) mod star;
 
 use std::collections::HashSet;
@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::WorkspaceGraph;
+use crate::graph::dep::WorkspaceGraph;
 use crate::views::dep::chrome::{SearchBox, TitleBlock};
 use crate::views::dep::map::Chart;
 use crate::views::shell::use_graph;

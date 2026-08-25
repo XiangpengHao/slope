@@ -7,7 +7,7 @@ use dioxus::prelude::*;
 use dioxus_flow::prelude::*;
 
 use crate::Route;
-use crate::api::CrateInfo;
+use crate::graph::dep::CrateInfo;
 use crate::views::dep::use_dep;
 
 /// Payload carried by chart nodes: one crate's star on the rings.

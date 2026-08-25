@@ -26,7 +26,7 @@ use ra_ap_syntax::ast::{HasName, HasVisibility};
 use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 
 use super::vcs::Diff;
-use crate::api::{
+use crate::graph::data::{
     CodeGraph, DeclRow, Delta, GhostMark, HoldEdge, HoldEvent, HoldKind, ImplEdge, ItemKind,
     ItemMark, Vis,
 };

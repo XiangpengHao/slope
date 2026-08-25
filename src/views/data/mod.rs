@@ -29,7 +29,8 @@ pub(crate) mod quote;
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::api::{CodeGraph, code_graph};
+use crate::graph::data::CodeGraph;
+use crate::load::code_graph;
 use crate::views::chrome::plural;
 use crate::views::data::chrome::{DataCartouche, DataSearch, DataSheet};
 use crate::views::data::map::DataChart;
@@ -424,7 +425,7 @@ mod tests {
             Some(("src/views/data/chrome.rs", "DataModel::hold_rows"))
         );
         let route = peek_route(
-            &("src/api.rs".to_string(), "CodeGraph".to_string()),
+            &("src/graph/data.rs".to_string(), "CodeGraph".to_string()),
             "src/views/data/chrome.rs",
             "DataModel::hold_rows",
         );
@@ -432,20 +433,20 @@ mod tests {
         // chart does not move.
         assert_eq!(
             route.to_string(),
-            "/data/mark/src/api.rs?peek=src/views/data/chrome.rs@DataModel::hold_rows&item=CodeGraph"
+            "/data/mark/src/graph/data.rs?peek=src/views/data/chrome.rs@DataModel::hold_rows&item=CodeGraph"
         );
         // And an unquoted selection's URL is exactly what it always was.
         assert_eq!(
-            mark_route("src/api.rs", "CodeGraph").to_string(),
-            "/data/mark/src/api.rs?item=CodeGraph"
+            mark_route("src/graph/data.rs", "CodeGraph").to_string(),
+            "/data/mark/src/graph/data.rs?item=CodeGraph"
         );
     }
 
     /// Half a key names nothing: the sheet stays open and no plate does.
     #[test]
     fn a_key_that_names_no_pair_quotes_nothing() {
-        assert_eq!(peek_at("src/api.rs"), None);
+        assert_eq!(peek_at("src/graph/data.rs"), None);
         assert_eq!(peek_at("@CodeGraph"), None);
-        assert_eq!(peek_at("src/api.rs@"), None);
+        assert_eq!(peek_at("src/graph/data.rs@"), None);
     }
 }

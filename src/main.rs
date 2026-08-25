@@ -5,8 +5,10 @@ use views::{AppShell, DataFocus, DataModFocus, DataOverview, DepFocus, DepOvervi
 /// Server-side analysis: cargo metadata, VCS diff, manifest events.
 #[cfg(feature = "server")]
 mod analyze;
-/// Shared API types and the workspace-analysis server function.
-mod api;
+/// The data model: the graph structures the charts draw.
+mod graph;
+/// The server functions that carry a graph to the client.
+mod load;
 /// Layouts and route pages.
 mod views;
 
