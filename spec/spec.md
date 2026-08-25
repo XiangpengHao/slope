@@ -101,8 +101,9 @@ lexer went with it and came back the same day (user): the data sheet's rows
 now quote one item at a time on their own plate — see
 `spec/data-viewer.md`. what stayed gone is the map.
 
-the ladder is now **`dependencies · data`**, two rungs. what went with the
-map:
+the ladder was **`dependencies · data`** after that, two rungs, and is
+**`dependencies · data · functions`** since 2026-08-25 — see
+`spec/function-viewer.md`. what went with the map:
 
 - the dep chart's focus panel offered "its files ↓", to the code map's
   crate sheet. it went with the map, and on 2026-08-24 came back as
@@ -133,6 +134,34 @@ map:
   cutaway. the sources, the item spans and the reference spans are kept on
   the server again (`analyze::code::CodeIndex`), because a quotation must be
   the bytes the survey read.
+
+## Function viewer (built 2026-08-25)
+
+the third rung, `/fn`: every function, method, trait clause and
+`macro_rules!` the workspace declares, tiered by **call depth** from the
+declarations nothing calls. it is the data chart's dual — a block there
+quotes a struct's fields, a block here quotes a function's signature — and
+its sheet's `Data touched` rows are the one link between the two rungs,
+each one a descent to that type's block on `/data`. full spec in
+`spec/function-viewer.md`.
+
+three things it needed that nothing else had:
+
+- **the survey gate moved up** (`src/views/survey.rs`). both code altitudes
+  read one rust-analyzer survey, and neither may pay for it twice, so the
+  gate the data chart owned is now shared and mounted above both route
+  families by the app shell.
+- **a method's own signature rows.** the data walk filed a method's
+  quotation on its type's contract and nowhere else; it now also writes the
+  method's own mark — the receiver as written, the parameters, the return —
+  which is what a block on this chart quotes. nothing on `/data` reads those
+  slots, so that rung did not move.
+- **contract edges.** a call graph alone lies about a trait-heavy workspace:
+  a `dyn` call lands on the trait's clause and the code that runs is
+  somewhere else. so a trait's clause and the methods answering it are a
+  second, dashed family, and a method answering a *workspace* trait is not
+  an entry point. one answering a foreign trait still is, and the limits
+  fold says so.
 
 ## Name (renamed 2026-08-20)
 

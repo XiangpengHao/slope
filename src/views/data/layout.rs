@@ -181,6 +181,10 @@ impl Packed {
     }
 }
 
+/// Shared with the function altitude, whose three plates pack their own rows
+/// and cells with it: one packer for the whole system, so two charts of one
+/// workspace never disagree about how a shelf fills.
+///
 /// Ordered bottom-left packing: each box in turn seats at the lowest open
 /// spot — leftmost on a tie — that the target width allows, so a short box
 /// fills the slack beside a tall one instead of opening a new row under it.
@@ -188,7 +192,7 @@ impl Packed {
 /// towered over its neighbors, and every wasted unit lowers the fit zoom the
 /// whole chart is read at. Deterministic: the boxes arrive in reading order
 /// and are seated in it, positions and all.
-pub(super) fn skyline(boxes: &[(f64, f64)], target: f64, gap: f64) -> Vec<(f64, f64)> {
+pub(in crate::views) fn skyline(boxes: &[(f64, f64)], target: f64, gap: f64) -> Vec<(f64, f64)> {
     const EPS: f64 = 1e-6;
     let width = boxes.iter().map(|b| b.0).fold(target, f64::max) + gap;
     // The line as segments of (x, w, top), always tiling [0, width].

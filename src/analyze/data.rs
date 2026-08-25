@@ -412,6 +412,36 @@ impl DataWalk {
                             if let Some(ret) = returns(db).filter(|ret| !ret.is_unit()) {
                                 walk_row(&ret, &mut acc);
                             }
+                            // The function altitude draws this method as a
+                            // block of its own, so its signature is quoted on
+                            // its **own** mark as well as filed as a row of
+                            // the type's contract. Two readings of one
+                            // quotation, never two quotations: the rows below
+                            // are the same source text this row's `sig` is,
+                            // split where rust splits it. The data chart never
+                            // looks at a method mark's body — a method has no
+                            // block there — so nothing one rung up moves.
+                            let own = method.mark as usize;
+                            if let Some(receiver) = f.param_list().and_then(|l| l.self_param()) {
+                                // `&mut self` declares no type of its own: the
+                                // whole receiver is the row, as written.
+                                field_rows[own].push(DeclRow {
+                                    name: collapsed(receiver.syntax()),
+                                    ty: String::new(),
+                                    vis: Vis::Private,
+                                });
+                            }
+                            for param in &quoted {
+                                field_rows[own].push(DeclRow {
+                                    name: pat_text(param.pat()),
+                                    ty: type_text(param.ty()),
+                                    vis: Vis::Private,
+                                });
+                            }
+                            let ret = type_text(f.ret_type().and_then(|r| r.ty()));
+                            if !ret.is_empty() && ret != "()" {
+                                ty[own] = ret;
+                            }
                             method_rows[mark].push(MethodRow {
                                 name,
                                 sig,
@@ -741,6 +771,17 @@ pub(super) fn decl_text(node: &SyntaxNode) -> String {
 /// One method's signature, the way [`decl_text`] writes any row.
 pub(super) fn signature_text(f: &ast::Fn) -> String {
     decl_text(f.syntax())
+}
+
+/// One node's own text with runs of whitespace collapsed — what quoting a
+/// receiver (`&self`, `&mut self`) takes, since it is neither a pattern nor a
+/// type and rust may write it across two lines.
+pub(super) fn collapsed(node: &SyntaxNode) -> String {
+    node.text()
+        .to_string()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// A parameter's binding as the source writes it — `graph`, `mut at`, `_`.

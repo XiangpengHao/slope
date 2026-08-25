@@ -1251,3 +1251,336 @@ details.fold:not([open]) > summary::after {
     opacity: 1;
   }
 }
+
+/* ————— The function altitude: signature blocks, tiered by call depth —————
+   The data chart's block grammar, of the other half of the language: a head
+   that opens the parameter list, the parameters as quoted rows, and the line
+   that closes it. Every number here is also in `views/func/map.rs`, which
+   measures a block before the layout places it. Move one and the other must
+   follow. */
+
+.slope .fn-node {
+  width: 100%;
+  height: 100%;
+  transition: opacity 400ms ease-out;
+}
+.slope .fn-mark {
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--color-paper);
+  border: 1px solid var(--color-ink-line);
+  padding: 5px 7px 4px;
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.slope .fn-mark:hover {
+  border-color: var(--color-ink);
+}
+/* An entry point is where a chain of running starts — the same 2.5px ink left
+   edge the data chart's roots wear, because it is the same fact one rung
+   down: nothing above this holds it, nothing above this calls it. */
+.slope .fn-mark.is-entry {
+  border-left: 2.5px solid var(--color-ink);
+  padding-left: 5.5px;
+}
+/* A ring no entry point reaches: the frame goes dashed, the way an absence is
+   drawn everywhere in this system. */
+.slope .fn-mark.is-ring {
+  border-style: dashed;
+}
+.slope .fn-mark.is-diff,
+.slope .fn-mark.is-diff:hover {
+  border-color: var(--color-flare);
+}
+.slope .fn-mark.is-picked {
+  outline: 1.5px solid var(--color-ink);
+  outline-offset: 2px;
+}
+/* A reading's pressure acts on the block's own paint, never on its box. */
+.slope .fn-mark.is-dim {
+  opacity: 0.32;
+}
+.slope .fn-mark.is-near {
+  opacity: 0.78;
+}
+.slope .fn-node.is-rest {
+  opacity: 0.62;
+}
+.slope .fn-node.is-rest:hover {
+  opacity: 1;
+}
+.slope .fm-head {
+  display: flex;
+  align-items: baseline;
+  gap: 4px;
+  height: 16px;
+  font-size: 10.5px;
+  line-height: 16px;
+  white-space: nowrap;
+}
+.slope .fm-kw {
+  flex: none;
+  color: var(--color-tok-kw);
+}
+.slope .fm-nm {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 700;
+  /* A function's name in the palette's fn colour, the way a quotation inks
+     one: the kind is the keyword in front of it, and this is the run that
+     carries at chart zoom. */
+  color: var(--color-tok-fn);
+}
+.slope .fn-mark:hover .fm-nm {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.slope .fm-open,
+.slope .fm-tail {
+  color: var(--color-tok-punct);
+}
+.slope .fm-chg {
+  font-weight: 700;
+  color: var(--color-flare);
+}
+.slope .fm-row,
+.slope .fm-tail {
+  margin-left: 0;
+  font-size: 10px;
+  line-height: 15px;
+  overflow-wrap: anywhere;
+}
+.slope .fm-row {
+  padding-left: 12px;
+}
+.slope .fm-mk {
+  display: inline-block;
+  margin-left: -12px;
+  width: 12px;
+  font-weight: 700;
+  color: var(--color-flare);
+}
+.slope .fm-pname {
+  color: var(--color-ink);
+}
+.slope .fm-ty {
+  color: var(--color-tok-type);
+}
+.slope .fm-row .tok-kw {
+  color: var(--color-tok-kw);
+}
+
+/* The ground: assemblies on the mechanism plate, prisms and captioned bands
+   on the others. Hairline ink throughout — a frame is a boundary, never a
+   card. */
+.slope .df-world-layer.fn-ground {
+  z-index: 0;
+}
+.slope .df-world-layer.fn-ground svg,
+.slope .df-world-layer.fn-wires svg {
+  pointer-events: none;
+}
+.slope .fn-lane-caption,
+.slope .fn-prism-name {
+  font-family: var(--font-data);
+  fill: var(--color-ink-soft);
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 3.5px;
+  stroke-linejoin: round;
+}
+.slope .fn-lane-caption {
+  font-size: 9.5px;
+}
+.slope .fn-lane-rule {
+  stroke: var(--color-ink-line);
+  stroke-width: 0.8px;
+  opacity: 0.7;
+}
+.slope .fn-lane-hit,
+.slope .fn-prism-hit {
+  fill: transparent;
+  pointer-events: auto;
+  cursor: pointer;
+}
+/* A boundary's name is its control: hovering the words says so, and the
+   hairline under a band stays a rule. */
+.slope .fn-lane-pick:hover .fn-lane-caption,
+.slope .fn-lane-pick:focus-visible .fn-lane-caption,
+.slope .fn-prism-pick:hover .fn-prism-name,
+.slope .fn-prism-pick:focus-visible .fn-prism-name {
+  fill: var(--color-ink);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.slope .fn-lane.is-sel .fn-lane-caption {
+  fill: var(--color-ink);
+  font-weight: 700;
+}
+.slope .fn-lane.is-sel .fn-lane-rule {
+  stroke: var(--color-ink);
+  stroke-width: 1.2px;
+  opacity: 1;
+}
+.slope .fn-lane.is-dim {
+  opacity: 0.35;
+}
+.slope .fn-prism-box {
+  stroke: var(--color-ink-line);
+  stroke-width: 0.8px;
+  stroke-dasharray: 2 4;
+}
+.slope .fn-prism.is-sel .fn-prism-box {
+  stroke: var(--color-ink);
+  stroke-dasharray: none;
+}
+.slope .fn-prism.is-sel .fn-prism-name {
+  fill: var(--color-ink);
+}
+.slope .fn-prism.is-dim {
+  opacity: 0.45;
+}
+.slope .fn-prism-name {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+}
+
+/* The two families. Solid is a call — at this altitude a body is the
+   declaration; dashed and lighter is a contract, a promise rather than a
+   call. Both rest on the dependent. */
+.slope .df-world-layer.fn-wires {
+  z-index: 1;
+}
+.slope .fn-wire {
+  pointer-events: none;
+}
+.slope .fn-wire .wire-path {
+  stroke: var(--color-ink-line);
+  fill: none;
+}
+.slope .fn-wire .wire-head {
+  fill: var(--color-ink-line);
+  stroke: none;
+}
+.slope .fn-wire .wire-label {
+  font-family: var(--font-data);
+  font-size: 8.5px;
+  fill: var(--color-ink-soft);
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+.slope .fn-wire.is-answers .wire-path {
+  stroke-dasharray: 5 3;
+  opacity: 0.5;
+}
+.slope .fn-wire.is-answers .wire-head {
+  opacity: 0.5;
+}
+/* A wire the chart folded away — every call but the way in — stays in the set
+   and is given back on hover or selection of either end. */
+.slope .fn-wire.is-folded {
+  display: none;
+}
+.slope .fn-wire.is-folded.is-hot,
+.slope .fn-wire.is-folded.is-kin,
+.slope .fn-wire.is-folded.is-near {
+  display: inline;
+}
+.slope .fn-wire.is-hot .wire-path,
+.slope .fn-wire.is-kin .wire-path {
+  stroke: var(--color-ink);
+}
+.slope .fn-wire.is-hot .wire-head,
+.slope .fn-wire.is-kin .wire-head {
+  fill: var(--color-ink);
+}
+.slope .fn-wire.is-hot .wire-label,
+.slope .fn-wire.is-kin .wire-label {
+  fill: var(--color-ink);
+}
+.slope .fn-wire.is-dim {
+  opacity: 0.18;
+}
+/* No wire here carries the flare. The diff reads declarations, not bodies, so
+   a changed call is not a thing this survey can see: the diff's ink is the
+   block's own frame and its letter. */
+
+/* The far edition: below reading zoom the rows are dust, so the plate swaps to
+   names and wires alone. Nothing moves — every block keeps its box. */
+.slope .fn-chart.is-far .fm-row,
+.slope .fn-chart.is-far .fm-tail,
+.slope .fn-chart.is-far .fm-open {
+  display: none;
+}
+.slope .fn-chart.is-far .fm-head {
+  display: block;
+  height: auto;
+}
+.slope .fn-chart.is-far .fm-kw {
+  display: block;
+  font-size: 13px;
+  line-height: 1.3;
+}
+.slope .fn-chart.is-far .fm-nm {
+  display: block;
+  /* Measured per block, in `views/func/map.rs`: the size at which this name
+     fits its own box on one line, down to a floor. Breaking an identifier
+     across two lines and clipping the second (`DataCartouch/e`) is not a
+     smaller name, it is a wrong one. */
+  font-size: var(--far-name, 26px);
+  line-height: 1.06;
+  font-weight: 700;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slope .fn-chart.is-far .fm-chg {
+  font-size: 22px;
+}
+.slope .fn-chart.is-far .fn-mark.is-entry {
+  border-left-width: 8px;
+  padding-left: 0;
+}
+.slope .fn-chart.is-far .fn-mark.is-picked {
+  outline-width: 5px;
+  outline-offset: 6px;
+}
+/* At far zoom the wires thicken to stay lines — but only as far as the ground
+   can answer. A 3px wire over a 0.8px rule and a 55%-opacity name read as the
+   hairball this chart refuses: the section is the structure, so the section
+   holds the heavier pressure. */
+.slope .fn-chart.is-far .fn-wire .wire-path {
+  stroke-width: 2px !important;
+}
+.slope .fn-chart.is-far .fn-lane-rule {
+  stroke-width: 2.4px;
+  opacity: 1;
+}
+.slope .fn-chart.is-far .fn-prism-box {
+  stroke-width: 2px;
+  stroke-dasharray: 6 10;
+}
+.slope .fn-chart.is-far .fn-wire .wire-label {
+  display: none;
+}
+.slope .fn-chart.is-far .fn-lane-caption {
+  font-size: 26px;
+  /* The caption rides the glass, so it crosses whatever the reader has panned
+     under it. The halo is the world's own answer to that, and it has to scale
+     with the lettering. */
+  stroke-width: 10px;
+}
+.slope .fn-chart.is-far .fn-prism-name {
+  stroke-width: 9px;
+}
+/* The prism names are the resting view's only column labels, so they are read
+   at full ink: soft ink at 55% is under 3:1 once the camera has scaled 24px
+   down to eight. */
+.slope .fn-chart.is-far .fn-prism-name {
+  font-size: 24px;
+}

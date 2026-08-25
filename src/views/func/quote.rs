@@ -1,85 +1,55 @@
-//! The quotation plate: one row of a sheet, opened at its source.
+//! The quotation plate at the function altitude: one row of a sheet, opened at
+//! its source.
 //!
-//! This chart draws state, so the ends a sheet lists that keep none — the
-//! function whose body leans on the selection, the trait it promises, the
-//! method written for it — have no block on the paper. Until now they were
-//! rows naming a file and a line, and reading them meant leaving the chart
-//! for an editor. Clicking one now quotes it: the item's own source, lexed
-//! and coloured the way a quoted row is, on a plate that opens beside the
-//! sheet and leaves the selection exactly where it was.
+//! The rows a sheet lists that this chart draws no block for — a type it
+//! touches that the data chart draws none for either, a declaration narrower
+//! than the reading — are quoted here rather than left as a file and a line.
+//! Nothing is reconstructed: the server hands back the bytes the survey read,
+//! minus the indent every line shared.
 //!
-//! Nothing here is reconstructed. The server hands back the bytes the survey
-//! read, minus the indent every line shared, and every run whose name the
-//! survey resolved is a link — to that datum's block where the chart draws
-//! one, to its own quotation where it does not. Reading the code is the same
-//! move as reading the chart.
+//! What is different one rung down is where a resolved name goes. A name inside
+//! a quoted body is usually a *call*, and this chart draws calls: those runs
+//! re-centre the chart on the declaration they name. A name that resolves to a
+//! type steps down to the altitude that draws types, and the reader lands on
+//! its block there. Reading the code is the same move as reading either chart.
 
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::graph::data::{CodeGraph, ItemMark};
-use crate::graph::quote::{ItemSource, SrcLink, SrcRun, Tok};
+use crate::graph::data::CodeGraph;
+use crate::graph::quote::{ItemSource, SrcLink, SrcRun};
 use crate::load::item_source;
-use crate::views::data::{Sel, mark_route, peek_route};
+use crate::views::func::{Sel, mark_route, peek_route};
 
-impl Tok {
-    /// The class that inks one run. Colour inside a quotation says one thing
-    /// only: what kind of token this is. Shared with the function altitude,
-    /// which quotes the same source with the same palette.
-    pub(in crate::views) fn class(self) -> &'static str {
-        match self {
-            Tok::Kw => "tok-kw",
-            Tok::Comment => "tok-comment",
-            Tok::Doc => "tok-doc",
-            Tok::Str => "tok-str",
-            Tok::Num => "tok-num",
-            Tok::Lifetime => "tok-lifetime",
-            Tok::Attr => "tok-attr",
-            Tok::Type => "tok-type",
-            Tok::Fn => "tok-fn",
-            Tok::Macro => "tok-macro",
-            Tok::Punct => "tok-punct",
-            Tok::Ident | Tok::Space => "tok-ident",
+impl SrcLink {
+    /// Where a run inside a quotation goes: this chart's own block for anything
+    /// that runs, the data chart's block for a type it draws, and this chart's
+    /// quotation plate for everything else. A reference to a whole file goes
+    /// nowhere — a module has no place at either altitude.
+    fn route(&self, graph: &CodeGraph, sel: &Sel) -> Option<Route> {
+        if self.label.is_empty() {
+            return None;
         }
+        let far = graph.declared(&self.path, &self.label)?;
+        if far.head.kind.is_callable() {
+            return Some(mark_route(&self.path, &self.label));
+        }
+        if far.head.kind.is_data() && far.parent.is_none() {
+            return Some(crate::views::data::mark_route(&self.path, &self.label));
+        }
+        Some(peek_route(sel, &self.path, &self.label))
     }
 }
 
-/// Where a run inside a quotation goes: the datum's own block where this
-/// chart draws one, its quotation where it does not, and nowhere at all for a
-/// reference to a whole file — a module has no place on this altitude.
-fn run_route(graph: &CodeGraph, sel: &Sel, link: &SrcLink) -> Option<Route> {
-    if link.label.is_empty() {
-        return None;
-    }
-    let far = find(graph, &link.path, &link.label)?;
-    match far.head.kind.is_data() && far.parent.is_none() {
-        true => Some(mark_route(&link.path, &link.label)),
-        false => Some(peek_route(sel, &link.path, &link.label)),
-    }
-}
-
-/// What the gutter says where the file has lines this quotation does not
-/// carry: the engraver's own elision, and nothing else.
+/// What the gutter says where the file has lines this quotation does not carry.
 const GAP: &str = "⋮";
 
-/// The item a (file, label) pair names in this survey.
-fn find<'g>(graph: &'g CodeGraph, path: &str, label: &str) -> Option<&'g ItemMark> {
-    graph.items.iter().find(|m| {
-        m.head.label == label
-            && graph
-                .files
-                .get(m.file as usize)
-                .is_some_and(|f| f.path == path)
-    })
-}
-
 /// One row of a sheet, quoted: the declaration it names, where it is written,
-/// and its own source. The plate stands beside the sheet, so the row that
-/// opened it stays inked and readable next to what it says.
+/// and its own source, on a plate that stands beside the sheet.
 #[component]
-pub(super) fn Quotation(graph: CodeGraph, sel: Sel, path: String, label: String) -> Element {
+pub(super) fn FnQuotation(graph: CodeGraph, sel: Sel, path: String, label: String) -> Element {
     let close = mark_route(&sel.0, &sel.1);
-    let Some(mark) = find(&graph, &path, &label) else {
+    let Some(mark) = graph.declared(&path, &label) else {
         return rsx! {
             section { class: "plate pointer-events-auto w-full max-w-[34rem] px-4 py-3 sm:w-auto",
                 p { class: "font-data text-[11px] text-ink",
@@ -93,19 +63,14 @@ pub(super) fn Quotation(graph: CodeGraph, sel: Sel, path: String, label: String)
             }
         };
     };
-    // The kind's own word, and not the sheet row's `pub(super) fn`: the
-    // survey reads `pub(super)` and `pub(in path)` as one crate-wide
-    // visibility, and a head that said `pub(crate)` would contradict the
-    // source quoted two lines under it. What a declaration publishes is
-    // written in the quotation itself, which is the authority here.
+    // The kind's own word, never the sheet row's `pub(super) fn`: what a
+    // declaration publishes is written in the quotation itself, which is the
+    // authority here.
     let decl = mark.head.kind.words();
     let locator = format!("{path}:{}", mark.head.line);
     let id = mark.id;
     rsx! {
-        // The plate takes the room between the cartouche and the sheet and
-        // stops: a hundred columns of rust fit on a desktop, and neither piece
-        // of furniture is ever covered. Beyond that the pane scrolls.
-        section { class: "plate pointer-events-auto flex max-h-[62dvh] w-full flex-col overflow-hidden sm:max-h-[calc(100dvh-1.5rem)] sm:w-auto sm:max-w-[min(46rem,calc(100vw-37rem))]",
+        section { class: "plate pointer-events-auto flex max-h-[62dvh] w-full flex-col overflow-hidden sm:max-h-[calc(100dvh-4.25rem)] sm:w-auto sm:max-w-[min(46rem,calc(100vw-37rem))]",
             div { class: "flex items-baseline gap-3 px-4 pt-3 pb-2",
                 div { class: "min-w-0 flex-1",
                     h2 { class: "flex items-baseline gap-1.5 font-data text-[13px]",
@@ -130,10 +95,6 @@ pub(super) fn Quotation(graph: CodeGraph, sel: Sel, path: String, label: String)
 /// bytes are still on the way.
 #[component]
 fn Quoted(graph: CodeGraph, sel: Sel, item: u32, path: String) -> Element {
-    // Reactive on the item, not merely captured with it: stepping from one row
-    // of a sheet to the next changes this component's props and nothing else,
-    // and a fetch keyed on the first item it ever saw would leave the second
-    // row's plate quoting the first row's source.
     let source = use_resource(use_reactive((&item,), |(item,)| async move {
         item_source(item).await
     }));
@@ -143,9 +104,7 @@ fn Quoted(graph: CodeGraph, sel: Sel, item: u32, path: String) -> Element {
             p { class: "px-4 pb-3 font-data text-[10px] text-ink-soft", "reading {path}…" }
         },
         Some(Err(err)) => rsx! {
-            p { class: "px-4 pb-3 font-data text-[10px] leading-relaxed text-ink-soft",
-                "{err}"
-            }
+            p { class: "px-4 pb-3 font-data text-[10px] leading-relaxed text-ink-soft", "{err}" }
         },
         Some(Ok(source)) => rsx! {
             Pane { graph, sel, source: source.clone() }
@@ -155,21 +114,10 @@ fn Quoted(graph: CodeGraph, sel: Sel, item: u32, path: String) -> Element {
 
 /// The item's own source, as the reviewer's editor would show it: a gutter
 /// counting from its first line in the real file, no wrapping, and the text
-/// selectable so it can be copied straight off the plate. A long definition
-/// scrolls inside the pane; nothing is cut.
-///
-/// A method is drawn inside the `impl` or `trait` block it is written in —
-/// the header, the method at the indent it stands at, the brace that closes
-/// the block — because `fn edge_style(self, …)` alone is not rust and says
-/// nothing about whose method it is.
+/// selectable so it can be copied straight off the plate.
 #[component]
 fn Pane(graph: CodeGraph, sel: Sel, source: ItemSource) -> Element {
     let nav = use_navigator();
-    // The rows the pane draws: every block in source order, and — wherever the
-    // file writes lines between two of them that this quotation does not carry
-    // — one row whose gutter says so. Not how many: a count of skipped lines
-    // is a number nobody acts on, and the gutter's own numbers already say how
-    // far the jump is.
     let no_runs: &[SrcRun] = &[];
     let mut rows: Vec<(String, &[SrcRun])> = Vec::new();
     let mut quoted: Option<u32> = None;
@@ -199,7 +147,7 @@ fn Pane(graph: CodeGraph, sel: Sel, source: ItemSource) -> Element {
                                         .link
                                         .and_then(|l| source.links.get(l as usize))
                                         .and_then(|link| {
-                                            run_route(&graph, &sel, link).map(|route| (route, link.clone()))
+                                            link.route(&graph, &sel).map(|route| (route, link.clone()))
                                         });
                                     match target {
                                         Some((route, link)) => {

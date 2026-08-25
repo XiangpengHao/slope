@@ -32,6 +32,8 @@ pub(super) enum Altitude {
     Deps,
     /// `/data` — the workspace's state, tiered into roots and what they hold.
     Data,
+    /// `/fn` — the code that runs, tiered by how far it is from an entry point.
+    Fns,
 }
 
 /// The altitude line: the ladder between the charts, and the only navigation
@@ -55,6 +57,7 @@ pub(super) fn AltitudeSwitch(at: Altitude) -> Element {
         p { class: "flex gap-3 font-data text-[9.5px] tracking-[0.14em] uppercase",
             {rung("dependencies", Route::DepOverview {}, Altitude::Deps)}
             {rung("data", Route::DataOverview {}, Altitude::Data)}
+            {rung("functions", Route::FnOverview {}, Altitude::Fns)}
         }
     }
 }

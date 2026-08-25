@@ -47,6 +47,27 @@ impl ItemKind {
         }
     }
 
+    /// A shape state can take, or a static that anchors state no type holds.
+    /// The data altitude's marks; everything else names state without keeping
+    /// any.
+    pub(crate) fn is_data(self) -> bool {
+        matches!(
+            self,
+            ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Static
+        )
+    }
+
+    /// Something the workspace runs: a function, a method, a trait's own
+    /// method clause, a `macro_rules!`. The function altitude's marks.
+    ///
+    /// It lives beside [`ItemKind::is_data`] because the two are one
+    /// question asked twice — which rung draws this declaration — and a kind
+    /// that answered yes to both, or to neither, would be a hole in the
+    /// ladder rather than a chart's private business.
+    pub(crate) fn is_callable(self) -> bool {
+        matches!(self, ItemKind::Fn | ItemKind::Macro)
+    }
+
     /// `pub fn`, `struct`, `pub(crate) mod` — what rust writes in front of a
     /// name. A private item declares no visibility, so neither does its row.
     pub(crate) fn decl_words(self, vis: &Vis) -> String {
@@ -501,6 +522,18 @@ impl CodeGraph {
     /// The live mark one id names.
     pub(crate) fn item(&self, id: u32) -> Option<&ItemMark> {
         self.items.get(id as usize)
+    }
+
+    /// The item one (file path, label) pair names — the two facts a URL and a
+    /// quotation both carry, and the only way back from either to a mark.
+    pub(crate) fn declared(&self, path: &str, label: &str) -> Option<&ItemMark> {
+        self.items.iter().find(|m| {
+            m.head.label == label
+                && self
+                    .files
+                    .get(m.file as usize)
+                    .is_some_and(|f| f.path == path)
+        })
     }
 
     /// The file one [`ItemMark::file`] names.

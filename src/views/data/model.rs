@@ -397,7 +397,11 @@ fn source_rest(path: &str) -> &str {
 /// A leaf file's own module is not a frame: a frame per file would draw the
 /// directory tree twice, and this chart is about what the code keeps, not
 /// where it is filed.
-fn module_path(path: &str) -> Vec<&str> {
+///
+/// Shared with the function altitude, which frames its own marks on the same
+/// ground: two charts reading one workspace must name a module the same way,
+/// or a reviewer stepping between them would meet two module trees.
+pub(in crate::views) fn module_path(path: &str) -> Vec<&str> {
     let rest = source_rest(path);
     let mut dirs: Vec<&str> = rest.split('/').collect();
     let file = dirs.pop().unwrap_or_default();
@@ -749,17 +753,6 @@ impl DataModel {
     /// The frame one id names. Frames are indexed by their own id.
     pub(super) fn frame(&self, id: u32) -> Option<&Frame> {
         self.frames.get(id as usize)
-    }
-}
-
-impl ItemKind {
-    /// A mark this chart draws: the shapes state takes, and the statics that
-    /// anchor it. Everything else names state without keeping any.
-    pub(super) fn is_data(self) -> bool {
-        matches!(
-            self,
-            ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Static
-        )
     }
 }
 

@@ -1,6 +1,9 @@
 use dioxus::prelude::*;
 
-use views::{AppShell, DataFocus, DataModFocus, DataOverview, DepFocus, DepOverview, DepRing};
+use views::{
+    AppShell, DataFocus, DataModFocus, DataOverview, DepFocus, DepOverview, DepRing, FnBandFocus,
+    FnFocus, FnModFocus, FnOverview,
+};
 
 /// Server-side analysis: cargo metadata, VCS diff, manifest events.
 #[cfg(feature = "server")]
@@ -24,8 +27,11 @@ mod views;
 /// label), and a whole module boundary is `/data/mod/:..module`. A selection
 /// may also carry `peek=<file>@<label>`: one row of its sheet opened as a
 /// quotation of its own source, for the ends this chart draws no block for —
-/// a function, a trait, a method. `/` is the dependency chart, the rung a
-/// review starts on.
+/// a function, a trait, a method. `/fn` is the rung below: every declaration
+/// that runs, tiered by how far it is from an entry point, with the same
+/// selection grammar (`/fn/mark/:..path?item=`, `/fn/mod/:..module`) plus one
+/// of its own — `/fn/depth/:band`, a whole band of the running order. `/` is
+/// the dependency chart, the rung a review starts on.
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
@@ -46,6 +52,14 @@ enum Route {
         DataFocus { path: Vec<String>, peek: Option<String>, item: String },
         #[route("/data/mod/:..module")]
         DataModFocus { module: Vec<String> },
+        #[route("/fn")]
+        FnOverview {},
+        #[route("/fn/mark/:..path?:peek&:item")]
+        FnFocus { path: Vec<String>, peek: Option<String>, item: String },
+        #[route("/fn/mod/:..module")]
+        FnModFocus { module: Vec<String> },
+        #[route("/fn/depth/:band")]
+        FnBandFocus { band: u32 },
 }
 
 /* impeccable direction contract — served inside the page, greppable in the
@@ -56,6 +70,17 @@ OWN-WORLD: Paper #f6f4ed, engraving ink #23303c, hairline constellation lines; E
 STORY: A reviewer opens the chart after an agent session, sees the workspace whole, reads which stars flare, follows the halo to judge blast radius, and descends crate by crate - every focus a URL.
 FIRST VIEWPORT: Full-bleed chart; cartouche top-left with workspace name, epoch, change count; search top-right; rings captioning their own hops and every mark carrying its state in words at the mark; changed stars flaring amber mid-chart.
 FORM: Star atlas, candidate 7 of 7 grounded directions, seed 93a80ceb.
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
+-->";
+
+/* The function altitude's own contract, served in the same hidden div. The
+world is the atlas's; what this surface decides is composition. */
+const FN_CONTRACT: &str = "<!--
+THESIS: /fn charts what the workspace runs, tiered by call depth from the declarations nothing calls; it refuses the force-directed call-graph hairball and the indented collapsible tree.
+OWN-WORLD: the atlas, unchanged — paper #f6f4ed, engraving ink #23303c, JetBrains Mono data voice, EB Garamond spaced caps, flare #a54c06 for CHANGED alone. A block quotes a signature the way a data block quotes fields.
+STORY: after an agent session the reviewer reads which entry points exist, follows the way in to any declaration, and steps from a function to the state it touches one rung down.
+FIRST VIEWPORT: full-bleed section opened on the entry band at reading scale; cartouche top-left with the three-rung ladder, the group, calls and visibility readings; search top-right; entry points wearing the ink left edge; one wire per mark — the shortest way in — with every other call folded until hover.
+FORM: the section — bands of call depth crossed by prisms. Candidate 2 of 7 grounded structures, seed e7a6406c, code-led; the dealt lead (mechanism, 7) and strips (6) were built, read on real data, and cut by the user on 2026-08-25.
 FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, DESIGN.md, and every shipping raster carrying its provenance
 -->";
 
@@ -120,7 +145,7 @@ fn main() {
 #[component]
 fn App() -> Element {
     rsx! {
-        div { style: "display:none", dangerous_inner_html: CONTRACT }
+        div { style: "display:none", dangerous_inner_html: "{CONTRACT}{FN_CONTRACT}" }
         document::Link { rel: "icon", href: FAVICON_SVG }
         document::Link { rel: "stylesheet", href: TAILWIND_CSS }
         document::Style { {font_css()} }

@@ -6,10 +6,13 @@ use dioxus::prelude::*;
 use crate::Route;
 use crate::graph::dep::DepGraph;
 use crate::load::dep_graph;
+use crate::views::data::DataState;
 use crate::views::data::map::DataCamera;
-use crate::views::data::{DataState, DataSurvey};
 use crate::views::dep::map::DrawnCap;
 use crate::views::dep::{DepShell, DepState};
+use crate::views::func::FnState;
+use crate::views::func::map::FnCamera;
+use crate::views::survey::{Rung, SurveyGate};
 
 type GraphResource = Resource<Result<DepGraph, ServerFnError>>;
 
@@ -63,6 +66,8 @@ pub(crate) fn AppShell() -> Element {
     use_context_provider(DrawnCap::new);
     use_context_provider(DataState::new);
     use_context_provider(DataCamera::new);
+    use_context_provider(FnState::new);
+    use_context_provider(FnCamera::new);
 
     // The back/forward keys live on the shell, not the views: they must
     // survive every route change, and they never need a channel back.
@@ -71,13 +76,19 @@ pub(crate) fn AppShell() -> Element {
     });
 
     let route = use_route::<Route>();
-    // The altitude that reads the rust-analyzer survey. Its gate is mounted
-    // here, above the routes, so stepping between selections never re-runs
-    // the survey fetch.
-    let survey_route = matches!(
-        &route,
-        Route::DataOverview {} | Route::DataFocus { .. } | Route::DataModFocus { .. }
-    );
+    // The two altitudes that read the rust-analyzer survey. Their gate is
+    // mounted here, above the routes, so stepping between selections — or
+    // between the two rungs — never re-runs the survey fetch.
+    let survey_route = match &route {
+        Route::DataOverview {} | Route::DataFocus { .. } | Route::DataModFocus { .. } => {
+            Some(Rung::Data)
+        }
+        Route::FnOverview {}
+        | Route::FnFocus { .. }
+        | Route::FnModFocus { .. }
+        | Route::FnBandFocus { .. } => Some(Rung::Fns),
+        _ => None,
+    };
     let state = resource.read();
 
     rsx! {
@@ -89,10 +100,10 @@ pub(crate) fn AppShell() -> Element {
                 Some(Err(err)) => rsx! {
                     SurveyFailed { message: err.to_string(), resource }
                 },
-                Some(Ok(graph)) if survey_route => {
-                    // The data altitude, behind its own survey gate. The
-                    // workspace's identity and epoch ride along so both
-                    // altitudes stamp the same cartouche facts.
+                Some(Ok(graph)) if survey_route.is_some() => {
+                    // A code altitude, behind the shared survey gate. The
+                    // workspace's identity and epoch ride along so every
+                    // altitude stamps the same cartouche facts.
                     // Each side of the arrow is one quoted idiom — the plate
                     // may break the line at the arrow, never inside
                     // `master @ 1a2b3c4` or `working copy`.
@@ -102,8 +113,9 @@ pub(crate) fn AppShell() -> Element {
                         nb(&graph.epoch.base),
                         nb(&graph.epoch.target)
                     );
+                    let rung = survey_route.unwrap_or(Rung::Data);
                     rsx! {
-                        DataSurvey { workspace: graph.name.clone(), diff_line }
+                        SurveyGate { rung, workspace: graph.name.clone(), diff_line }
                     }
                 }
                 Some(Ok(graph)) => rsx! {
