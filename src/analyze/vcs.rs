@@ -7,11 +7,11 @@ use std::process::Command;
 use crate::graph::dep::Epoch;
 
 pub(super) struct Diff {
-    pub(crate) epoch: Epoch,
+    pub(super) epoch: Epoch,
     /// Paths relative to the workspace root.
-    pub(crate) changed_files: Vec<String>,
+    pub(super) changed_files: Vec<String>,
     /// How to read a file at the base revision.
-    pub(crate) base_ref: Option<BaseRef>,
+    pub(super) base_ref: Option<BaseRef>,
 }
 
 pub(crate) enum BaseRef {

@@ -28,7 +28,7 @@ use std::collections::{HashMap, HashSet};
 
 use crate::Route;
 use crate::graph::data::{
-    CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, ItemMark, Vis,
+    CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, ItemMark, MarkRef, Vis,
 };
 use crate::views::data::{RefDir, mark_route};
 
@@ -74,7 +74,7 @@ impl Containment {
 const HELD_CAP: usize = 3;
 /// Resting uses edges whose counts are engraved. Past this the labels are the
 /// chart's texture instead of its data.
-pub(crate) const TIE_LABELS: usize = 12;
+pub(super) const TIE_LABELS: usize = 12;
 /// Uses edges one mark rests in an anchored reading.
 const TIES_PER_MARK: usize = 2;
 
@@ -88,7 +88,7 @@ const TIES_PER_MARK: usize = 2;
 /// leaves behind. A reader can fold a whole module; the edge lands on the row
 /// that counts it instead of being cut.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
-pub(crate) enum Anchor {
+pub(super) enum Anchor {
     /// A type or static with a block of its own.
     Mark(u32),
     /// A whole module, folded by hand: the frame's own row, standing for every
@@ -115,7 +115,7 @@ fn mod_key(krate: &str, module: &[String]) -> Vec<String> {
 impl Anchor {
     /// The frame a counted row stands in. `None` on a mark, which stands for
     /// itself wherever it was seated.
-    pub(crate) fn frame(self) -> Option<u32> {
+    pub(super) fn frame(self) -> Option<u32> {
         match self {
             Anchor::Mark(_) => None,
             Anchor::Mod(frame) => Some(frame),
@@ -128,9 +128,9 @@ impl Anchor {
 /// its own, with nothing under it — the fold is the whole reading.
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct Seat {
-    pub(crate) anchor: Anchor,
+    pub(super) anchor: Anchor,
     /// Seated one layer beneath, in the survey's order.
-    pub(crate) children: Vec<Seat>,
+    pub(super) children: Vec<Seat>,
 }
 
 impl Seat {
@@ -150,31 +150,40 @@ impl Seat {
 /// segments.
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct Frame {
-    pub(crate) id: u32,
-    pub(crate) krate: String,
+    pub(super) id: u32,
+    pub(super) krate: String,
     /// The module path, segment by segment, as rust names it: `["views",
     /// "data"]` is `mod views::data`. Empty is the crate's own frame, which
     /// holds the types its crate root declares.
-    pub(crate) module: Vec<String>,
+    pub(super) module: Vec<String>,
     /// The frame this one sits inside: the module one segment up, or the crate
     /// frame for a top-level module. `None` only on a crate frame.
-    pub(crate) parent: Option<u32>,
+    pub(super) parent: Option<u32>,
     /// Drawn marks seated here, in the survey's (file, source) order. The
     /// roster of what the frame draws; `forest` says where each one sits.
-    pub(crate) marks: Vec<u32>,
-    /// The reviewer folded this module by hand: it draws its border, its label
-    /// and one row, and nothing inside it is on the paper. The modules nested
-    /// in it earn no frame of their own — a fold is one boundary, not a stack
-    /// of empty ones.
-    pub(crate) folded: bool,
-    /// What that row counts: every datum inside this module and inside the
-    /// modules nested in it. Zero on an open frame.
-    pub(crate) packed: u32,
+    pub(super) marks: Vec<u32>,
+    /// Whether the reviewer folded this module by hand, and what the row says
+    /// if they did.
+    pub(super) fold: Fold,
     /// How they seat: the frame's ownership forest, in reading order —
     /// statics, then roots by how much state stands under them, then the
     /// vocabulary leaves. Every mark in `marks` sits somewhere in here exactly
     /// once, and a folded frame's own row is a seat of its own.
-    pub(crate) forest: Vec<Seat>,
+    pub(super) forest: Vec<Seat>,
+}
+
+/// A module folded by hand: the frame draws its border, its label and one
+/// row, and nothing inside it is on the paper. The modules nested in it earn
+/// no frame of their own — a fold is one boundary, not a stack of empty ones.
+///
+/// The two travel together because they must agree: an open frame packs
+/// nothing, and a folded one always has a row to write a count on.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub(super) struct Fold {
+    pub(super) folded: bool,
+    /// What the folded row counts: every datum inside this module and inside
+    /// the modules nested in it. Zero on an open frame.
+    pub(super) packed: u32,
 }
 
 impl Frame {
@@ -184,7 +193,7 @@ impl Frame {
     /// own nesting says the rest of the path. A crate frame names its crate
     /// only where the survey has more than one to tell apart; in a single-crate
     /// workspace that name is already the cartouche's.
-    pub(crate) fn label(&self, multi_crate: bool) -> Option<String> {
+    pub(super) fn label(&self, multi_crate: bool) -> Option<String> {
         match self.module.last() {
             Some(segment) => Some(format!("mod {segment}")),
             None => multi_crate.then(|| self.krate.clone()),
@@ -192,7 +201,7 @@ impl Frame {
     }
 
     /// This frame's name in a [`Folds`] set, and in the URL that selects it.
-    pub(crate) fn key(&self) -> Vec<String> {
+    pub(super) fn key(&self) -> Vec<String> {
         mod_key(&self.krate, &self.module)
     }
 
@@ -202,7 +211,7 @@ impl Frame {
     /// says `mod map` and more than one module in this workspace answers to
     /// that, so a line the reader meets away from the chart spells the path
     /// out.
-    pub(crate) fn words(&self) -> String {
+    pub(super) fn words(&self) -> String {
         match self.module.is_empty() {
             true => self.krate.clone(),
             false => self.module.join("::"),
@@ -222,7 +231,7 @@ pub(super) enum RowState {
 
 impl RowState {
     /// The diff's own marker for the row.
-    pub(crate) fn marker(self) -> Option<&'static str> {
+    pub(super) fn marker(self) -> Option<&'static str> {
         match self {
             RowState::Same => None,
             RowState::Added => Some("+"),
@@ -231,7 +240,7 @@ impl RowState {
     }
 
     /// The row's CSS class, empty for an untouched row.
-    pub(crate) fn class(self) -> &'static str {
+    pub(super) fn class(self) -> &'static str {
         match self {
             RowState::Same => "",
             RowState::Added => "is-add",
@@ -248,7 +257,7 @@ pub(super) struct Held {
     /// The held type's name — the one run of the declaration drawn in full ink,
     /// so `Vec<FileDetail>` reads as the wrapper it is around the type it
     /// holds. Empty where the row reaches nothing this workspace declares.
-    pub(crate) name: String,
+    pub(super) name: String,
     /// The route that selects the block that run names, at this altitude.
     /// `Some` makes the run a link of its own — click the type's name inside
     /// a row and the chart goes to that type (2026-08-24, user), which is the
@@ -256,13 +265,13 @@ pub(super) struct Held {
     /// the block is not already legible. `None` where there is no block to go
     /// to — a folded module's state — or where the run names the block it is
     /// written in, which is where the reader already stands.
-    pub(crate) at: Option<Route>,
+    pub(super) at: Option<Route>,
 }
 
 #[cfg(test)]
 impl Held {
     /// A held name with no block to go to.
-    pub(crate) fn named(name: &str) -> Self {
+    pub(super) fn named(name: &str) -> Self {
         Held {
             name: name.to_string(),
             at: None,
@@ -274,19 +283,19 @@ impl Held {
 /// Nothing here is reconstructed.
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct FieldRow {
-    pub(crate) name: String,
-    pub(crate) decl: String,
+    pub(super) name: String,
+    pub(super) decl: String,
     /// What the row declares for itself, drawn in front of its name. A field
     /// can be narrower than the type holding it — a `pub(crate)` struct may
     /// publish some fields and keep the rest — and a reader deciding what may
     /// touch this state has to see which (2026-08-24, user). A variant declares
     /// nothing of its own: it is as visible as the enum it belongs to.
-    pub(crate) vis: Vis,
+    pub(super) vis: Vis,
     /// The workspace type this row reaches, and where its block stands.
-    pub(crate) target: Held,
+    pub(super) target: Held,
     /// The row against the diff base. A `Removed` row is the base's, seated
     /// where it stood.
-    pub(crate) state: RowState,
+    pub(super) state: RowState,
 }
 
 impl ItemKind {
@@ -311,7 +320,7 @@ impl ItemKind {
 impl FieldRow {
     /// The row as the block draws it: what it declares, its name, its type.
     /// One string, so measuring a row and drawing it can never disagree.
-    pub(crate) fn written(&self) -> String {
+    pub(super) fn written(&self) -> String {
         let body = match self.name.is_empty() {
             true => self.decl.clone(),
             false => format!("{}: {}", self.name, self.decl),
@@ -433,82 +442,120 @@ pub(super) enum Stand {
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct Unseen {
     /// Its [`ItemMark`] id: the row's words, and where the link lands.
-    pub(crate) item: u32,
+    pub(super) item: u32,
     /// References across this pair, summed.
-    pub(crate) count: u32,
+    pub(super) count: u32,
 }
 
 /// One shape or static with a block on the paper.
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct DataMark {
-    pub(crate) id: u32,
-    pub(crate) frame: u32,
-    pub(crate) kind: ItemKind,
-    pub(crate) vis: crate::graph::data::Vis,
-    pub(crate) name: String,
+    pub(super) id: u32,
+    pub(super) frame: u32,
+    /// What the block's head says, and where its source is.
+    pub(super) head: MarkHead,
+    /// The rows drawn inside it.
+    pub(super) rows: MarkRows,
+    /// Where the epoch left it.
+    pub(super) state: MarkState,
+    /// Where it seats among the other blocks.
+    pub(super) seat: MarkSeat,
+    /// The ink the chart will not draw, counted and listed.
+    pub(super) undrawn: Undrawn,
+}
+
+/// What a block's head says, and where a reader goes to read the source.
+#[derive(Clone, PartialEq, Debug)]
+pub(super) struct MarkHead {
+    pub(super) kind: ItemKind,
+    pub(super) vis: crate::graph::data::Vis,
+    pub(super) name: String,
     /// The label its selection sheet selects by, for the URL.
-    pub(crate) label: String,
-    pub(crate) path: String,
-    pub(crate) line: u32,
-    pub(crate) delta: Delta,
-    /// The base had it, the working copy does not: drawn dashed from the base.
-    pub(crate) ghost: bool,
+    pub(super) label: String,
+    pub(super) path: String,
+    pub(super) line: u32,
+}
+
+/// The rows drawn inside a block. Methods are not among them: a block is
+/// state only.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub(super) struct MarkRows {
     /// Fields quoted as written, every one of them — this chart's whole
-    /// quotation. Methods are not rows here: a block is state only.
-    pub(crate) fields: Vec<FieldRow>,
+    /// quotation.
+    pub(super) fields: Vec<FieldRow>,
     /// An enum's variants as written, all of them.
-    pub(crate) variants: Vec<FieldRow>,
+    pub(super) variants: Vec<FieldRow>,
     /// A static's declared type, as written.
-    pub(crate) ty: String,
+    pub(super) ty: String,
     /// The workspace type that type reaches, drawn in full ink — and where
     /// its own block stands, so the run is a link to it.
-    pub(crate) ty_target: Held,
-    pub(crate) tier: Tier,
+    pub(super) ty_target: Held,
+}
+
+/// Where the epoch left one block. `ghost` and a `delta` of `Added` are the
+/// two ends of the same axis and never both true.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub(super) struct MarkState {
+    pub(super) delta: Delta,
+    /// The base had it, the working copy does not: drawn dashed from the base.
+    pub(super) ghost: bool,
+}
+
+/// Where a block seats among the others.
+#[derive(Clone, PartialEq, Debug)]
+pub(super) struct MarkSeat {
+    pub(super) tier: Tier,
     /// The marks nested inside this block, in the survey's order.
-    pub(crate) kids: Vec<u32>,
+    pub(super) kids: Vec<u32>,
+    /// Structural holders folded to a count: nonzero only on vocabulary
+    /// marks, whose incoming holds rest folded.
+    pub(super) held_by: u32,
+}
+
+/// What leans on a block that this chart draws no mark for. All of it is the
+/// chart's own limit stated in numbers and rows, never silence.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub(super) struct Undrawn {
     /// Distinct declarations whose own signature names it — free functions,
     /// method rows, consts, aliases, trait clauses. None of them has a block
     /// here, so the count is the ink the chart will not draw.
-    pub(crate) named_by: u32,
+    pub(super) named_by: u32,
     /// The bodies with no block here that reach it — function bodies,
     /// mostly. The other half of the same undrawn ink, kept as ends and not
     /// as a number, because the sheet lists every one of them; heaviest
     /// first. The paper says only how many.
-    pub(crate) used_by: Vec<Unseen>,
+    pub(super) used_by: Vec<Unseen>,
     /// Where its own impls reach code the chart draws no mark for, the same
     /// way round. Said on the sheet, never on the paper.
-    pub(crate) unseen_uses: Vec<Unseen>,
-    /// Structural holders folded to a count: nonzero only on vocabulary
-    /// marks, whose incoming holds rest folded.
-    pub(crate) held_by: u32,
+    pub(super) unseen_uses: Vec<Unseen>,
 }
 
 impl DataMark {
     pub(super) fn is_static(&self) -> bool {
-        self.kind == ItemKind::Static
+        self.head.kind == ItemKind::Static
     }
 
     /// A root wears the gate's 2.5px ink left edge — the static's own mark,
     /// widened to every block a chain of holding begins at.
     pub(super) fn is_root(&self) -> bool {
-        matches!(self.tier, Tier::Root)
+        matches!(self.seat.tier, Tier::Root)
     }
 
     /// Where it is written; a ghost's line is the base edition's.
-    pub(crate) fn locator(&self) -> String {
-        if self.ghost {
-            format!("{}:{} (base)", self.path, self.line)
+    pub(super) fn locator(&self) -> String {
+        if self.state.ghost {
+            format!("{}:{} (base)", self.head.path, self.head.line)
         } else {
-            format!("{}:{}", self.path, self.line)
+            format!("{}:{}", self.head.path, self.head.line)
         }
     }
 
     /// The letter the mark wears, in git's own alphabet.
     pub(super) fn letter(&self) -> Option<&'static str> {
-        if self.ghost {
+        if self.state.ghost {
             return Some("D");
         }
-        match self.delta {
+        match self.state.delta {
             Delta::Added => Some("A"),
             Delta::Changed => Some("M"),
             Delta::Same => None,
@@ -522,21 +569,21 @@ impl DataMark {
 /// diff's added and removed relations. Drawn held → holder; the arrowhead
 /// rests on the holder, the way a shape change travels.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct Hold {
-    pub(crate) held: Anchor,
-    pub(crate) holder: Anchor,
-    pub(crate) kind: HoldKind,
+pub(super) struct Hold {
+    pub(super) held: Anchor,
+    pub(super) holder: Anchor,
+    pub(super) kind: HoldKind,
     /// The strongest wrapper on the walk, in its own word.
-    pub(crate) via: String,
+    pub(super) via: String,
     /// Rows drawing this edge.
-    pub(crate) fields: u32,
+    pub(super) fields: u32,
     /// Drawn at rest. A folded edge inks in when either end is hovered.
-    pub(crate) rest: bool,
-    pub(crate) event: Option<HoldEvent>,
+    pub(super) rest: bool,
+    pub(super) event: Option<HoldEvent>,
 }
 
 impl Hold {
-    pub(crate) fn key(&self) -> String {
+    pub(super) fn key(&self) -> String {
         format!(
             "{:?}>{:?}:{:?}:{}:{:?}",
             self.held, self.holder, self.kind, self.via, self.event
@@ -548,20 +595,20 @@ impl Hold {
 /// lean on another type. The dashed family, always drawn the same direction —
 /// the arrowhead rests on the user.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct Tie {
-    pub(crate) def: Anchor,
-    pub(crate) user: Anchor,
-    pub(crate) count: u32,
+pub(super) struct Tie {
+    pub(super) def: Anchor,
+    pub(super) user: Anchor,
+    pub(super) count: u32,
     /// Which of the def's methods the references name, heaviest first, for
     /// the sheet. The rows are not drawn here — methods are not this
     /// chart's — but which clause a body leans on is still the answer.
-    pub(crate) rows: Vec<(String, u32)>,
-    pub(crate) rest: bool,
-    pub(crate) labeled: bool,
+    pub(super) rows: Vec<(String, u32)>,
+    pub(super) rest: bool,
+    pub(super) labeled: bool,
 }
 
 impl Tie {
-    pub(crate) fn key(&self) -> String {
+    pub(super) fn key(&self) -> String {
         format!("{:?}~{:?}", self.def, self.user)
     }
 }
@@ -569,74 +616,118 @@ impl Tie {
 /// One undrawn naming: a declaration whose own signature names a drawn type.
 /// The sheet's rows and the foot's `named by n signatures` both read this.
 #[derive(Clone, PartialEq, Debug)]
-pub(crate) struct Naming {
+pub(super) struct Naming {
     /// The named type's mark.
-    pub(crate) ty: u32,
+    pub(super) ty: u32,
     /// The naming contract's mark in the survey — a free fn, const, alias,
     /// or, for a method row, the type whose API says the word.
-    pub(crate) namer: u32,
+    pub(super) namer: u32,
     /// The namer is a method row of a type rather than a free contract.
-    pub(crate) from_method: bool,
-    pub(crate) event: Option<HoldEvent>,
+    pub(super) from_method: bool,
+    pub(super) event: Option<HoldEvent>,
 }
 
 /// What the cartouche states about the survey.
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct DataFacts {
-    pub(crate) structs: usize,
-    pub(crate) enums: usize,
-    pub(crate) unions: usize,
-    pub(crate) statics: usize,
-    pub(crate) added: usize,
-    pub(crate) removed: usize,
-    pub(crate) changed: usize,
-    pub(crate) changed_modules: Vec<String>,
-    pub(crate) unresolved: u32,
+    /// How many of each shape of state the workspace keeps.
+    pub(super) kinds: KindCount,
+    /// What the epoch did to them.
+    pub(super) diff: DiffCount,
+    /// The modules the diff lands in, named.
+    pub(super) changed_modules: Vec<String>,
+    /// Names the survey could not resolve, as [`Limits::unresolved`].
+    pub(super) unresolved: u32,
+}
+
+/// How many of each shape of state the survey found, ghosts excluded.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub(super) struct KindCount {
+    pub(super) structs: usize,
+    pub(super) enums: usize,
+    pub(super) unions: usize,
+    pub(super) statics: usize,
+}
+
+/// What the epoch did to the state on the chart.
+#[derive(Clone, Copy, PartialEq, Debug, Default)]
+pub(super) struct DiffCount {
+    pub(super) added: usize,
+    pub(super) removed: usize,
+    pub(super) changed: usize,
 }
 
 /// Everything one build of the data chart reads out of the survey.
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct DataModel {
-    pub(crate) frames: Vec<Frame>,
+    pub(super) frames: Vec<Frame>,
     /// Drawn marks, in the survey's (file, source) order.
-    pub(crate) marks: Vec<DataMark>,
+    pub(super) marks: Vec<DataMark>,
     /// The drawn holding edges — everything but the nesting.
-    pub(crate) holds: Vec<Hold>,
+    pub(super) holds: Vec<Hold>,
     /// Every current structural relation as (held, holder), the nesting
     /// included: the blast radius walks all of it, drawn or seated.
-    pub(crate) pairs: Vec<(Anchor, Anchor)>,
-    pub(crate) ties: Vec<Tie>,
+    pub(super) pairs: Vec<(Anchor, Anchor)>,
+    pub(super) ties: Vec<Tie>,
     /// The undrawn naming ink, for the sheet's rows.
-    pub(crate) naming: Vec<Naming>,
-    pub(crate) multi_crate: bool,
-    // ---- Facts for the cartouche. ----
-    pub(crate) structs: usize,
-    pub(crate) enums: usize,
-    pub(crate) unions: usize,
-    pub(crate) statics: usize,
-    pub(crate) roots: usize,
-    pub(crate) nested: usize,
-    pub(crate) standing: usize,
-    pub(crate) added: usize,
-    pub(crate) removed: usize,
-    pub(crate) changed: usize,
-    pub(crate) changed_modules: Vec<String>,
+    pub(super) naming: Vec<Naming>,
+    pub(super) multi_crate: bool,
 }
 
 impl DataModel {
-    /// The facts, lifted off the model for the furniture that states them.
-    pub(crate) fn facts(&self, unresolved: u32) -> DataFacts {
+    /// The facts the cartouche states, counted off the marks when it asks.
+    ///
+    /// These were eleven fields on the model, each its own pass over `marks`
+    /// at build time. Eight of them had one reader — this method, copying
+    /// them across one for one — and three (`roots`, `nested`, `standing`)
+    /// had none at all: the cartouche stopped stating tier counts on
+    /// 2026-08-21 and the counting stayed behind. A census is a reading of
+    /// the marks, so it is taken from them, once, by whoever wants it.
+    pub(super) fn facts(&self, unresolved: u32) -> DataFacts {
+        let current = |m: &&DataMark| !m.state.ghost;
+        let of_kind = |kind: ItemKind| {
+            self.marks
+                .iter()
+                .filter(current)
+                .filter(|m| m.head.kind == kind)
+                .count()
+        };
+        let mut changed_modules: Vec<String> = self
+            .marks
+            .iter()
+            .filter(|m| m.letter().is_some())
+            .map(|m| self.frames[m.frame as usize].words())
+            .collect();
+        changed_modules.sort();
+        changed_modules.dedup();
+        let delta = |d: Delta| self.marks.iter().filter(|m| m.state.delta == d).count();
         DataFacts {
-            structs: self.structs,
-            enums: self.enums,
-            unions: self.unions,
-            statics: self.statics,
-            added: self.added,
-            removed: self.removed,
-            changed: self.changed,
-            changed_modules: self.changed_modules.clone(),
+            kinds: KindCount {
+                structs: of_kind(ItemKind::Struct),
+                enums: of_kind(ItemKind::Enum),
+                unions: of_kind(ItemKind::Union),
+                statics: of_kind(ItemKind::Static),
+            },
+            diff: DiffCount {
+                added: delta(Delta::Added),
+                removed: self.marks.iter().filter(|m| m.state.ghost).count(),
+                changed: delta(Delta::Changed),
+            },
+            changed_modules,
             unresolved,
         }
+    }
+
+    /// Every drawn mark by its own id. The sheet and the chart both need it,
+    /// and both used to build it themselves — four identical `HashMap`s over
+    /// the same list.
+    pub(super) fn by_id(&self) -> HashMap<u32, &DataMark> {
+        self.marks.iter().map(|m| (m.id, m)).collect()
+    }
+
+    /// The frame one id names. Frames are indexed by their own id.
+    pub(super) fn frame(&self, id: u32) -> Option<&Frame> {
+        self.frames.get(id as usize)
     }
 }
 
@@ -687,28 +778,22 @@ fn contained(id: u32, kids: &HashMap<u32, Vec<u32>>) -> usize {
 
 impl DataModel {
     pub(in crate::views::data) fn build(graph: &CodeGraph, ref_dir: RefDir, folds: &Folds) -> Self {
-        // Ghosts share the marks' id space, continuing after `items`.
-        let ghost_of = |id: u32| -> Option<&GhostMark> {
-            (id as usize)
-                .checked_sub(graph.items.len())
-                .and_then(|at| graph.ghosts.get(at))
-        };
+        let ghost_of = |id: u32| -> Option<&GhostMark> { graph.ghost(id) };
         let kind_of = |id: u32| -> Option<ItemKind> {
             graph
-                .items
-                .get(id as usize)
-                .map(|m| m.kind)
-                .or_else(|| ghost_of(id).map(|g| g.kind))
+                .item(id)
+                .map(|m| m.head.kind)
+                .or_else(|| ghost_of(id).map(|g| g.head.kind))
         };
         let name_of = |id: u32| -> String {
             graph
                 .items
                 .get(id as usize)
-                .map(|m| m.name.clone())
-                .or_else(|| ghost_of(id).map(|g| g.name.clone()))
+                .map(|m| m.head.name.clone())
+                .or_else(|| ghost_of(id).map(|g| g.head.name.clone()))
                 .unwrap_or_default()
         };
-        let ghost_key = |g: &GhostMark| frame_key(&g.krate, &g.path);
+        let ghost_key = |g: &GhostMark| frame_key(&g.at.krate, &g.at.path);
 
         // ---- Which marks are drawn. -----------------------------------------
         // Every shape and every static, whatever its visibility: state does
@@ -719,9 +804,8 @@ impl DataModel {
             .iter()
             .map(|f| frame_key(&f.krate, &f.path))
             .collect();
-        let key_of = |mark: u32| -> Option<&FrameKey> {
-            file_key.get(graph.items[mark as usize].file as usize)
-        };
+        let key_of =
+            |mark: u32| -> Option<&FrameKey> { file_key.get(graph.item(mark)?.file as usize) };
         let fold_key = |key: &FrameKey| -> Option<FrameKey> {
             (0..=key.1.len())
                 .map(|cut| (key.0.clone(), key.1[..cut].to_vec()))
@@ -731,7 +815,7 @@ impl DataModel {
         let mut drawn: Vec<u32> = Vec::new();
         let mut packed: Vec<u32> = Vec::new();
         for (i, mark) in graph.items.iter().enumerate() {
-            if !mark.kind.is_data() || mark.parent.is_some() {
+            if !mark.head.kind.is_data() || mark.parent.is_some() {
                 continue;
             }
             let i = i as u32;
@@ -744,8 +828,11 @@ impl DataModel {
 
         // ---- Frames: one per crate, then the module tree inside it. ---------
         let framed_key = |key: FrameKey| -> FrameKey { fold_key(&key).unwrap_or(key) };
-        let data_ghosts: Vec<&GhostMark> =
-            graph.ghosts.iter().filter(|g| g.kind.is_data()).collect();
+        let data_ghosts: Vec<&GhostMark> = graph
+            .ghosts
+            .iter()
+            .filter(|g| g.head.kind.is_data())
+            .collect();
         let mut keys: Vec<FrameKey> = drawn
             .iter()
             .filter_map(|&m| key_of(m).cloned())
@@ -774,8 +861,10 @@ impl DataModel {
                 module: Vec::new(),
                 parent: None,
                 marks: Vec::new(),
-                folded: folds.contains(&mod_key(krate, &[])),
-                packed: 0,
+                fold: Fold {
+                    folded: folds.contains(&mod_key(krate, &[])),
+                    packed: 0,
+                },
                 forest: Vec::new(),
             });
             frame_index.insert((krate.clone(), Vec::new()), id);
@@ -794,8 +883,10 @@ impl DataModel {
                 module: key.1.clone(),
                 parent,
                 marks: Vec::new(),
-                folded: folds.contains(&mod_key(&key.0, &key.1)),
-                packed: 0,
+                fold: Fold {
+                    folded: folds.contains(&mod_key(&key.0, &key.1)),
+                    packed: 0,
+                },
                 forest: Vec::new(),
             });
             frame_index.insert(key.clone(), id);
@@ -816,18 +907,18 @@ impl DataModel {
         }
         for &m in &packed {
             if let Some(frame) = key_of(m).and_then(&fold_frame) {
-                frames[frame as usize].packed += 1;
+                frames[frame as usize].fold.packed += 1;
                 anchor_of[m as usize] = Some(Anchor::Mod(frame));
             }
         }
         for ghost in &data_ghosts {
             let key = ghost_key(ghost);
             if let Some(frame) = fold_frame(&key) {
-                frames[frame as usize].packed += 1;
-                anchor_of[ghost.id as usize] = Some(Anchor::Mod(frame));
+                frames[frame as usize].fold.packed += 1;
+                anchor_of[ghost.id() as usize] = Some(Anchor::Mod(frame));
             } else if let Some(&frame) = frame_index.get(&key) {
-                frames[frame as usize].marks.push(ghost.id);
-                anchor_of[ghost.id as usize] = Some(Anchor::Mark(ghost.id));
+                frames[frame as usize].marks.push(ghost.id());
+                anchor_of[ghost.id() as usize] = Some(Anchor::Mark(ghost.id()));
             }
         }
         let drawn_mark =
@@ -901,8 +992,10 @@ impl DataModel {
         let mut nest: HashMap<u32, u32> = HashMap::new();
         let mut ringed: HashSet<u32> = HashSet::new();
         for &id in &drawn {
-            let mark = &graph.items[id as usize];
-            if mark.kind == ItemKind::Static || vocab.contains(&id) {
+            let Some(mark) = graph.item(id) else {
+                continue;
+            };
+            if mark.head.kind == ItemKind::Static || vocab.contains(&id) {
                 continue;
             }
             let Some(home) = frame_of(id) else { continue };
@@ -946,8 +1039,10 @@ impl DataModel {
             }
         }
         let tier_of = |id: u32| -> Tier {
-            let mark = &graph.items[id as usize];
-            if mark.kind == ItemKind::Static {
+            let Some(mark) = graph.item(id) else {
+                return Tier::Root;
+            };
+            if mark.head.kind == ItemKind::Static {
                 return Tier::Root;
             }
             if let Some(&parent) = nest.get(&id) {
@@ -1042,7 +1137,7 @@ impl DataModel {
         // Every seat is a leaf: the nesting happens inside the blocks, not in
         // the frame's shelves.
         for frame in &mut frames {
-            if frame.folded {
+            if frame.fold.folded {
                 frame.forest = vec![Seat::leaf(Anchor::Mod(frame.id))];
                 continue;
             }
@@ -1083,7 +1178,7 @@ impl DataModel {
                 data_ghosts
                     .iter()
                     .filter(|g| fold_key(&ghost_key(g)).is_none())
-                    .map(|g| g.id),
+                    .map(|g| g.id()),
             )
             .collect();
         // Where a held type's block stands, by the key its URL uses, so the
@@ -1091,12 +1186,9 @@ impl DataModel {
         // for is bold text and nothing more, and so is a self-hold: the
         // reader is already standing in that block.
         let seat_of = |id: u32| -> Option<(String, String)> {
-            match graph.items.get(id as usize) {
-                Some(mark) => Some((
-                    graph.files.get(mark.file as usize)?.path.clone(),
-                    mark.label.clone(),
-                )),
-                None => ghost_of(id).map(|g| (g.path.clone(), g.name.clone())),
+            match graph.item(id) {
+                Some(mark) => Some((graph.path_of(mark)?.to_string(), mark.head.label.clone())),
+                None => ghost_of(id).map(|g| (g.at.path.clone(), g.head.name.clone())),
             }
         };
         let mut target_of: HashMap<(u32, String), Held> = HashMap::new();
@@ -1138,6 +1230,7 @@ impl DataModel {
         };
         let field_rows = |id: u32, mark: &ItemMark| -> Vec<FieldRow> {
             let mut fields: Vec<FieldRow> = mark
+                .body
                 .field_rows
                 .iter()
                 .enumerate()
@@ -1146,7 +1239,7 @@ impl DataModel {
                     decl: row.ty.clone(),
                     vis: row.vis,
                     target: target(id, &row.name),
-                    state: if mark.fields_added.contains(&(at as u32)) {
+                    state: if mark.diff.fields_added.contains(&(at as u32)) {
                         RowState::Added
                     } else {
                         RowState::Same
@@ -1154,6 +1247,7 @@ impl DataModel {
                 })
                 .collect();
             let mut dropped: Vec<(usize, FieldRow)> = mark
+                .diff
                 .fields_removed
                 .iter()
                 .map(|(before, row)| {
@@ -1174,6 +1268,7 @@ impl DataModel {
         };
         let variant_rows = |id: u32, mark: &ItemMark| -> Vec<FieldRow> {
             let mut variants: Vec<FieldRow> = mark
+                .body
                 .variants
                 .iter()
                 .enumerate()
@@ -1182,7 +1277,7 @@ impl DataModel {
                     decl: written.clone(),
                     vis: Vis::Private,
                     target: target(id, &vname(written)),
-                    state: if mark.variants_added.contains(&(at as u32)) {
+                    state: if mark.diff.variants_added.contains(&(at as u32)) {
                         RowState::Added
                     } else {
                         RowState::Same
@@ -1190,6 +1285,7 @@ impl DataModel {
                 })
                 .collect();
             let mut dropped: Vec<(usize, FieldRow)> = mark
+                .diff
                 .variants_removed
                 .iter()
                 .map(|(before, written)| {
@@ -1212,35 +1308,44 @@ impl DataModel {
         let mut marks: Vec<DataMark> = drawn
             .iter()
             .filter_map(|&id| {
-                let mark = &graph.items[id as usize];
+                let mark = graph.item(id)?;
                 let frame = frame_of(id)?;
-                let file = graph.files.get(mark.file as usize)?;
+                let file = graph.file(mark.file)?;
                 let tier = tier_of(id);
                 Some(DataMark {
                     id,
                     frame,
-                    kind: mark.kind,
-                    vis: mark.vis,
-                    name: mark.name.clone(),
-                    label: mark.label.clone(),
-                    path: file.path.clone(),
-                    line: mark.line,
-                    delta: mark.delta,
-                    ghost: false,
-                    fields: field_rows(id, mark),
-                    variants: variant_rows(id, mark),
-                    ty: mark.ty.clone(),
-                    ty_target: target(id, &mark.name),
-                    tier,
-                    kids: kids.get(&id).cloned().unwrap_or_default(),
-                    named_by: named_set.get(&id).map_or(0, |set| set.len() as u32),
-                    // The ties pass fills these in.
-                    used_by: Vec::new(),
-                    unseen_uses: Vec::new(),
-                    held_by: if vocab.contains(&id) {
-                        holders.get(&id).map_or(0, |set| set.len() as u32)
-                    } else {
-                        0
+                    head: MarkHead {
+                        kind: mark.head.kind,
+                        vis: mark.head.vis,
+                        name: mark.head.name.clone(),
+                        label: mark.head.label.clone(),
+                        path: file.path.clone(),
+                        line: mark.head.line,
+                    },
+                    rows: MarkRows {
+                        fields: field_rows(id, mark),
+                        variants: variant_rows(id, mark),
+                        ty: mark.body.ty.clone(),
+                        ty_target: target(id, &mark.head.name),
+                    },
+                    state: MarkState {
+                        delta: mark.diff.delta,
+                        ghost: false,
+                    },
+                    seat: MarkSeat {
+                        tier,
+                        kids: kids.get(&id).cloned().unwrap_or_default(),
+                        held_by: if vocab.contains(&id) {
+                            holders.get(&id).map_or(0, |set| set.len() as u32)
+                        } else {
+                            0
+                        },
+                    },
+                    // The ties pass fills in the two lists.
+                    undrawn: Undrawn {
+                        named_by: named_set.get(&id).map_or(0, |set| set.len() as u32),
+                        ..Undrawn::default()
                     },
                 })
             })
@@ -1254,46 +1359,54 @@ impl DataModel {
                 continue;
             };
             marks.push(DataMark {
-                id: ghost.id,
+                id: ghost.id(),
                 frame,
-                kind: ghost.kind,
-                vis: ghost.vis,
-                name: ghost.name.clone(),
-                label: ghost.name.clone(),
-                path: ghost.path.clone(),
-                line: ghost.line,
-                delta: Delta::Same,
-                ghost: true,
-                fields: ghost
-                    .field_rows
-                    .iter()
-                    .map(|row| FieldRow {
-                        name: row.name.clone(),
-                        decl: row.ty.clone(),
-                        vis: row.vis,
-                        target: target(ghost.id, &row.name),
-                        state: RowState::Same,
-                    })
-                    .collect(),
-                variants: ghost
-                    .variants
-                    .iter()
-                    .map(|written| FieldRow {
-                        name: String::new(),
-                        decl: written.clone(),
-                        vis: Vis::Private,
-                        target: target(ghost.id, &vname(written)),
-                        state: RowState::Same,
-                    })
-                    .collect(),
-                ty: ghost.ty.clone(),
-                ty_target: target(ghost.id, &ghost.name),
-                tier: Tier::Standing(Stand::Afar),
-                kids: Vec::new(),
-                named_by: 0,
-                used_by: Vec::new(),
-                unseen_uses: Vec::new(),
-                held_by: 0,
+                head: MarkHead {
+                    kind: ghost.head.kind,
+                    vis: ghost.head.vis,
+                    name: ghost.head.name.clone(),
+                    label: ghost.head.name.clone(),
+                    path: ghost.at.path.clone(),
+                    line: ghost.head.line,
+                },
+                rows: MarkRows {
+                    fields: ghost
+                        .body
+                        .field_rows
+                        .iter()
+                        .map(|row| FieldRow {
+                            name: row.name.clone(),
+                            decl: row.ty.clone(),
+                            vis: row.vis,
+                            target: target(ghost.id(), &row.name),
+                            state: RowState::Same,
+                        })
+                        .collect(),
+                    variants: ghost
+                        .body
+                        .variants
+                        .iter()
+                        .map(|written| FieldRow {
+                            name: String::new(),
+                            decl: written.clone(),
+                            vis: Vis::Private,
+                            target: target(ghost.id(), &vname(written)),
+                            state: RowState::Same,
+                        })
+                        .collect(),
+                    ty: ghost.body.ty.clone(),
+                    ty_target: target(ghost.id(), &ghost.head.name),
+                },
+                state: MarkState {
+                    delta: Delta::Same,
+                    ghost: true,
+                },
+                seat: MarkSeat {
+                    tier: Tier::Standing(Stand::Afar),
+                    kids: Vec::new(),
+                    held_by: 0,
+                },
+                undrawn: Undrawn::default(),
             });
         }
 
@@ -1311,28 +1424,16 @@ impl DataModel {
         let mut unseen_out: HashMap<u32, HashMap<u32, u32>> = HashMap::new();
         let row_of: HashMap<u32, (u32, String)> = drawn
             .iter()
-            .filter_map(|&id| Some((id, graph.items.get(id as usize)?)))
+            .filter_map(|&id| Some((id, graph.item(id)?)))
             .flat_map(|(id, mark)| {
-                mark.method_rows
+                mark.body
+                    .method_rows
                     .iter()
                     .map(move |row| (row.mark, (id, row.name.clone())))
             })
             .collect();
         let mut rows_acc: HashMap<(u32, u32), HashMap<String, u32>> = HashMap::new();
-        let cross = graph
-            .item_edges
-            .iter()
-            .map(|e| (e.from, e.to, e.count))
-            .chain(
-                graph
-                    .local_refs
-                    .iter()
-                    .map(|r| (Some(r.from), Some(r.to), r.count)),
-            );
-        for (from, to, count) in cross {
-            let (Some(from), Some(to)) = (from, to) else {
-                continue;
-            };
+        for &MarkRef { from, to, count } in &graph.refs {
             let (user, def) = (containment.root(from), containment.root(to));
             if user == def {
                 continue;
@@ -1429,53 +1530,9 @@ impl DataModel {
             ends
         };
         for mark in &mut marks {
-            mark.used_by = unseen_ends(unseen_in.get(&mark.id));
-            mark.unseen_uses = unseen_ends(unseen_out.get(&mark.id));
+            mark.undrawn.used_by = unseen_ends(unseen_in.get(&mark.id));
+            mark.undrawn.unseen_uses = unseen_ends(unseen_out.get(&mark.id));
         }
-        // ---- Facts. -----------------------------------------------------------
-        let current = |m: &&DataMark| !m.ghost;
-        let structs = marks
-            .iter()
-            .filter(current)
-            .filter(|m| m.kind == ItemKind::Struct)
-            .count();
-        let enums = marks
-            .iter()
-            .filter(current)
-            .filter(|m| m.kind == ItemKind::Enum)
-            .count();
-        let unions = marks
-            .iter()
-            .filter(current)
-            .filter(|m| m.kind == ItemKind::Union)
-            .count();
-        let statics = marks
-            .iter()
-            .filter(current)
-            .filter(|m| m.kind == ItemKind::Static)
-            .count();
-        let roots = marks.iter().filter(current).filter(|m| m.is_root()).count();
-        let nested = marks
-            .iter()
-            .filter(current)
-            .filter(|m| matches!(m.tier, Tier::Nested(_)))
-            .count();
-        let standing = marks
-            .iter()
-            .filter(current)
-            .filter(|m| matches!(m.tier, Tier::Standing(_)))
-            .count();
-        let added = marks.iter().filter(|m| m.delta == Delta::Added).count();
-        let removed = marks.iter().filter(|m| m.ghost).count();
-        let changed = marks.iter().filter(|m| m.delta == Delta::Changed).count();
-        let mut changed_modules: Vec<String> = marks
-            .iter()
-            .filter(|m| m.letter().is_some())
-            .map(|m| frames[m.frame as usize].words())
-            .collect();
-        changed_modules.sort();
-        changed_modules.dedup();
-
         let multi_crate = crates.len() > 1;
         Self {
             frames,
@@ -1485,17 +1542,6 @@ impl DataModel {
             ties,
             naming,
             multi_crate,
-            structs,
-            enums,
-            unions,
-            statics,
-            roots,
-            nested,
-            standing,
-            added,
-            removed,
-            changed,
-            changed_modules,
         }
     }
 }
@@ -1525,11 +1571,12 @@ pub(in crate::views::data) mod tests {
         assert!(module_path("crates/engine/src/lib.rs").is_empty());
         assert_eq!(module_path("crates/engine/src/parse/lex.rs"), ["parse"]);
     }
-    use crate::graph::data::{DeclRow, FileInfo, HoldEdge, MarkRef, Vis};
+    use crate::graph::data::{
+        DeclBody, DeclDiff, DeclHead, DeclRow, FileInfo, HoldEdge, Limits, Reach, Vis,
+    };
 
-    pub(in crate::views::data) fn file(id: u32, path: &str) -> FileInfo {
+    pub(in crate::views::data) fn file(path: &str) -> FileInfo {
         FileInfo {
-            id,
             path: path.to_string(),
             krate: "slope".to_string(),
         }
@@ -1539,26 +1586,17 @@ pub(in crate::views::data) mod tests {
         ItemMark {
             id,
             file,
-            local: id,
-            name: name.to_string(),
-            label: name.to_string(),
-            kind,
-            vis: Vis::Private,
-            line: id + 1,
             parent: None,
-            fan_in: 0,
-            impls: Vec::new(),
-            field_rows: Vec::new(),
-            variants: Vec::new(),
-            ty: String::new(),
-            delta: Delta::Same,
-            fields_added: Vec::new(),
-            fields_removed: Vec::new(),
-            variants_added: Vec::new(),
-            variants_removed: Vec::new(),
-            method_rows: Vec::new(),
-            methods_added: Vec::new(),
-            methods_removed: Vec::new(),
+            head: DeclHead {
+                name: name.to_string(),
+                label: name.to_string(),
+                kind,
+                vis: Vis::Private,
+                line: id + 1,
+            },
+            body: DeclBody::default(),
+            reach: Reach::default(),
+            diff: DeclDiff::default(),
         }
     }
 
@@ -1576,28 +1614,22 @@ pub(in crate::views::data) mod tests {
 
     pub(in crate::views::data) fn graph(items: Vec<ItemMark>, holds: Vec<HoldEdge>) -> CodeGraph {
         CodeGraph {
-            files: vec![
-                file(0, "src/graph/data.rs"),
-                file(1, "src/views/dep/map.rs"),
-            ],
+            files: vec![file("src/graph/data.rs"), file("src/views/dep/map.rs")],
             items,
             implements: Vec::new(),
-            item_edges: Vec::new(),
-            local_refs: Vec::new(),
+            refs: Vec::new(),
             holds,
             ghosts: Vec::new(),
-            unresolved: 0,
-            notes: Vec::new(),
-            walk_notes: Vec::new(),
+            limits: Limits::default(),
         }
     }
 
-    pub(crate) fn build(graph: &CodeGraph) -> DataModel {
+    pub(in crate::views::data) fn build(graph: &CodeGraph) -> DataModel {
         DataModel::build(graph, RefDir::default(), &Folds::new())
     }
 
     pub(in crate::views::data) fn by_name<'a>(model: &'a DataModel, name: &str) -> &'a DataMark {
-        model.marks.iter().find(|m| m.name == name).unwrap()
+        model.marks.iter().find(|m| m.head.name == name).unwrap()
     }
 
     #[test]
@@ -1610,9 +1642,9 @@ pub(in crate::views::data) mod tests {
             vec![owns(0, 1)],
         );
         let model = build(&g);
-        assert_eq!(by_name(&model, "Wire").tier, Tier::Root);
-        assert_eq!(by_name(&model, "Nut").tier, Tier::Nested(0));
-        assert_eq!(by_name(&model, "Wire").kids, vec![1]);
+        assert_eq!(by_name(&model, "Wire").seat.tier, Tier::Root);
+        assert_eq!(by_name(&model, "Nut").seat.tier, Tier::Nested(0));
+        assert_eq!(by_name(&model, "Wire").seat.kids, vec![1]);
         // The nesting is the ownership: no line restates it.
         assert!(model.holds.is_empty());
         // The blast radius still walks it.
@@ -1632,25 +1664,25 @@ pub(in crate::views::data) mod tests {
             ],
             vec![owns(0, 1)],
         );
-        g.items[0].field_rows = vec![DeclRow {
+        g.items[0].body.field_rows = vec![DeclRow {
             name: "field".into(),
             ty: "Vec<Nut>".into(),
             vis: Vis::Private,
         }];
         let model = build(&g);
-        let held = by_name(&model, "Wire").fields[0].target.clone();
+        let held = by_name(&model, "Wire").rows.fields[0].target.clone();
         assert_eq!(held.name, "Nut");
         assert_eq!(held.at, Some(mark_route("src/views/dep/map.rs", "Nut")));
 
         // A shape that holds itself: the link would go where the reader is.
         let mut g = graph(vec![mark(0, 0, "Node", ItemKind::Struct)], vec![owns(0, 0)]);
-        g.items[0].field_rows = vec![DeclRow {
+        g.items[0].body.field_rows = vec![DeclRow {
             name: "field".into(),
             ty: "Option<Box<Node>>".into(),
             vis: Vis::Private,
         }];
         let model = build(&g);
-        let held = by_name(&model, "Node").fields[0].target.clone();
+        let held = by_name(&model, "Node").rows.fields[0].target.clone();
         assert_eq!(held.name, "Node");
         assert_eq!(held.at, None);
     }
@@ -1664,13 +1696,13 @@ pub(in crate::views::data) mod tests {
             ],
             vec![owns(0, 1)],
         );
-        g.items[0].kind = ItemKind::Fn;
+        g.items[0].head.kind = ItemKind::Fn;
         let model = build(&g);
         // The fn has no block; the struct is a root, its naming counted.
         assert_eq!(model.marks.len(), 1);
         let wire = by_name(&model, "Wire");
-        assert_eq!(wire.tier, Tier::Root);
-        assert_eq!(wire.named_by, 1);
+        assert_eq!(wire.seat.tier, Tier::Root);
+        assert_eq!(wire.undrawn.named_by, 1);
         assert!(model.holds.is_empty());
     }
 
@@ -1688,7 +1720,7 @@ pub(in crate::views::data) mod tests {
         );
         let model = build(&g);
         assert_eq!(
-            by_name(&model, "Config").tier,
+            by_name(&model, "Config").seat.tier,
             Tier::Standing(Stand::Shared)
         );
         assert_eq!(model.holds.len(), 1);
@@ -1707,7 +1739,10 @@ pub(in crate::views::data) mod tests {
         let model = build(&g);
         // `Atlas` frames in `views`, `Wire` in `api`: ownership crosses the
         // boundary, so it stays drawn ink and the held type stands.
-        assert_eq!(by_name(&model, "Wire").tier, Tier::Standing(Stand::Afar));
+        assert_eq!(
+            by_name(&model, "Wire").seat.tier,
+            Tier::Standing(Stand::Afar)
+        );
         assert_eq!(model.holds.len(), 1);
     }
 
@@ -1724,7 +1759,7 @@ pub(in crate::views::data) mod tests {
             vec![edge],
         );
         let model = build(&g);
-        assert_eq!(by_name(&model, "Wire").tier, Tier::Root);
+        assert_eq!(by_name(&model, "Wire").seat.tier, Tier::Root);
         // The borrow is still drawn: a view is a line, not a container.
         assert_eq!(model.holds.len(), 1);
         assert_eq!(model.holds[0].via, "&");
@@ -1743,14 +1778,14 @@ pub(in crate::views::data) mod tests {
         let nested = model
             .marks
             .iter()
-            .filter(|m| matches!(m.tier, Tier::Nested(_)))
+            .filter(|m| matches!(m.seat.tier, Tier::Nested(_)))
             .count();
         assert_eq!(nested, 1);
         assert_eq!(
             model
                 .marks
                 .iter()
-                .filter(|m| m.tier == Tier::Standing(Stand::Ring))
+                .filter(|m| m.seat.tier == Tier::Standing(Stand::Ring))
                 .count(),
             1
         );
@@ -1769,8 +1804,8 @@ pub(in crate::views::data) mod tests {
         let g = graph(items, holds);
         let model = build(&g);
         let placed = by_name(&model, "Placed");
-        assert_eq!(placed.tier, Tier::Standing(Stand::Vocab));
-        assert_eq!(placed.held_by, 5);
+        assert_eq!(placed.seat.tier, Tier::Standing(Stand::Vocab));
+        assert_eq!(placed.seat.held_by, 5);
         // The edges exist but rest folded; hover and selection ink them in.
         assert_eq!(model.holds.len(), 5);
         assert!(model.holds.iter().all(|h| !h.rest));
@@ -1782,12 +1817,12 @@ pub(in crate::views::data) mod tests {
             mark(0, 0, "CACHE", ItemKind::Static),
             mark(1, 0, "Trail", ItemKind::Struct),
         ];
-        items[0].ty = "Mutex<Trail>".into();
+        items[0].body.ty = "Mutex<Trail>".into();
         let g = graph(items, vec![owns(0, 1)]);
         let model = build(&g);
-        assert_eq!(by_name(&model, "CACHE").tier, Tier::Root);
-        assert_eq!(by_name(&model, "Trail").tier, Tier::Nested(0));
-        assert_eq!(by_name(&model, "CACHE").kids, vec![1]);
+        assert_eq!(by_name(&model, "CACHE").seat.tier, Tier::Root);
+        assert_eq!(by_name(&model, "Trail").seat.tier, Tier::Nested(0));
+        assert_eq!(by_name(&model, "CACHE").seat.kids, vec![1]);
     }
 
     #[test]
@@ -1800,7 +1835,7 @@ pub(in crate::views::data) mod tests {
             ],
             vec![],
         );
-        g.local_refs = vec![
+        g.refs = vec![
             MarkRef {
                 from: 0,
                 to: 1,
@@ -1815,8 +1850,11 @@ pub(in crate::views::data) mod tests {
         let model = build(&g);
         let wire = by_name(&model, "Wire");
         // The fn keeps its own row on the mark; the type's draw a tie.
-        assert_eq!(wire.used_by.len(), 1);
-        assert_eq!((wire.used_by[0].item, wire.used_by[0].count), (0, 4));
+        assert_eq!(wire.undrawn.used_by.len(), 1);
+        assert_eq!(
+            (wire.undrawn.used_by[0].item, wire.undrawn.used_by[0].count),
+            (0, 4)
+        );
         assert_eq!(model.ties.len(), 1);
         assert_eq!(model.ties[0].count, 2);
     }
@@ -1834,8 +1872,8 @@ pub(in crate::views::data) mod tests {
         );
         let model = build(&g);
         let nut = by_name(&model, "Nut");
-        assert_eq!(nut.tier, Tier::Root);
-        assert_eq!(nut.named_by, 1);
+        assert_eq!(nut.seat.tier, Tier::Root);
+        assert_eq!(nut.undrawn.named_by, 1);
         assert!(model.holds.is_empty());
     }
 
@@ -1873,7 +1911,7 @@ pub(in crate::views::data) mod tests {
         let model = build(&g);
         // The kid's own letter and the holder's `+` row tell the diff; a
         // flare line into the block it is drawn inside would say it twice.
-        assert_eq!(by_name(&model, "Nut").tier, Tier::Nested(0));
+        assert_eq!(by_name(&model, "Nut").seat.tier, Tier::Nested(0));
         assert!(model.holds.is_empty());
     }
 

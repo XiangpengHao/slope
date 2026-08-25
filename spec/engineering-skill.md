@@ -11,4 +11,37 @@
 
 - organize the code by features, not by technical buckets, e.g., don't have `api.rs`, `views.rs`, `data.rs`, etc. Instead, do `settings.rs`, `data_panel.rs`, `code_map.rs`, etc.
 
-- No static variables, no exceptions.
+- No static variables.
+
+- Don't use large unconstrained struct constructions, e.g., following code is ugly and error prone.
+Maybe there're invariants we want to enforce, but this code allows any fields to be set.
+```rust
+ghost_nodes.push(CrateInfo {
+                            id: ghost_id.clone(),
+                            name: ev.name.clone(),
+                            version: ev.detail.clone().unwrap_or_default(),
+                            is_member: false,
+                            changed: false,
+                            changed_files: 0,
+                            manifest_changed: false,
+                            affected_dist: None,
+                            dependents: 0,
+                            direct_deps: 0,
+                            external_deps: 0,
+                            ghost: true,
+                            description: None,
+                            license: None,
+                            repository: None,
+                            homepage: None,
+                            documentation: None,
+                            // A removed dependency's manifest is gone with
+                            // it; the name is all we know.
+                            crates_io: false,
+                            rel_path: None,
+                        });
+```
+Instead, we use use a much narrower constructor, with new(arg1, arg2, arg3), and check and enforce the invariants.
+
+- Typically a function should not have more than 3 parameters (including self if it is a member method). If it does, it is a sign of either too large function body, or a container struct should hold the parameters. 
+
+- A struct should not have more than 7 fields, more than that adds cognitive burden. Use private structs to group related fields.

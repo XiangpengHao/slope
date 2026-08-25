@@ -16,7 +16,7 @@ use dioxus_flow::prelude::{
     Point, Rect, Side, Size,
 };
 
-use crate::graph::dep::{CrateInfo, DepEvent, DepKind, DepGraph};
+use crate::graph::dep::{CrateInfo, DepEvent, DepGraph, DepKind};
 use crate::views::chrome::{narrow_viewport, prefers_reduced_motion, window_size};
 use crate::views::dep::layout::{DEFAULT_CAP, RadialLayout};
 use crate::views::dep::star::{StarData, StarNode};
@@ -149,8 +149,8 @@ impl DepDrawing {
         let sel_ids: HashSet<&str> = graph
             .crates
             .iter()
-            .filter(|c| !c.ghost && sel.contains(c.name.as_str()))
-            .map(|c| c.id.as_str())
+            .filter(|c| !c.ghost && sel.contains(c.at.name.as_str()))
+            .map(|c| c.at.id.as_str())
             .collect();
 
         // "Path to root" draws a whole chain of crates, so it needs the
@@ -246,22 +246,21 @@ impl DepDrawing {
         let mut named: HashSet<&str> = graph
             .crates
             .iter()
-            .filter(|c| c.is_member || c.changed || c.ghost || c.affected_dist.is_some())
-            .map(|c| c.id.as_str())
+            .filter(|c| {
+                c.at.is_member || c.is_changed() || c.ghost || c.standing.affected_dist.is_some()
+            })
+            .map(|c| c.at.id.as_str())
             .collect();
         for id in &hood {
-            if let Some(c) = graph.crates.iter().find(|c| &c.id == id) {
-                named.insert(c.id.as_str());
+            if let Some(c) = graph.crate_at(id) {
+                named.insert(c.at.id.as_str());
             }
         }
-        let mut landmarks: Vec<&CrateInfo> = graph
-            .crates
-            .iter()
-            .filter(|c| !c.is_member && !c.ghost)
-            .collect();
-        landmarks.sort_by_key(|c| (std::cmp::Reverse(c.dependents), c.name.as_str()));
+        let mut landmarks: Vec<&CrateInfo> =
+            graph.crates.iter().filter(|c| c.is_external()).collect();
+        landmarks.sort_by_key(|c| (std::cmp::Reverse(c.standing.dependents), c.at.name.as_str()));
         for c in landmarks.into_iter().take(NAMED_EXTERNALS) {
-            named.insert(c.id.as_str());
+            named.insert(c.at.id.as_str());
         }
 
         // A crate name can resolve to several versions at once (cargo keeps a
@@ -270,8 +269,8 @@ impl DepDrawing {
         // looks like it was drawn twice.
         let mut seen_names: HashMap<&str, u32> = HashMap::new();
         for c in graph.crates.iter().filter(|c| !c.ghost) {
-            if layout.placed.contains_key(&c.id) {
-                *seen_names.entry(c.name.as_str()).or_default() += 1;
+            if layout.placed.contains_key(&c.at.id) {
+                *seen_names.entry(c.at.name.as_str()).or_default() += 1;
             }
         }
 
@@ -279,8 +278,8 @@ impl DepDrawing {
             .crates
             .iter()
             .filter_map(|c| {
-                let p = layout.placed.get(&c.id)?;
-                let focal = !c.ghost && sel.contains(c.name.as_str());
+                let p = layout.placed.get(&c.at.id)?;
+                let focal = !c.ghost && sel.contains(c.at.name.as_str());
                 let b = c.star_box();
                 let (ux, uy) = if p.ring == 0 {
                     (0.0, 1.0)
@@ -289,8 +288,8 @@ impl DepDrawing {
                 };
                 Some(
                     FlowNode::with_data(
-                        c.id.clone(),
-                        c.name.clone(),
+                        c.at.id.clone(),
+                        c.at.name.clone(),
                         (p.point.x - b / 2.0, p.point.y - b / 2.0),
                         StarData {
                             info: c.clone(),
@@ -298,8 +297,8 @@ impl DepDrawing {
                             ux,
                             uy,
                             focal,
-                            named: named.contains(c.id.as_str()),
-                            versioned: seen_names.get(c.name.as_str()).is_some_and(|n| *n > 1),
+                            named: named.contains(c.at.id.as_str()),
+                            versioned: seen_names.get(c.at.name.as_str()).is_some_and(|n| *n > 1),
                         },
                     )
                     .size(Size::new(b, b))
@@ -626,12 +625,12 @@ document.addEventListener('keydown', window.__slopeKeys);
 /// reader was just looking at, an expansion after a return could only be
 /// drawn as a jump.
 #[derive(Clone, Copy)]
-pub(crate) struct DrawnCap {
-    pub(crate) cap: Signal<Option<u32>>,
+pub(in crate::views) struct DrawnCap {
+    pub(in crate::views) cap: Signal<Option<u32>>,
 }
 
 impl DrawnCap {
-    pub(crate) fn new() -> Self {
+    pub(in crate::views) fn new() -> Self {
         Self {
             cap: Signal::new(None),
         }
@@ -658,8 +657,8 @@ pub(super) fn Chart(graph: DepGraph) -> Element {
             let base = base.read();
             let mut hops: HashMap<String, u32> = HashMap::new();
             for c in graph.crates.iter().filter(|c| !c.ghost) {
-                if let Some(p) = base.placed.get(&c.id) {
-                    let e = hops.entry(c.name.clone()).or_insert(0);
+                if let Some(p) = base.placed.get(&c.at.id) {
+                    let e = hops.entry(c.at.name.clone()).or_insert(0);
                     *e = (*e).max(p.hops);
                 }
             }
@@ -730,8 +729,8 @@ pub(super) fn Chart(graph: DepGraph) -> Element {
                 graph
                     .crates
                     .iter()
-                    .find(|c| c.id == id)
-                    .map(|c| c.name.clone())
+                    .find(|c| c.at.id == id)
+                    .map(|c| c.at.name.clone())
             })
         }
     });
@@ -744,8 +743,8 @@ pub(super) fn Chart(graph: DepGraph) -> Element {
                 .crates
                 .iter()
                 .filter_map(|c| {
-                    let p = layout.placed.get(&c.id)?;
-                    Some((c.id.clone(), (p.point, c.star_radius())))
+                    let p = layout.placed.get(&c.at.id)?;
+                    Some((c.at.id.clone(), (p.point, c.star_radius())))
                 })
                 .collect::<HashMap<String, (Point, f64)>>()
         }
@@ -766,9 +765,10 @@ pub(super) fn Chart(graph: DepGraph) -> Element {
                             .crates
                             .iter()
                             .filter(|c| {
-                                !c.ghost && layout.placed.get(&c.id).is_some_and(|p| p.ring == hop)
+                                !c.ghost
+                                    && layout.placed.get(&c.at.id).is_some_and(|p| p.ring == hop)
                             })
-                            .map(|c| c.name.clone())
+                            .map(|c| c.at.name.clone())
                             .collect();
                         names.sort();
                         names.dedup();
@@ -845,8 +845,8 @@ pub(super) fn Chart(graph: DepGraph) -> Element {
             let mut names: Vec<String> = graph
                 .crates
                 .iter()
-                .filter(|c| c.changed)
-                .map(|c| c.name.clone())
+                .filter(|c| c.is_changed())
+                .map(|c| c.at.name.clone())
                 .collect();
             names.sort();
             names
@@ -943,30 +943,20 @@ pub(super) fn Chart(graph: DepGraph) -> Element {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::dep::{DepLink, Epoch};
+    use crate::graph::dep::{CrateAt, DepLink, Epoch, Standing, Words};
 
     fn krate(id: &str) -> CrateInfo {
-        CrateInfo {
-            id: id.to_string(),
-            name: id.split('@').next().unwrap().to_string(),
-            version: "1.0.0".to_string(),
-            is_member: false,
-            changed: false,
-            changed_files: 0,
-            manifest_changed: false,
-            affected_dist: None,
-            dependents: 0,
-            direct_deps: 0,
-            external_deps: 0,
-            ghost: false,
-            description: None,
-            license: None,
-            repository: None,
-            homepage: None,
-            documentation: None,
-            crates_io: false,
-            rel_path: None,
-        }
+        CrateInfo::resolved(
+            CrateAt {
+                id: id.to_string(),
+                name: id.split('@').next().unwrap().to_string(),
+                version: "1.0.0".to_string(),
+                is_member: false,
+                rel_path: None,
+            },
+            Words::default(),
+            Standing::default(),
+        )
     }
 
     fn link(from: &str, to: &str, event: Option<DepEvent>) -> DepLink {
@@ -981,7 +971,6 @@ mod tests {
     fn graph(names: &[&str], links: Vec<DepLink>) -> DepGraph {
         DepGraph {
             name: "test".into(),
-            root: "/test".into(),
             root_crate: Some("root@1.0.0".into()),
             epoch: Epoch {
                 base: "base".into(),

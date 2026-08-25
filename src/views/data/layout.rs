@@ -24,14 +24,14 @@ use crate::views::data::model::{Anchor, Frame, Seat};
 /// One placed box on the paper.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub(super) struct Placed {
-    pub(crate) x: f64,
-    pub(crate) y: f64,
-    pub(crate) w: f64,
-    pub(crate) h: f64,
+    pub(super) x: f64,
+    pub(super) y: f64,
+    pub(super) w: f64,
+    pub(super) h: f64,
 }
 
 impl Placed {
-    pub(crate) fn center(&self) -> Point {
+    pub(super) fn center(&self) -> Point {
         Point::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
     }
 
@@ -39,7 +39,7 @@ impl Placed {
     /// on open paper instead of crossing its own block. It lives with the box
     /// because it is a fact about two boxes, not about either ink drawn
     /// between them.
-    pub(crate) fn tie_ends(self, other: Self) -> (Point, Point) {
+    pub(super) fn tie_ends(self, other: Self) -> (Point, Point) {
         let (ac, bc) = (self.center(), other.center());
         if (ac.x - bc.x).abs() > (ac.y - bc.y).abs() {
             let left = ac.x < bc.x;
@@ -78,21 +78,21 @@ const MIN_FRAME_W: f64 = 160.0;
 #[derive(Clone, PartialEq, Debug, Default)]
 pub(super) struct Sizes {
     /// Every drawn mark's block, by mark id.
-    pub(crate) marks: HashMap<u32, (f64, f64)>,
+    pub(super) marks: HashMap<u32, (f64, f64)>,
     /// Every counted fold row, by the anchor it carries.
-    pub(crate) rows: HashMap<Anchor, (f64, f64)>,
+    pub(super) rows: HashMap<Anchor, (f64, f64)>,
     /// The width each frame's engraved label needs on its border.
-    pub(crate) labels: HashMap<u32, f64>,
+    pub(super) labels: HashMap<u32, f64>,
 }
 
 /// The whole chart, placed and centered on the flow origin.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub(super) struct DataLayout {
-    pub(crate) marks: HashMap<u32, Placed>,
-    pub(crate) rows: HashMap<Anchor, Placed>,
+    pub(super) marks: HashMap<u32, Placed>,
+    pub(super) rows: HashMap<Anchor, Placed>,
     /// Outermost first, so a nested tint lays over its parent's.
-    pub(crate) frames: Vec<(u32, Placed)>,
-    pub(crate) size: (f64, f64),
+    pub(super) frames: Vec<(u32, Placed)>,
+    pub(super) size: (f64, f64),
 }
 
 /// One thing a shelf seats: a tidied tree out of a frame's forest, or a nested
@@ -327,7 +327,7 @@ impl Frame {
 
 impl DataLayout {
     /// Lay every frame and every mark, centered on the flow origin.
-    pub(crate) fn build(frames: &[Frame], sizes: &Sizes) -> Self {
+    pub(super) fn build(frames: &[Frame], sizes: &Sizes) -> Self {
         // The crate frames, side by side on the sheet.
         let sheet: Vec<(Kid, f64, f64)> = frames
             .iter()
@@ -390,8 +390,7 @@ mod tests {
             module: module.iter().map(|s| (*s).to_string()).collect(),
             parent,
             marks: marks.to_vec(),
-            folded: false,
-            packed: 0,
+            fold: crate::views::data::model::Fold::default(),
             forest: marks.iter().map(|&m| Seat::leaf(Anchor::Mark(m))).collect(),
         }
     }

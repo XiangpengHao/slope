@@ -60,44 +60,44 @@ pub(super) struct Holder {
     /// The [`crate::graph::data::ItemMark::id`] the rows and the edges belong to. For
     /// a method that is its *type's* mark: a method is a clause of the type's
     /// contract, never a landmark of its own.
-    pub(crate) mark: u32,
-    pub(crate) kind: ItemKind,
+    pub(super) mark: u32,
+    pub(super) kind: ItemKind,
     /// Index into the survey's file list. An impl block can sit in a file the
     /// type does not, so this is the method's own file, not the type's.
-    pub(crate) file: u32,
+    pub(super) file: u32,
     /// The item's own source range — how the survey names a syntax node.
-    pub(crate) range: TextRange,
+    pub(super) range: TextRange,
     /// Set when this holder is one method of `mark`.
-    pub(crate) method: Option<MethodOf>,
+    pub(super) method: Option<MethodOf>,
 }
 
 /// What the survey knows about a method that its own source does not say: who
 /// declares it, and whether it arrived through a trait.
 pub(super) struct MethodOf {
     /// The method's own mark.
-    pub(crate) mark: u32,
+    pub(super) mark: u32,
     /// The impl block it is written under, as the survey headers one — `impl
     /// Vis`, `impl Clone for Vis`, `trait Held`. The one fact a method's own
     /// source cannot state, and what tells a type's own API from a contract it
     /// promises.
-    pub(crate) section: String,
+    pub(super) section: String,
 }
 
 /// What the walk found. Everything but `holds` is indexed by mark id, so the
 /// survey can lift it straight onto the [`crate::graph::data::ItemMark`]s.
 pub(super) struct DataWalk {
     /// Holding edges, aggregated per (from, to, kind, via, rows) and sorted.
-    pub(crate) holds: Vec<HoldEdge>,
+    pub(super) holds: Vec<HoldEdge>,
     /// A struct's or union's fields — or a free function's parameters —
     /// quoted in declaration order: (name as written, declared type as
     /// written).
-    pub(crate) field_rows: Vec<Vec<DeclRow>>,
+    pub(super) field_rows: Vec<Vec<DeclRow>>,
     /// An enum's variants as written — name, payload, discriminant.
-    pub(crate) variants: Vec<Vec<String>>,
+    pub(super) variants: Vec<Vec<String>>,
     /// A static's declared type or a free function's return type, as written.
-    pub(crate) ty: Vec<String>,
+    pub(super) ty: Vec<String>,
     /// A type's methods, in the survey's order, quoted as written.
-    pub(crate) method_rows: Vec<Vec<MethodRow>>,
+    pub(super) method_rows: Vec<Vec<MethodRow>>,
 }
 
 /// Where a wrapper has to be defined to count as one. A type the reviewer

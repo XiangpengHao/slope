@@ -33,14 +33,14 @@ impl DataFacts {
     /// The structural diff's own line: only what happened, in git's order.
     fn diff_words(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
-        if self.added > 0 {
-            parts.push(format!("{} added", self.added));
+        if self.diff.added > 0 {
+            parts.push(format!("{} added", self.diff.added));
         }
-        if self.removed > 0 {
-            parts.push(format!("{} removed", self.removed));
+        if self.diff.removed > 0 {
+            parts.push(format!("{} removed", self.diff.removed));
         }
-        if self.changed > 0 {
-            parts.push(format!("{} changed", self.changed));
+        if self.diff.changed > 0 {
+            parts.push(format!("{} changed", self.diff.changed));
         }
         parts.join(" · ")
     }
@@ -66,12 +66,12 @@ pub(super) fn DataCartouche(
     let insight = insight(&facts.changed_modules);
     let kinds = {
         let mut parts = vec![
-            plural(facts.structs, "struct"),
-            plural(facts.enums, "enum"),
-            plural(facts.statics, "static"),
+            plural(facts.kinds.structs, "struct"),
+            plural(facts.kinds.enums, "enum"),
+            plural(facts.kinds.statics, "static"),
         ];
-        if facts.unions > 0 {
-            parts.insert(2, plural(facts.unions, "union"));
+        if facts.kinds.unions > 0 {
+            parts.insert(2, plural(facts.kinds.unions, "union"));
         }
         parts.join(" · ")
     };
@@ -359,44 +359,48 @@ type UsesRow<'a> = (&'a Anchor, u32, &'a [(String, u32)]);
 impl DataModel {
     /// The rows one side of a selection draws, from each relation's far end.
     fn hold_rows(&self, holds: Vec<(&Anchor, HoldKind, &str, Option<HoldEvent>)>) -> Vec<HoldRow> {
-        let by_id: std::collections::HashMap<u32, &DataMark> =
-            self.marks.iter().map(|m| (m.id, m)).collect();
+        let by_id = self.by_id();
         holds
             .into_iter()
-            .map(|(anchor, kind, via, event)| {
+            .filter_map(|(anchor, kind, via, event)| {
                 let event = event.map(HoldEvent::word);
                 match anchor {
                     Anchor::Mark(id) => {
                         let mark = by_id.get(id);
-                        HoldRow {
-                            to: mark.map(|m| mark_route(&m.path, &m.label)),
-                            decl: mark.map(|m| m.kind.decl_words(m.vis)).unwrap_or_default(),
-                            name: mark.map(|m| m.name.clone()).unwrap_or_default(),
+                        Some(HoldRow {
+                            to: mark.map(|m| mark_route(&m.head.path, &m.head.label)),
+                            decl: mark
+                                .map(|m| m.head.kind.decl_words(m.head.vis))
+                                .unwrap_or_default(),
+                            name: mark.map(|m| m.head.name.clone()).unwrap_or_default(),
                             letter: mark.and_then(|m| m.letter()),
                             word: kind.word(via),
                             event,
                             hint: None,
                             peek: None,
-                        }
+                        })
                     }
                     Anchor::Mod(frame) => {
                         // A folded module is the only counted row this chart
                         // leaves, and the row can be selected, so it is a link.
-                        let frame = &self.frames[*frame as usize];
+                        let frame = self.frame(*frame)?;
                         let place = match frame.module.is_empty() {
                             true => frame.krate.clone(),
                             false => format!("mod {}", frame.words()),
                         };
-                        HoldRow {
+                        Some(HoldRow {
                             to: Some(mod_route(frame.key())),
                             decl: String::new(),
-                            name: format!("+ {} · {place}", plural(frame.packed as usize, "item")),
+                            name: format!(
+                                "+ {} · {place}",
+                                plural(frame.fold.packed as usize, "item")
+                            ),
                             letter: None,
                             word: kind.word(via),
                             event,
                             hint: None,
                             peek: None,
-                        }
+                        })
                     }
                 }
             })
@@ -405,8 +409,7 @@ impl DataModel {
 
     /// The rows one side of a body-dependence reading draws, weight and all.
     fn uses_rows(&self, rows: Vec<UsesRow<'_>>) -> Vec<(u32, HoldRow)> {
-        let by_id: std::collections::HashMap<u32, &DataMark> =
-            self.marks.iter().map(|m| (m.id, m)).collect();
+        let by_id = self.by_id();
         rows.into_iter()
             .filter_map(|(anchor, count, clauses)| {
                 let Anchor::Mark(id) = anchor else {
@@ -418,16 +421,16 @@ impl DataModel {
                 // name is the one thing the row exists to state, so the clause
                 // drops before the name would clip.
                 if let Some((row, _)) = clauses.first()
-                    && far.name.chars().count() + row.chars().count() <= 13
+                    && far.head.name.chars().count() + row.chars().count() <= 13
                 {
                     word = format!("{word} · {row}");
                 }
                 Some((
                     count,
                     HoldRow {
-                        to: Some(mark_route(&far.path, &far.label)),
-                        decl: far.kind.decl_words(far.vis),
-                        name: far.name.clone(),
+                        to: Some(mark_route(&far.head.path, &far.head.label)),
+                        decl: far.head.kind.decl_words(far.head.vis),
+                        name: far.head.name.clone(),
                         letter: far.letter(),
                         word,
                         event: None,
@@ -452,10 +455,10 @@ fn ranked(mut rows: Vec<(u32, HoldRow)>) -> Vec<HoldRow> {
 impl DataMark {
     /// The tier, said out loud — the one sentence this altitude exists for.
     fn tier_line(&self) -> String {
-        if self.ghost {
+        if self.state.ghost {
             return "removed since the base — whoever held it, the removed edges say.".to_string();
         }
-        match self.tier {
+        match self.seat.tier {
             Tier::Root if self.is_static() => "a root — state no type holds.".to_string(),
             Tier::Root => "top-level data: no type holds it — a root.".to_string(),
             // The holder is the first row of the section right below this line;
@@ -470,7 +473,7 @@ impl DataMark {
             Tier::Standing(Stand::Vocab) => format!(
                 "secondary data, vocabulary: {} hold it — too many to seat under one — so its \
                  fan-in rests folded on its own foot.",
-                plural(self.held_by as usize, "type")
+                plural(self.seat.held_by as usize, "type")
             ),
             Tier::Standing(Stand::Afar) => {
                 "secondary data: its holder is in another module, and cross-module ownership \
@@ -511,7 +514,7 @@ impl DataMark {
             graph
                 .files
                 .get(m.file as usize)
-                .map(|f| format!("{}:{}", f.path, m.line))
+                .map(|f| format!("{}:{}", f.path, m.head.line))
         };
         // What a row of this section can be quoted from: a trait and a method
         // are written somewhere, and this chart draws neither a block.
@@ -519,20 +522,20 @@ impl DataMark {
             graph
                 .files
                 .get(m.file as usize)
-                .map(|f| peek_key(&f.path, &m.label))
+                .map(|f| peek_key(&f.path, &m.head.label))
         };
         let trait_row =
             |t: &ItemMark, event: Option<HoldEvent>, name: String, word: String| HoldRow {
                 to: None,
-                decl: t.kind.decl_words(t.vis),
+                decl: t.head.kind.decl_words(t.head.vis),
                 name,
-                letter: t.delta.letter(),
+                letter: t.diff.delta.letter(),
                 word,
                 event: event.map(HoldEvent::word),
                 hint: where_written(t),
                 peek: quotable(t),
             };
-        if let Some(item) = graph.items.get(self.id as usize) {
+        if let Some(item) = graph.item(self.id) {
             // Which promises the workspace declares itself: those the survey
             // resolved to a trait mark, so those rows link to the contract and
             // carry the impl's own diff event. A foreign trait is a name.
@@ -540,16 +543,16 @@ impl DataMark {
                 .implements
                 .iter()
                 .filter(|e| e.ty == self.id)
-                .filter_map(|e| Some((graph.items.get(e.trait_mark as usize)?, e.event)))
+                .filter_map(|e| Some((graph.item(e.trait_mark)?, e.event)))
                 .collect();
             let mut quoted: std::collections::HashSet<u32> = std::collections::HashSet::new();
-            for header in &item.impls {
+            for header in &item.reach.impls {
                 let Some((promise, for_ty)) = header_promise(header) else {
                     continue;
                 };
                 let known = ours
                     .iter()
-                    .find(|(t, _)| bare_trait(&t.name) == bare_trait(promise));
+                    .find(|(t, _)| bare_trait(&t.head.name) == bare_trait(promise));
                 if let Some((t, _)) = known {
                     quoted.insert(t.id);
                 }
@@ -557,7 +560,7 @@ impl DataMark {
                 // mark: `impl Held for Frame<'a>` says which edition of the type
                 // promises, and `impl Held for Frame` would only say the name the
                 // sheet's own title says.
-                let word = match for_ty == self.name {
+                let word = match for_ty == self.head.name {
                     true => String::new(),
                     false => format!("for {for_ty}"),
                 };
@@ -587,7 +590,7 @@ impl DataMark {
                 .iter()
                 .filter(|(t, event)| *event == Some(HoldEvent::Removed) && !quoted.contains(&t.id))
             {
-                promises.push(trait_row(t, *event, t.name.clone(), String::new()));
+                promises.push(trait_row(t, *event, t.head.name.clone(), String::new()));
             }
 
             // The methods: the type's own first, then the ones a contract asked
@@ -595,8 +598,9 @@ impl DataMark {
             // keyword and the name; the signature is its hover words, because 256
             // pixels of mono is a name and not a signature.
             let added: std::collections::HashSet<u32> =
-                item.methods_added.iter().copied().collect();
+                item.diff.methods_added.iter().copied().collect();
             let mut rows: Vec<(&str, usize)> = item
+                .body
                 .method_rows
                 .iter()
                 .enumerate()
@@ -609,11 +613,11 @@ impl DataMark {
                 .collect();
             rows.sort_by_key(|&(promise, at)| (!promise.is_empty(), promise, at));
             methods.extend(rows.into_iter().map(|(promise, at)| {
-                let row = &item.method_rows[at];
-                let own = graph.items.get(row.mark as usize);
+                let row = &item.body.method_rows[at];
+                let own = graph.item(row.mark);
                 HoldRow {
                     to: None,
-                    decl: own.map_or_else(String::new, |m| m.kind.decl_words(m.vis)),
+                    decl: own.map_or_else(String::new, |m| m.head.kind.decl_words(m.head.vis)),
                     name: row.name.clone(),
                     letter: added.contains(&(at as u32)).then_some("A"),
                     word: promise.to_string(),
@@ -629,25 +633,27 @@ impl DataMark {
             }));
             // What the base wrote for it and this copy does not, quoted from the
             // base edition the way a dropped field is.
-            methods.extend(item.methods_removed.iter().map(|(_, name, sig)| HoldRow {
-                to: None,
-                decl: "fn".to_string(),
-                name: name.clone(),
-                letter: None,
-                word: String::new(),
-                event: Some(HoldEvent::Removed.word()),
-                hint: Some(sig.clone()),
-                // Its source left the working copy with it; the base's
-                // signature is all there is to say.
-                peek: None,
-            }));
-        } else if let Some(ghost) = (self.id as usize)
-            .checked_sub(graph.items.len())
-            .and_then(|at| graph.ghosts.get(at))
-        {
+            methods.extend(
+                item.diff
+                    .methods_removed
+                    .iter()
+                    .map(|(_, name, sig)| HoldRow {
+                        to: None,
+                        decl: "fn".to_string(),
+                        name: name.clone(),
+                        letter: None,
+                        word: String::new(),
+                        event: Some(HoldEvent::Removed.word()),
+                        hint: Some(sig.clone()),
+                        // Its source left the working copy with it; the base's
+                        // signature is all there is to say.
+                        peek: None,
+                    }),
+            );
+        } else if let Some(ghost) = graph.ghost(self.id) {
             // A removed type's API left with it: the base wrote these, and the
             // base edition is all there is of them.
-            methods.extend(ghost.method_rows.iter().map(|(name, sig)| HoldRow {
+            methods.extend(ghost.body.method_rows.iter().map(|(name, sig)| HoldRow {
                 to: None,
                 decl: "fn".to_string(),
                 name: name.clone(),
@@ -684,7 +690,7 @@ pub(super) fn DataSheet(
     let Some(mark) = model
         .marks
         .iter()
-        .find(|m| m.path == path && m.label == item)
+        .find(|m| m.head.path == path && m.head.label == item)
     else {
         return rsx! {
             section { class: "plate pointer-events-auto w-full px-4 py-3 sm:w-72",
@@ -701,20 +707,19 @@ pub(super) fn DataSheet(
     };
 
     let at = Anchor::Mark(mark.id);
-    let decl = mark.kind.decl_words(mark.vis);
-    let by_id: std::collections::HashMap<u32, &DataMark> =
-        model.marks.iter().map(|m| (m.id, m)).collect();
+    let decl = mark.head.kind.decl_words(mark.head.vis);
+    let by_id = model.by_id();
 
     // Who holds it: the drawn relations landing on it, and — first, because
     // the paper says it first — the block it is nested inside.
     let mut held_by: Vec<HoldRow> = Vec::new();
-    if let Tier::Nested(holder) = mark.tier
+    if let Tier::Nested(holder) = mark.seat.tier
         && let Some(h) = by_id.get(&holder)
     {
         held_by.push(HoldRow {
-            to: Some(mark_route(&h.path, &h.label)),
-            decl: h.kind.decl_words(h.vis),
-            name: h.name.clone(),
+            to: Some(mark_route(&h.head.path, &h.head.label)),
+            decl: h.head.kind.decl_words(h.head.vis),
+            name: h.head.name.clone(),
             letter: h.letter(),
             word: "owns · nested".to_string(),
             event: None,
@@ -735,13 +740,14 @@ pub(super) fn DataSheet(
 
     // What it holds: the blocks nested inside it, then the drawn relations.
     let mut holds: Vec<HoldRow> = mark
+        .seat
         .kids
         .iter()
         .filter_map(|kid| by_id.get(kid))
         .map(|k| HoldRow {
-            to: Some(mark_route(&k.path, &k.label)),
-            decl: k.kind.decl_words(k.vis),
-            name: k.name.clone(),
+            to: Some(mark_route(&k.head.path, &k.head.label)),
+            decl: k.head.kind.decl_words(k.head.vis),
+            name: k.head.name.clone(),
             letter: k.letter(),
             word: "owns · nested".to_string(),
             event: None,
@@ -764,19 +770,18 @@ pub(super) fn DataSheet(
     // declarations whose own signature names it (each a link to its
     // definition, since none has a block here), and the types whose API says
     // the word.
-    let files = &graph.files;
     let namer_row = |namer: u32, event: Option<HoldEvent>| -> Option<HoldRow> {
-        let item = graph.items.get(namer as usize)?;
-        let file = files.get(item.file as usize)?;
+        let item = graph.item(namer)?;
+        let file = graph.file(item.file)?;
         Some(HoldRow {
             to: None,
-            decl: item.kind.decl_words(item.vis),
-            name: item.name.clone(),
+            decl: item.head.kind.decl_words(item.head.vis),
+            name: item.head.name.clone(),
             letter: None,
             word: "names it".to_string(),
             event: event.map(HoldEvent::word),
-            hint: Some(format!("{}:{}", file.path, item.line)),
-            peek: Some(peek_key(&file.path, &item.label)),
+            hint: Some(format!("{}:{}", file.path, item.head.line)),
+            peek: Some(peek_key(&file.path, &item.head.label)),
         })
     };
     let contracts: Vec<HoldRow> = model
@@ -792,9 +797,9 @@ pub(super) fn DataSheet(
         .filter_map(|n| {
             let far = by_id.get(&n.namer)?;
             Some(HoldRow {
-                to: Some(mark_route(&far.path, &far.label)),
-                decl: far.kind.decl_words(far.vis),
-                name: far.name.clone(),
+                to: Some(mark_route(&far.head.path, &far.head.label)),
+                decl: far.head.kind.decl_words(far.head.vis),
+                name: far.head.name.clone(),
                 letter: far.letter(),
                 word: "its API names it".to_string(),
                 event: None,
@@ -811,19 +816,19 @@ pub(super) fn DataSheet(
     // sentence counting them instead, which named nothing a reviewer could go
     // and read.
     let unseen_row = |end: &Unseen| -> Option<(u32, HoldRow)> {
-        let item = graph.items.get(end.item as usize)?;
-        let file = files.get(item.file as usize)?;
+        let item = graph.item(end.item)?;
+        let file = graph.file(item.file)?;
         Some((
             end.count,
             HoldRow {
                 to: None,
-                decl: item.kind.decl_words(item.vis),
-                name: item.name.clone(),
+                decl: item.head.kind.decl_words(item.head.vis),
+                name: item.head.name.clone(),
                 letter: None,
                 word: plural(end.count as usize, "reference"),
                 event: None,
-                hint: Some(format!("{}:{}", file.path, item.line)),
-                peek: Some(peek_key(&file.path, &item.label)),
+                hint: Some(format!("{}:{}", file.path, item.head.line)),
+                peek: Some(peek_key(&file.path, &item.head.label)),
             },
         ))
     };
@@ -838,7 +843,7 @@ pub(super) fn DataSheet(
                     .collect(),
             )
             .into_iter()
-            .chain(mark.used_by.iter().filter_map(unseen_row))
+            .chain(mark.undrawn.used_by.iter().filter_map(unseen_row))
             .collect(),
     );
     let uses: Vec<HoldRow> = ranked(
@@ -852,7 +857,7 @@ pub(super) fn DataSheet(
                     .collect(),
             )
             .into_iter()
-            .chain(mark.unseen_uses.iter().filter_map(unseen_row))
+            .chain(mark.undrawn.unseen_uses.iter().filter_map(unseen_row))
             .collect(),
     );
 
@@ -860,9 +865,10 @@ pub(super) fn DataSheet(
 
     // The selection's own diff rows, exactly as the block draws them.
     let change_rows: Vec<(&'static str, String, bool)> = mark
+        .rows
         .fields
         .iter()
-        .chain(mark.variants.iter())
+        .chain(mark.rows.variants.iter())
         .filter_map(|row| {
             let mk = row.state.marker()?;
             let text = if row.name.is_empty() {
@@ -873,9 +879,9 @@ pub(super) fn DataSheet(
             Some((mk, text, row.state == RowState::Removed))
         })
         .collect();
-    let change_line = if mark.ghost {
+    let change_line = if mark.state.ghost {
         Some("removed since the base — this block quotes the base edition.")
-    } else if mark.delta == Delta::Added {
+    } else if mark.state.delta == Delta::Added {
         Some("added since the base.")
     } else {
         None
@@ -939,7 +945,7 @@ pub(super) fn DataSheet(
                 }
                 h2 { class: "mt-1.5 flex items-baseline gap-1.5 font-data text-[15px]",
                     span { class: "shrink-0 text-[11px] text-ink-soft", "{decl}" }
-                    span { class: "truncate font-semibold text-ink", "{mark.name}" }
+                    span { class: "truncate font-semibold text-ink", "{mark.head.name}" }
                     if let Some(letter) = mark.letter() {
                         span {
                             class: "shrink-0 font-bold text-flare",
@@ -1002,7 +1008,7 @@ pub(super) fn DataSheet(
                 }
                 if !reach.is_empty() {
                     p { class: "mt-1 px-1 font-data text-[10px] leading-relaxed text-ink-soft",
-                        if mark.ghost {
+                        if mark.state.ghost {
                             "the removal {reach}."
                         } else {
                             "a shape change here {reach}."
@@ -1036,7 +1042,7 @@ pub(super) fn DataSheet(
                     }
                     HoldList { sel: sel.clone(), open: peek.clone(), rows: methods }
                 }
-                if !mark.ghost {
+                if !mark.state.ghost {
                     h3 { class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
                         "Used by ({used_by.len()})"
                     }
@@ -1059,7 +1065,7 @@ pub(super) fn DataSheet(
                     }
                 }
             }
-            if mark.ghost {
+            if mark.state.ghost {
                 div { class: "border-t border-ink-line px-4 py-2",
                     p { class: "font-data text-[9.5px] text-ink-soft",
                         "its definition left the working copy."
@@ -1099,15 +1105,15 @@ pub(super) fn DataSearch(graph: CodeGraph) -> Element {
         let mut hits: Vec<(Rank, (ItemMark, String))> = graph
             .items
             .iter()
-            .filter(|m| m.parent.is_none() && datum(m.kind))
-            .filter(|m| m.name.to_lowercase().contains(&q))
+            .filter(|m| m.parent.is_none() && datum(m.head.kind))
+            .filter(|m| m.head.name.to_lowercase().contains(&q))
             .filter_map(|m| {
-                let path = graph.files.get(m.file as usize)?.path.clone();
+                let path = graph.path_of(m)?.to_string();
                 Some((
                     (
-                        !m.name.to_lowercase().starts_with(&q),
-                        std::cmp::Reverse(m.fan_in),
-                        m.name.clone(),
+                        !m.head.name.to_lowercase().starts_with(&q),
+                        std::cmp::Reverse(m.reach.fan_in),
+                        m.head.name.clone(),
                     ),
                     (m.clone(), path),
                 ))
@@ -1147,7 +1153,7 @@ pub(super) fn DataSearch(graph: CodeGraph) -> Element {
                         Key::Enter => {
                             if let Some((m, path)) = results().get(active().min(n.saturating_sub(1)))
                             {
-                                nav.push(mark_route(path, &m.label));
+                                nav.push(mark_route(path, &m.head.label));
                                 query.set(String::new());
                             }
                         }
@@ -1164,17 +1170,17 @@ pub(super) fn DataSearch(graph: CodeGraph) -> Element {
                 } else {
                     ul { class: "plate absolute left-0 right-0 top-full z-20 mt-1 max-h-72 overflow-auto py-1",
                         for (i , (m , path)) in results().into_iter().enumerate() {
-                            li { key: "{path}|{m.label}",
+                            li { key: "{path}|{m.head.label}",
                                 Link {
-                                    to: mark_route(&path, &m.label),
+                                    to: mark_route(&path, &m.head.label),
                                     class: if i == active() { "flex w-full items-baseline gap-1.5 px-2.5 py-1 bg-ink/5" } else { "flex w-full items-baseline gap-1.5 px-2.5 py-1 hover:bg-ink/5" },
                                     onclick: move |_| query.set(String::new()),
                                     span { class: "shrink-0 font-data text-[9.5px] text-ink-soft",
-                                        "{m.kind.words()}"
+                                        "{m.head.kind.words()}"
                                     }
-                                    span { class: "truncate font-data text-[11px] text-ink", "{m.name}" }
+                                    span { class: "truncate font-data text-[11px] text-ink", "{m.head.name}" }
                                     span { class: "ml-auto shrink-0 truncate font-data text-[9px] text-ink-soft",
-                                        "{path}:{m.line}"
+                                        "{path}:{m.head.line}"
                                     }
                                 }
                             }
@@ -1189,7 +1195,9 @@ pub(super) fn DataSearch(graph: CodeGraph) -> Element {
 #[cfg(test)]
 mod tests {
     use super::{bare_trait, header_promise};
-    use crate::graph::data::{GhostMark, HoldEvent, ImplEdge, ItemKind, MethodRow, Vis};
+    use crate::graph::data::{
+        BaseBody, DeclHead, GhostAt, GhostDecl, HoldEvent, ImplEdge, ItemKind, MethodRow, Vis,
+    };
     use crate::views::data::model::tests::{build, by_name, graph, mark};
 
     #[test]
@@ -1227,11 +1235,11 @@ mod tests {
         let mut wire = mark(0, 0, "Wire", ItemKind::Struct);
         // Two promises as their headers write them: one the workspace declares
         // itself, one from outside it.
-        wire.impls = vec![
+        wire.reach.impls = vec![
             "impl Clone for Wire".to_string(),
             "impl Held for Wire".to_string(),
         ];
-        wire.method_rows = vec![
+        wire.body.method_rows = vec![
             MethodRow {
                 name: "note".to_string(),
                 sig: "pub(crate) fn note(&self) -> String".to_string(),
@@ -1245,10 +1253,10 @@ mod tests {
                 section: "impl Clone for Wire".to_string(),
             },
         ];
-        wire.methods_added = vec![0];
-        wire.methods_removed = vec![(2, "gone".to_string(), "fn gone(&self)".to_string())];
+        wire.diff.methods_added = vec![0];
+        wire.diff.methods_removed = vec![(2, "gone".to_string(), "fn gone(&self)".to_string())];
         let mut note = mark(2, 0, "Wire::note", ItemKind::Fn);
-        note.vis = Vis::Crate;
+        note.head.vis = Vis::Crate;
         note.parent = Some(0);
         let mut clone = mark(3, 0, "Wire::clone", ItemKind::Fn);
         clone.parent = Some(0);
@@ -1303,19 +1311,25 @@ mod tests {
     #[test]
     fn a_ghosts_api_left_with_it_and_the_sheet_quotes_the_base() {
         let mut g = graph(vec![mark(0, 0, "Wire", ItemKind::Struct)], Vec::new());
-        g.ghosts = vec![GhostMark {
-            id: 1,
-            path: "src/graph/data.rs".to_string(),
-            krate: "slope".to_string(),
-            name: "Nut".to_string(),
-            kind: ItemKind::Struct,
-            vis: Vis::Crate,
-            line: 12,
-            field_rows: Vec::new(),
-            variants: Vec::new(),
-            ty: String::new(),
-            method_rows: vec![("tighten".to_string(), "fn tighten(&mut self)".to_string())],
-        }];
+        g.push_ghost(
+            GhostAt {
+                path: "src/graph/data.rs".to_string(),
+                krate: "slope".to_string(),
+            },
+            GhostDecl {
+                head: DeclHead {
+                    name: "Nut".to_string(),
+                    label: String::new(),
+                    kind: ItemKind::Struct,
+                    vis: Vis::Crate,
+                    line: 12,
+                },
+                body: BaseBody {
+                    method_rows: vec![("tighten".to_string(), "fn tighten(&mut self)".to_string())],
+                    ..BaseBody::default()
+                },
+            },
+        );
         let model = build(&g);
         let offers = by_name(&model, "Nut").offers(&g);
         assert!(offers.promises.is_empty());

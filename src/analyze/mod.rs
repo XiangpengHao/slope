@@ -13,7 +13,9 @@ use std::path::{Path, PathBuf};
 
 use cargo_metadata::{DependencyKind, MetadataCommand};
 
-use crate::graph::dep::{CrateInfo, DepEvent, DepKind, DepLink, DepGraph};
+use crate::graph::dep::{
+    CrateAt, CrateInfo, DepEvent, DepGraph, DepKind, DepLink, Standing, Words,
+};
 
 /// Whether the survey charts test-only code. Off by default (2026-08-24,
 /// user): a reviewer reads the workspace the workspace ships, and a fixture
@@ -210,32 +212,15 @@ pub(crate) fn analyze() -> Result<DepGraph, String> {
                     // The resolved graph no longer carries this edge; draw a
                     // ghost so the removal stays visible.
                     let ghost_id = ev.name.to_string();
-                    if !ghost_nodes.iter().any(|g| g.id == ghost_id)
+                    if !ghost_nodes.iter().any(|g| g.at.id == ghost_id)
                         && !meta.packages.iter().any(|p| *p.name == ev.name)
                     {
-                        ghost_nodes.push(CrateInfo {
-                            id: ghost_id.clone(),
-                            name: ev.name.clone(),
-                            version: ev.detail.clone().unwrap_or_default(),
-                            is_member: false,
-                            changed: false,
-                            changed_files: 0,
-                            manifest_changed: false,
-                            affected_dist: None,
-                            dependents: 0,
-                            direct_deps: 0,
-                            external_deps: 0,
-                            ghost: true,
-                            description: None,
-                            license: None,
-                            repository: None,
-                            homepage: None,
-                            documentation: None,
-                            // A removed dependency's manifest is gone with
-                            // it; the name is all we know.
-                            crates_io: false,
-                            rel_path: None,
-                        });
+                        // A removed dependency's manifest is gone with it;
+                        // the name is all we know.
+                        ghost_nodes.push(CrateInfo::ghost(
+                            ev.name.clone(),
+                            ev.detail.clone().unwrap_or_default(),
+                        ));
                     }
                     // Point at the live crate when one still exists (another
                     // member may still depend on it), else at the ghost.
@@ -340,35 +325,39 @@ pub(crate) fn analyze() -> Result<DepGraph, String> {
                     let rel = rel.display().to_string();
                     if rel.is_empty() { ".".to_string() } else { rel }
                 });
-            CrateInfo {
-                changed: changed_files.contains_key(&pkg.id),
+            let standing = Standing {
                 changed_files: changed_files.get(&pkg.id).copied().unwrap_or(0),
                 manifest_changed: manifest_changed.contains(&pkg.id),
                 affected_dist: affected.get(&id).copied(),
                 dependents: dependents.get(id.as_str()).copied().unwrap_or(0),
                 direct_deps: direct_deps.get(id.as_str()).copied().unwrap_or(0),
                 external_deps: external_deps.get(id.as_str()).copied().unwrap_or(0),
-                name: pkg.name.to_string(),
-                version: pkg.version.to_string(),
-                is_member,
-                ghost: false,
-                description: pkg.description.clone(),
-                license: pkg.license.clone(),
-                repository: pkg.repository.clone(),
-                homepage: pkg.homepage.clone(),
-                documentation: pkg.documentation.clone(),
-                crates_io: pkg.source.as_ref().is_some_and(|s| s.is_crates_io()),
-                rel_path,
-                id,
-            }
+            };
+            CrateInfo::resolved(
+                CrateAt {
+                    id,
+                    name: pkg.name.to_string(),
+                    version: pkg.version.to_string(),
+                    is_member,
+                    rel_path,
+                },
+                Words {
+                    description: pkg.description.clone(),
+                    license: pkg.license.clone(),
+                    repository: pkg.repository.clone(),
+                    homepage: pkg.homepage.clone(),
+                    documentation: pkg.documentation.clone(),
+                    crates_io: pkg.source.as_ref().is_some_and(|s| s.is_crates_io()),
+                },
+                standing,
+            )
         })
         .collect();
     crates.extend(ghost_nodes);
-    crates.sort_by(|a, b| a.name.cmp(&b.name));
+    crates.sort_by(|a, b| a.at.name.cmp(&b.at.name));
 
     Ok(DepGraph {
         name,
-        root: root.display().to_string(),
         root_crate: root_pkg.map(|id| node_id[&id].clone()),
         epoch: diff.epoch,
         crates,

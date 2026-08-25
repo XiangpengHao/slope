@@ -13,20 +13,20 @@ use crate::views::dep::use_dep;
 /// Payload carried by chart nodes: one crate's star on the rings.
 #[derive(Clone, PartialEq)]
 pub(super) struct StarData {
-    pub(crate) info: CrateInfo,
+    pub(super) info: CrateInfo,
     /// Dependency distance from the chart's center.
-    pub(crate) ring: u32,
+    pub(super) ring: u32,
     /// Unit direction from the chart center, so the label seats on the
     /// side facing away from the center's crowd.
-    pub(crate) ux: f64,
-    pub(crate) uy: f64,
+    pub(super) ux: f64,
+    pub(super) uy: f64,
     /// The selected crate: the one whose edges the chart is drawing.
-    pub(crate) focal: bool,
+    pub(super) focal: bool,
     /// Label engraved at rest; unnamed stars reveal theirs on hover/focus.
-    pub(crate) named: bool,
+    pub(super) named: bool,
     /// Another version of this same crate is on the chart, so the label has
     /// to carry the version or the two stars read as one crate drawn twice.
-    pub(crate) versioned: bool,
+    pub(super) versioned: bool,
 }
 
 /// Room the mark needs beyond its core circle: the focal ring's ticks reach
@@ -36,7 +36,7 @@ const MARK_OVERHANG: f64 = 11.0;
 impl CrateInfo {
     /// Star radius from magnitude (how many crates depend on this one).
     pub(super) fn star_radius(&self) -> f64 {
-        (4.0 + (self.dependents as f64).sqrt() * 1.3).min(11.0)
+        (4.0 + (self.standing.dependents as f64).sqrt() * 1.3).min(11.0)
     }
 
     /// The square node box for this crate's star, from its magnitude.
@@ -45,21 +45,24 @@ impl CrateInfo {
         2.0 * (self.star_radius() + MARK_OVERHANG)
     }
 
-    /// The state a star announces, in words — never color alone, and in the
-    /// words the tools themselves use.
-    fn state_words(&self) -> Option<String> {
+    /// The state a crate announces, in words — never color alone, and in the
+    /// words the tools themselves use. The star's hover reads it, and so does
+    /// the fact sheet: one branch over `ghost`, `changed`, and how far
+    /// downstream, so the chart and the sheet cannot come to differ about what
+    /// happened to a crate.
+    pub(super) fn state_words(&self) -> Option<String> {
         if self.ghost {
             return Some("removed".into());
         }
-        if self.changed {
-            let files = self.changed_files;
+        if self.is_changed() {
+            let files = self.standing.changed_files;
             return Some(if files == 1 {
                 "1 file changed".into()
             } else {
                 format!("{files} files changed")
             });
         }
-        if let Some(dist) = self.affected_dist {
+        if let Some(dist) = self.downstream_hops() {
             return Some(if dist == 1 {
                 "1 hop downstream".into()
             } else {
@@ -79,8 +82,8 @@ pub(super) fn StarMark(
     focal: bool,
     #[props(default = 32.0)] box_px: f64,
 ) -> Element {
-    let changed = info.changed;
-    let affected = info.affected_dist.filter(|_| !changed);
+    let changed = info.is_changed();
+    let affected = info.downstream_hops();
     // Everything drawn outside the core circle must still fit the box.
     let overhang = if focal {
         10.0
@@ -171,7 +174,7 @@ pub(super) fn StarMark(
                     stroke_width: "1.2",
                     stroke_dasharray: "3 2.5",
                 }
-            } else if info.is_member {
+            } else if info.at.is_member {
                 // Members: solid ink, ringed like a named star on the plate.
                 circle {
                     cx: "{c}",
@@ -246,7 +249,7 @@ pub(super) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
         .unwrap_or_default();
     // The hover words carry what the mark encodes — the size is fan-in, the
     // hop is the ring — and teach the one gesture no mark can show.
-    let held = match info.dependents {
+    let held = match info.standing.dependents {
         0 => String::new(),
         1 => " · used by 1 crate".to_string(),
         n => format!(" · used by {n} crates"),
@@ -260,17 +263,17 @@ pub(super) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
     };
     let title = format!(
         "{} v{} · {hops}{state}{held}{gesture}",
-        info.name, info.version
+        info.at.name, info.at.version
     );
     let aria = if focal {
         format!(
             "deselect {} — ctrl-click removes it from a wider selection",
-            info.name
+            info.at.name
         )
     } else {
         format!(
             "select {} and draw its edges — ctrl-click adds it to the selection",
-            info.name
+            info.at.name
         )
     };
 
@@ -280,10 +283,10 @@ pub(super) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
     let dep = use_dep();
     let nav = use_navigator();
     let solo_href = Route::DepFocus {
-        name: info.name.clone(),
+        name: info.at.name.clone(),
     }
     .to_string();
-    let click_name = info.name.clone();
+    let click_name = info.at.name.clone();
     let onclick = move |e: Event<MouseData>| {
         e.prevent_default();
         e.stop_propagation();
@@ -315,10 +318,10 @@ pub(super) fn StarNode(ctx: NodeViewCtx<StarData>) -> Element {
         StarMark { info: info.clone(), focal, box_px }
         span {
             class: "star-label {side} font-data",
-            class: if info.is_member && !info.ghost { "font-medium text-ink" } else { "text-ink-soft" },
-            "{info.name}"
+            class: if info.is_live_member() { "font-medium text-ink" } else { "text-ink-soft" },
+            "{info.at.name}"
             if versioned {
-                span { class: "star-version", " v{info.version}" }
+                span { class: "star-version", " v{info.at.version}" }
             }
         }
     };

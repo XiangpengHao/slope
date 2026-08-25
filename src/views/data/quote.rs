@@ -51,7 +51,7 @@ fn run_route(graph: &CodeGraph, sel: &Sel, link: &SrcLink) -> Option<Route> {
         return None;
     }
     let far = find(graph, &link.path, &link.label)?;
-    match far.kind.is_data() && far.parent.is_none() {
+    match far.head.kind.is_data() && far.parent.is_none() {
         true => Some(mark_route(&link.path, &link.label)),
         false => Some(peek_route(sel, &link.path, &link.label)),
     }
@@ -64,7 +64,7 @@ const GAP: &str = "⋮";
 /// The item a (file, label) pair names in this survey.
 fn find<'g>(graph: &'g CodeGraph, path: &str, label: &str) -> Option<&'g ItemMark> {
     graph.items.iter().find(|m| {
-        m.label == label
+        m.head.label == label
             && graph
                 .files
                 .get(m.file as usize)
@@ -92,13 +92,13 @@ pub(super) fn Quotation(graph: CodeGraph, sel: Sel, path: String, label: String)
             }
         };
     };
-    // The kind's own word, and not the sheet row's `pub(crate) fn`: the
+    // The kind's own word, and not the sheet row's `pub(super) fn`: the
     // survey reads `pub(super)` and `pub(in path)` as one crate-wide
     // visibility, and a head that said `pub(crate)` would contradict the
     // source quoted two lines under it. What a declaration publishes is
     // written in the quotation itself, which is the authority here.
-    let decl = mark.kind.words();
-    let locator = format!("{path}:{}", mark.line);
+    let decl = mark.head.kind.words();
+    let locator = format!("{path}:{}", mark.head.line);
     let id = mark.id;
     rsx! {
         // The plate takes the room between the cartouche and the sheet and

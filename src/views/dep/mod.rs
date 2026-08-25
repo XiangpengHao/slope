@@ -51,16 +51,16 @@ pub(super) enum DirFilter {
 /// The review trail, kept in step with the browser history. Every selection
 /// is a URL; back retraces the review, forward replays it.
 #[derive(Clone, Default, PartialEq)]
-pub(crate) struct Trail {
-    pub(crate) steps: Vec<TrailStep>,
+pub(super) struct Trail {
+    pub(super) steps: Vec<TrailStep>,
     /// Where in `steps` the current route sits.
-    pub(crate) at: usize,
+    pub(super) at: usize,
 }
 
 impl Trail {
     /// Record a route change, telling a back/forward retrace apart from a
     /// new step by comparing against the recorded neighbors.
-    pub(crate) fn note(&mut self, step: TrailStep) {
+    pub(super) fn note(&mut self, step: TrailStep) {
         if self.steps.is_empty() {
             self.steps.push(step);
             self.at = 0;
@@ -89,7 +89,7 @@ impl Trail {
 
     /// The crates this stretch of the trail walked through since it last
     /// passed the whole chart, in visiting order — the review's breadcrumb.
-    pub(crate) fn walked(&self) -> Vec<String> {
+    pub(super) fn walked(&self) -> Vec<String> {
         if self.steps.is_empty() {
             return Vec::new();
         }
@@ -117,20 +117,20 @@ impl Trail {
 /// — so the trail outlives the route-component remounts, and every app
 /// instance (a test's `VirtualDom` included) owns its own copy.
 #[derive(Clone, Copy)]
-pub(crate) struct DepState {
-    pub(crate) trail: Signal<Trail>,
-    pub(crate) visited: Signal<HashSet<String>>,
-    pub(crate) announce: Signal<String>,
+pub(super) struct DepState {
+    pub(super) trail: Signal<Trail>,
+    pub(super) visited: Signal<HashSet<String>>,
+    pub(super) announce: Signal<String>,
     /// Which direction of the selection's edges the chart draws.
-    pub(crate) dir: Signal<DirFilter>,
+    pub(super) dir: Signal<DirFilter>,
     /// The current selection, materialized to crate names (a ring step
     /// resolves to every name on that ring; the overview resolves to the
     /// center). Written by the chart; read by modifier-clicks to toggle.
-    pub(crate) selected: Signal<Vec<String>>,
+    pub(super) selected: Signal<Vec<String>>,
 }
 
 impl DepState {
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             trail: Signal::new(Trail::default()),
             visited: Signal::new(HashSet::new()),
@@ -190,7 +190,7 @@ pub(crate) fn DepRing(hop: u32) -> Element {
 /// with the URL. Mounted by the app shell, which has already loaded the
 /// analysis this chart reads.
 #[component]
-pub(crate) fn DepShell(graph: DepGraph) -> Element {
+pub(super) fn DepShell(graph: DepGraph) -> Element {
     let dep = use_dep();
     let route = use_route::<Route>();
 

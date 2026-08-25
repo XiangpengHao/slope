@@ -68,8 +68,6 @@ pub(crate) struct SrcBlock {
 /// stripped of.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct ItemSource {
-    /// Path relative to the workspace root, for the locator.
-    pub(crate) path: String,
     /// What to draw, in source order, each block keeping the indent it is
     /// written at: the `impl` or `trait` header the item sits under, the item
     /// itself, then the brace that closes that block. A free item is one

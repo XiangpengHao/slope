@@ -36,40 +36,40 @@ const GHOST_OFFSET: f64 = 62.0;
 
 /// One placed star.
 #[derive(Clone, PartialEq)]
-pub(crate) struct StarPlace {
+pub(super) struct StarPlace {
     /// The ring the star is drawn on: its hops, collapsed onto the cap.
-    pub(crate) ring: u32,
+    pub(super) ring: u32,
     /// True dependency distance from the center; 0 is the center itself.
-    pub(crate) hops: u32,
+    pub(super) hops: u32,
     /// Radians; 0 points right, negative is up (SVG orientation).
-    pub(crate) angle: f64,
-    pub(crate) point: Point,
+    pub(super) angle: f64,
+    pub(super) point: Point,
 }
 
 /// The whole chart's geometry. The chart center is flow origin (0, 0).
 #[derive(Clone, PartialEq)]
 pub(super) struct RadialLayout {
-    pub(crate) placed: HashMap<String, StarPlace>,
+    pub(super) placed: HashMap<String, StarPlace>,
     /// Radius of each drawn ring, indexed by ring number (`radii[0] == 0`).
-    pub(crate) radii: Vec<f64>,
+    pub(super) radii: Vec<f64>,
     /// Node id at the center. `None` when a virtual workspace has no root
     /// package; members then share ring one around an implied hub.
-    pub(crate) center: Option<String>,
+    pub(super) center: Option<String>,
     /// The deepest true distance in the graph; the outermost ring is a
     /// collapsed band whenever this exceeds the cap.
-    pub(crate) max_hops: u32,
+    pub(super) max_hops: u32,
 }
 
 impl RadialLayout {
     /// Lay the graph out on rings, collapsing everything past `cap` hops onto
     /// the outermost ring. Angles never depend on the cap, so expanding only
     /// moves collapsed stars radially outward to their true rings.
-    pub(crate) fn build(graph: &DepGraph, cap: u32) -> Self {
+    pub(super) fn build(graph: &DepGraph, cap: u32) -> Self {
         let ghosts: HashSet<&str> = graph
             .crates
             .iter()
             .filter(|c| c.ghost)
-            .map(|c| c.id.as_str())
+            .map(|c| c.at.id.as_str())
             .collect();
 
         // Forward adjacency (user -> dependency), the direction rings grow.
@@ -89,10 +89,9 @@ impl RadialLayout {
 
         let center: Option<&str> = graph.root_crate.as_deref().and_then(|id| {
             graph
-                .crates
-                .iter()
-                .find(|c| c.id == id && !c.ghost)
-                .map(|c| c.id.as_str())
+                .crate_at(id)
+                .filter(|c| !c.ghost)
+                .map(|c| c.at.id.as_str())
         });
 
         // True distances and primary parents (the BFS tree the sectors follow).
@@ -124,8 +123,8 @@ impl RadialLayout {
             let mut unseated: Vec<&str> = graph
                 .crates
                 .iter()
-                .filter(|c| c.is_member && !c.ghost && !hops.contains_key(c.id.as_str()))
-                .map(|c| c.id.as_str())
+                .filter(|c| c.is_live_member() && !hops.contains_key(c.at.id.as_str()))
+                .map(|c| c.at.id.as_str())
                 .collect();
             let seat_at = if unseated.is_empty() {
                 // A resolve-graph island (reachable from no member) still gets
@@ -133,8 +132,8 @@ impl RadialLayout {
                 unseated = graph
                     .crates
                     .iter()
-                    .filter(|c| !c.ghost && !hops.contains_key(c.id.as_str()))
-                    .map(|c| c.id.as_str())
+                    .filter(|c| !c.ghost && !hops.contains_key(c.at.id.as_str()))
+                    .map(|c| c.at.id.as_str())
                     .collect();
                 hops.values().copied().max().unwrap_or(0) + 1
             } else {
@@ -309,30 +308,20 @@ impl RadialLayout {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::graph::dep::{CrateInfo, DepKind, DepLink, Epoch};
+    use crate::graph::dep::{CrateAt, CrateInfo, DepKind, DepLink, Epoch, Standing, Words};
 
     fn krate(id: &str, is_member: bool) -> CrateInfo {
-        CrateInfo {
-            id: id.to_string(),
-            name: id.split('@').next().unwrap().to_string(),
-            version: "1.0.0".to_string(),
-            is_member,
-            changed: false,
-            changed_files: 0,
-            manifest_changed: false,
-            affected_dist: None,
-            dependents: 0,
-            direct_deps: 0,
-            external_deps: 0,
-            ghost: false,
-            description: None,
-            license: None,
-            repository: None,
-            homepage: None,
-            documentation: None,
-            crates_io: false,
-            rel_path: None,
-        }
+        CrateInfo::resolved(
+            CrateAt {
+                id: id.to_string(),
+                name: id.split('@').next().unwrap().to_string(),
+                version: "1.0.0".to_string(),
+                is_member,
+                rel_path: None,
+            },
+            Words::default(),
+            Standing::default(),
+        )
     }
 
     fn link(from: &str, to: &str) -> DepLink {
@@ -347,7 +336,6 @@ mod tests {
     fn graph(root: Option<&str>, crates: Vec<CrateInfo>, links: Vec<DepLink>) -> DepGraph {
         DepGraph {
             name: "test".into(),
-            root: "/test".into(),
             root_crate: root.map(str::to_string),
             epoch: Epoch {
                 base: "base".into(),

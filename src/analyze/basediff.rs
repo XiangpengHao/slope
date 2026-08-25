@@ -27,31 +27,33 @@ use ra_ap_syntax::{AstNode, SyntaxKind, SyntaxNode, ast};
 
 use super::vcs::Diff;
 use crate::graph::data::{
-    CodeGraph, DeclRow, Delta, GhostMark, HoldEdge, HoldEvent, HoldKind, ImplEdge, ItemKind,
-    ItemMark, Vis,
+    BaseBody, CodeGraph, DeclHead, DeclRow, Delta, GhostAt, GhostDecl, HoldEdge, HoldEvent,
+    HoldKind, ImplEdge, ItemKind, ItemMark, Vis,
 };
 
-/// One declaration as the base edition wrote it.
+/// The live survey as this pass needs to read it back: the text every file
+/// was surveyed from, each item's byte range in it, and where each mark sits
+/// in its own file's item list. All three are the server's, and none of them
+/// crosses the wire.
+pub(super) struct Live<'a> {
+    pub(super) sources: &'a [String],
+    pub(super) spans: &'a [Vec<(u32, u32)>],
+    pub(super) mark_local: &'a [u32],
+}
+
+/// One declaration as the base edition wrote it: the same head and body a
+/// [`GhostDecl`] carries, plus the raw text the did-it-change comparison
+/// needs and nothing else does.
 struct BaseDecl {
-    /// Inline-module path included (`tests::Sample`), matching the survey's
-    /// own naming.
-    name: String,
-    kind: ItemKind,
-    vis: Vis,
-    /// 1-based line in the base edition.
-    line: u32,
+    /// Its head. `name` carries the inline-module path (`tests::Sample`),
+    /// matching the survey's own naming, and `label` is empty — the base
+    /// edition has nothing on the chart to select.
+    head: DeclHead,
+    body: BaseBody,
     /// The whole declaration, whitespace-collapsed, for the did-it-change
     /// comparison. Attributes and doc comments ride along, as they do in the
     /// live survey's byte range.
     text: String,
-    field_rows: Vec<DeclRow>,
-    variants: Vec<String>,
-    ty: String,
-    /// The methods the base's own impl blocks in *this file* wrote for it,
-    /// quoted as (name, signature). Impls in other files are not read: the
-    /// diff only fetches the base edition of the files that changed, so the
-    /// live side is held to the same file when the two are compared.
-    method_rows: Vec<(String, String)>,
 }
 
 /// Whether the base edition's node sits in test-only code — the same reading
@@ -371,15 +373,20 @@ impl BaseDecl {
                 _ => Vec::new(),
             };
             out.push(BaseDecl {
-                name,
-                kind,
-                vis,
-                line: line_of(text, usize::from(range.start())),
+                head: DeclHead {
+                    name,
+                    label: String::new(),
+                    kind,
+                    vis,
+                    line: line_of(text, usize::from(range.start())),
+                },
+                body: BaseBody {
+                    field_rows,
+                    variants,
+                    ty,
+                    method_rows,
+                },
                 text: collapsed(&node.text().to_string()),
-                field_rows,
-                variants,
-                ty,
-                method_rows,
             });
         }
         out
@@ -576,23 +583,21 @@ impl CodeGraph {
     /// deltas and row diffs, ghost marks for removed declarations, and hold
     /// events — `Added` on live edges the base could not have drawn,
     /// `Removed` edges re-drawn from the base edition.
-    pub(super) fn apply_base_diff(
-        &mut self,
-        dir: &std::path::Path,
-        diff: &Diff,
-        sources: &[String],
-        spans: &[Vec<(u32, u32)>],
-    ) {
+    pub(super) fn apply_base_diff(&mut self, dir: &std::path::Path, diff: &Diff, live: Live<'_>) {
         if diff.base_ref.is_none() || diff.changed_files.is_empty() {
             return;
         }
-        let file_id: HashMap<&str, u32> =
-            self.files.iter().map(|f| (f.path.as_str(), f.id)).collect();
+        let file_id: HashMap<&str, u32> = self
+            .files
+            .iter()
+            .enumerate()
+            .map(|(id, f)| (f.path.as_str(), id as u32))
+            .collect();
         // What the data chart can draw, live side. Only a free function: a method
         // is matched under the type its impl names, never as a declaration of the
         // file's own, and two types can each own a `build` without either being
         // the base's free `build`.
-        let charted = |item: &ItemMark| match item.kind {
+        let charted = |item: &ItemMark| match item.head.kind {
             ItemKind::Struct
             | ItemKind::Enum
             | ItemKind::Union
@@ -629,26 +634,20 @@ impl CodeGraph {
                 .unwrap_or_default();
             let mut base_of: HashMap<(ItemKind, &str), &BaseDecl> = base
                 .iter()
-                .map(|d| ((d.kind, d.name.as_str()), d))
+                .map(|d| ((d.head.kind, d.head.name.as_str()), d))
                 .collect();
             if let Some(file) = live_file {
                 for item in self.items.iter().filter(|i| i.file == file) {
                     if !charted(item) {
                         continue;
                     }
-                    match base_of.remove(&(item.kind, item.name.as_str())) {
+                    match base_of.remove(&(item.head.kind, item.head.name.as_str())) {
                         Some(decl) => matched.push((
                             item.id,
                             BaseDecl {
-                                name: decl.name.clone(),
-                                kind: decl.kind,
-                                vis: decl.vis,
-                                line: decl.line,
+                                head: decl.head.clone(),
+                                body: decl.body.clone(),
                                 text: decl.text.clone(),
-                                field_rows: decl.field_rows.clone(),
-                                variants: decl.variants.clone(),
-                                ty: decl.ty.clone(),
-                                method_rows: decl.method_rows.clone(),
                             },
                         )),
                         None => added.push(item.id),
@@ -658,7 +657,7 @@ impl CodeGraph {
             let leftover: HashSet<(ItemKind, String)> =
                 base_of.keys().map(|(k, n)| (*k, n.to_string())).collect();
             for decl in base {
-                if leftover.contains(&(decl.kind, decl.name.clone())) {
+                if leftover.contains(&(decl.head.kind, decl.head.name.clone())) {
                     removed.push((path.clone(), decl));
                 }
             }
@@ -669,7 +668,7 @@ impl CodeGraph {
         for (path, decl) in removed {
             let take = added.iter().position(|&id| {
                 let item = &self.items[id as usize];
-                item.kind == decl.kind && item.name == decl.name
+                item.head.kind == decl.head.kind && item.head.name == decl.head.name
             });
             match take {
                 Some(at) => matched.push((added.swap_remove(at), decl)),
@@ -679,7 +678,7 @@ impl CodeGraph {
 
         // ---- Deltas and row diffs onto the live marks. --------------------------
         for &id in &added {
-            self.items[id as usize].delta = Delta::Added;
+            self.items[id as usize].diff.delta = Delta::Added;
         }
         for (id, decl) in matched {
             let item = &self.items[id as usize];
@@ -688,6 +687,7 @@ impl CodeGraph {
             // each of those rows back to its place in the whole band, so the
             // weave marks the row the reader is looking at.
             let seat: Vec<usize> = item
+                .body
                 .method_rows
                 .iter()
                 .enumerate()
@@ -695,7 +695,7 @@ impl CodeGraph {
                     // A trait's clauses are written inside it, so all of them are
                     // in the file the base read; a type's are wherever its impl
                     // blocks are, and only its own file's were fetched.
-                    item.kind == ItemKind::Trait
+                    item.head.kind == ItemKind::Trait
                         || self
                             .items
                             .get(row.mark as usize)
@@ -706,7 +706,7 @@ impl CodeGraph {
             let live_methods: Vec<(String, String)> = seat
                 .iter()
                 .map(|&at| {
-                    let row = &item.method_rows[at];
+                    let row = &item.body.method_rows[at];
                     (row.name.clone(), row.sig.clone())
                 })
                 .collect();
@@ -715,56 +715,63 @@ impl CodeGraph {
             // and an `M` here would point at rows that did not move. A type's
             // block quotes its methods too, and an impl block lives outside the
             // declaration's own text, so the band is compared beside it.
-            let same = if decl.kind == ItemKind::Fn {
-                item.vis == decl.vis && item.field_rows == decl.field_rows && item.ty == decl.ty
-            } else if decl.kind == ItemKind::Trait {
+            let same = if decl.head.kind == ItemKind::Fn {
+                item.head.vis == decl.head.vis
+                    && item.body.field_rows == decl.body.field_rows
+                    && item.body.ty == decl.body.ty
+            } else if decl.head.kind == ItemKind::Trait {
                 // A trait's block is its band, and its declaration's own text
                 // carries the default methods' bodies: comparing the text would
                 // flare a trait whose promise never moved.
-                item.vis == decl.vis && live_methods == decl.method_rows
+                item.head.vis == decl.head.vis && live_methods == decl.body.method_rows
             } else {
-                let live_text = spans
-                    .get(item.file as usize)
-                    .and_then(|f| f.get(item.local as usize))
+                let live_text = live
+                    .mark_local
+                    .get(id as usize)
+                    .and_then(|&local| live.spans.get(item.file as usize)?.get(local as usize))
                     .and_then(|&(start, end)| {
-                        sources
+                        live.sources
                             .get(item.file as usize)
                             .and_then(|src| src.get(start as usize..end as usize))
                     })
                     .map(collapsed)
                     .unwrap_or_default();
-                live_text == decl.text && live_methods == decl.method_rows
+                live_text == decl.text && live_methods == decl.body.method_rows
             };
             if same {
                 continue; // Same, moved or not: the shape is the base's shape.
             }
-            let full = item.method_rows.len() as u32;
-            let (ma, mr) = diff_rows(&decl.method_rows, &live_methods);
+            let full = item.body.method_rows.len() as u32;
+            let (ma, mr) = diff_rows(&decl.body.method_rows, &live_methods);
             let item = &mut self.items[id as usize];
-            item.delta = Delta::Changed;
+            item.diff.delta = Delta::Changed;
             // Fields compare on the text a reader sees, visibility included, so
             // a field losing its `pub` reads as the change it is.
             let as_pairs = |rows: &[DeclRow]| -> Vec<(String, String)> {
                 rows.iter().map(|r| (r.name.clone(), r.written())).collect()
             };
-            let (fa, fr) = diff_rows(&as_pairs(&decl.field_rows), &as_pairs(&item.field_rows));
+            let (fa, fr) = diff_rows(
+                &as_pairs(&decl.body.field_rows),
+                &as_pairs(&item.body.field_rows),
+            );
             let base_row: HashMap<&str, &DeclRow> = decl
+                .body
                 .field_rows
                 .iter()
                 .map(|r| (r.name.as_str(), r))
                 .collect();
-            item.fields_added = fa;
-            item.fields_removed = fr
+            item.diff.fields_added = fa;
+            item.diff.fields_removed = fr
                 .into_iter()
                 .filter_map(|(at, name, _)| Some((at, (*base_row.get(name.as_str())?).clone())))
                 .collect();
-            let (va, vr) = diff_variants(&decl.variants, &item.variants);
-            item.variants_added = va;
-            item.variants_removed = vr;
+            let (va, vr) = diff_variants(&decl.body.variants, &item.body.variants);
+            item.diff.variants_added = va;
+            item.diff.variants_removed = vr;
             // Back into the whole band's own indexes: a row the base dropped
             // seats before the same-file row that took its place, or at the end.
-            item.methods_added = ma.into_iter().map(|at| seat[at as usize] as u32).collect();
-            item.methods_removed = mr
+            item.diff.methods_added = ma.into_iter().map(|at| seat[at as usize] as u32).collect();
+            item.diff.methods_removed = mr
                 .into_iter()
                 .map(|(before, name, sig)| {
                     let at = seat.get(before as usize).map_or(full, |&at| at as u32);
@@ -775,21 +782,14 @@ impl CodeGraph {
 
         // ---- Ghosts for what did not come back. ---------------------------------
         for (path, decl) in still_removed {
-            let id = (self.items.len() + self.ghosts.len()) as u32;
             let krate = self.krate_for(&path);
-            self.ghosts.push(GhostMark {
-                id,
-                krate,
-                path,
-                name: decl.name,
-                kind: decl.kind,
-                vis: decl.vis,
-                line: decl.line,
-                field_rows: decl.field_rows,
-                variants: decl.variants,
-                ty: decl.ty,
-                method_rows: decl.method_rows,
-            });
+            self.push_ghost(
+                GhostAt { path, krate },
+                GhostDecl {
+                    head: decl.head,
+                    body: decl.body,
+                },
+            );
         }
 
         // ---- Hold events: added edges. ------------------------------------------
@@ -798,24 +798,27 @@ impl CodeGraph {
         let added_rows: HashMap<u32, HashSet<String>> = self
             .items
             .iter()
-            .filter(|i| i.delta == Delta::Changed)
+            .filter(|i| i.diff.delta == Delta::Changed)
             .map(|i| {
                 let mut names: HashSet<String> = i
+                    .diff
                     .fields_added
                     .iter()
-                    .filter_map(|&at| i.field_rows.get(at as usize))
+                    .filter_map(|&at| i.body.field_rows.get(at as usize))
                     .map(|row| row.name.clone())
                     .collect();
                 names.extend(
-                    i.variants_added
+                    i.diff
+                        .variants_added
                         .iter()
-                        .filter_map(|&at| i.variants.get(at as usize))
+                        .filter_map(|&at| i.body.variants.get(at as usize))
                         .map(|w| variant_name(w)),
                 );
                 names.extend(
-                    i.methods_added
+                    i.diff
+                        .methods_added
                         .iter()
-                        .filter_map(|&at| i.method_rows.get(at as usize))
+                        .filter_map(|&at| i.body.method_rows.get(at as usize))
                         .map(|row| row.name.clone()),
                 );
                 (i.id, names)
@@ -824,7 +827,7 @@ impl CodeGraph {
         let delta_of = |id: u32| {
             self.items
                 .get(id as usize)
-                .map(|i| i.delta)
+                .map(|i| i.diff.delta)
                 .unwrap_or_default()
         };
         for edge in &mut self.holds {
@@ -843,20 +846,33 @@ impl CodeGraph {
         let mut targets: HashMap<String, Vec<u32>> = HashMap::new();
         for item in &self.items {
             if matches!(
-                item.kind,
+                item.head.kind,
                 ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Trait
             ) {
-                let bare = item.name.rsplit("::").next().unwrap_or(&item.name);
+                let bare = item
+                    .head
+                    .name
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(&item.head.name);
                 targets.entry(bare.to_string()).or_default().push(item.id);
             }
         }
         for ghost in &self.ghosts {
             if matches!(
-                ghost.kind,
+                ghost.head.kind,
                 ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Trait
             ) {
-                let bare = ghost.name.rsplit("::").next().unwrap_or(&ghost.name);
-                targets.entry(bare.to_string()).or_default().push(ghost.id);
+                let bare = ghost
+                    .head
+                    .name
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(&ghost.head.name);
+                targets
+                    .entry(bare.to_string())
+                    .or_default()
+                    .push(ghost.id());
             }
         }
         // A pair that still stands through another live row draws no removed
@@ -873,34 +889,40 @@ impl CodeGraph {
         // (from, name, quoted row, skip the row's own leading name, a method row)
         let mut dropped: Vec<(u32, String, String, bool, bool)> = Vec::new();
         for item in &self.items {
-            for (_, row) in &item.fields_removed {
+            for (_, row) in &item.diff.fields_removed {
                 dropped.push((item.id, row.name.clone(), row.written(), false, false));
             }
-            for (_, written) in &item.variants_removed {
+            for (_, written) in &item.diff.variants_removed {
                 dropped.push((item.id, variant_name(written), written.clone(), true, false));
             }
-            for (_, name, sig) in &item.methods_removed {
+            for (_, name, sig) in &item.diff.methods_removed {
                 dropped.push((item.id, name.clone(), sig.clone(), false, true));
             }
         }
         for ghost in &self.ghosts {
-            for row in &ghost.field_rows {
-                dropped.push((ghost.id, row.name.clone(), row.written(), false, false));
+            for row in &ghost.body.field_rows {
+                dropped.push((ghost.id(), row.name.clone(), row.written(), false, false));
             }
-            for written in &ghost.variants {
+            for written in &ghost.body.variants {
                 dropped.push((
-                    ghost.id,
+                    ghost.id(),
                     variant_name(written),
                     written.clone(),
                     true,
                     false,
                 ));
             }
-            for (name, sig) in &ghost.method_rows {
-                dropped.push((ghost.id, name.clone(), sig.clone(), false, true));
+            for (name, sig) in &ghost.body.method_rows {
+                dropped.push((ghost.id(), name.clone(), sig.clone(), false, true));
             }
-            if !ghost.ty.is_empty() {
-                dropped.push((ghost.id, ghost.name.clone(), ghost.ty.clone(), false, false));
+            if !ghost.body.ty.is_empty() {
+                dropped.push((
+                    ghost.id(),
+                    ghost.head.name.clone(),
+                    ghost.body.ty.clone(),
+                    false,
+                    false,
+                ));
             }
         }
         let mut gone: super::data::Edges = HashMap::new();
@@ -949,7 +971,7 @@ impl CodeGraph {
         // are compared as `(trait, type)` names and an ambiguous name is left
         // alone rather than guessed at.
         let name_of = |mark: u32| -> Option<&str> {
-            let name = &self.items.get(mark as usize)?.name;
+            let name = &self.items.get(mark as usize)?.head.name;
             Some(name.rsplit("::").next().unwrap_or(name))
         };
         let mut base_impls: HashSet<(String, String)> = HashSet::new();
@@ -983,8 +1005,9 @@ impl CodeGraph {
         let changed_file: HashSet<u32> = self
             .files
             .iter()
-            .filter(|f| read_files.contains(f.path.as_str()))
-            .map(|f| f.id)
+            .enumerate()
+            .filter(|(_, f)| read_files.contains(f.path.as_str()))
+            .map(|(id, _)| id as u32)
             .collect();
         let mut live_impls: HashSet<(String, String)> = HashSet::new();
         for edge in &mut self.implements {
@@ -1011,8 +1034,13 @@ impl CodeGraph {
         let mark_named = |want: &str, kinds: &[ItemKind]| -> Option<u32> {
             let mut found = None;
             for item in &self.items {
-                let bare = item.name.rsplit("::").next().unwrap_or(&item.name);
-                if bare == want && kinds.contains(&item.kind) {
+                let bare = item
+                    .head
+                    .name
+                    .rsplit("::")
+                    .next()
+                    .unwrap_or(&item.head.name);
+                if bare == want && kinds.contains(&item.head.kind) {
                     if found.is_some() {
                         return None; // ambiguous: two marks by that name
                     }
@@ -1038,7 +1066,7 @@ impl CodeGraph {
         self.implements.extend(dropped_impls);
 
         // ---- The method, in words. ----------------------------------------------
-        self.notes.push(
+        self.limits.notes.push(
             "the structural diff reads the base edition of each changed file \
              syntactically: declarations match by kind and name, a method band is \
              matched against the impls in the type's own file, and a removed \
@@ -1046,7 +1074,7 @@ impl CodeGraph {
                 .to_string(),
         );
         if ambiguous > 0 {
-            self.notes.push(format!(
+            self.limits.notes.push(format!(
                 "{ambiguous} names in removed declarations matched more than one \
                  type and are not drawn"
             ));
@@ -1076,7 +1104,7 @@ impl Wire {
 }
 "#;
         let decls = BaseDecl::scan(text);
-        let names: Vec<&str> = decls.iter().map(|d| d.name.as_str()).collect();
+        let names: Vec<&str> = decls.iter().map(|d| d.head.name.as_str()).collect();
         // A free function is a declaration at this altitude; a method is its
         // type's, and a type declared in a body has no mark in either edition.
         assert_eq!(
@@ -1091,11 +1119,12 @@ impl Wire {
                 "nothing"
             ]
         );
-        assert_eq!(decls[0].vis, Vis::Pub);
+        assert_eq!(decls[0].head.vis, Vis::Pub);
         // Each field's own visibility, not its type's: a `pub` struct can
         // publish some of its state and keep the rest.
         let rows = |at: usize| -> Vec<(&str, &str, Vis)> {
             decls[at]
+                .body
                 .field_rows
                 .iter()
                 .map(|row| (row.name.as_str(), row.ty.as_str(), row.vis))
@@ -1109,13 +1138,16 @@ impl Wire {
                 ("seen", "bool", Vis::Private),
             ]
         );
-        assert_eq!(decls[1].vis, Vis::Crate);
-        assert_eq!(decls[1].variants, vec!["A", "B(String)"]);
-        assert_eq!(decls[2].ty, "OnceCell<Arc<Index>>");
+        assert_eq!(decls[1].head.vis, Vis::Crate);
+        assert_eq!(decls[1].body.variants, vec!["A", "B(String)"]);
+        assert_eq!(decls[2].body.ty, "OnceCell<Arc<Index>>");
         assert_eq!(rows(3), vec![("0", "u8", Vis::Private)]);
         // A signature reads as rows and a return line: the parameters as the
         // base wrote them, the return type in the slot a static's type uses.
-        assert_eq!((decls[5].kind, decls[5].vis), (ItemKind::Fn, Vis::Pub));
+        assert_eq!(
+            (decls[5].head.kind, decls[5].head.vis),
+            (ItemKind::Fn, Vis::Pub)
+        );
         // A parameter declares no visibility of its own, ever.
         assert_eq!(
             rows(5),
@@ -1124,9 +1156,9 @@ impl Wire {
                 ("quiet", "bool", Vis::Private),
             ]
         );
-        assert_eq!(decls[5].ty, "Result<Index, String>");
+        assert_eq!(decls[5].body.ty, "Result<Index, String>");
         // Handing nothing back is not a return line, written either way.
-        assert!(decls[4].ty.is_empty() && decls[6].ty.is_empty());
+        assert!(decls[4].body.ty.is_empty() && decls[6].body.ty.is_empty());
     }
 
     /// A type's band is written outside its declaration, so the base has to
@@ -1156,8 +1188,9 @@ mod tests {
         let rows = |name: &str| {
             decls
                 .iter()
-                .find(|d| d.name == name)
+                .find(|d| d.head.name == name)
                 .unwrap()
+                .body
                 .method_rows
                 .clone()
         };

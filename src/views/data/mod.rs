@@ -112,7 +112,7 @@ pub(super) fn mod_route(key: Vec<String>) -> Route {
 /// heaviest edges in the chosen direction, and hovering it reveals the rest.
 /// `Both` is the unthinned picture, kept as an explicit choice.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(crate) enum RefDir {
+pub(super) enum RefDir {
     /// What each mark's own code reaches for — its heaviest edges out. The
     /// default: the question a reviewer brings to a change is what it leans on.
     #[default]
@@ -126,7 +126,7 @@ pub(crate) enum RefDir {
 impl RefDir {
     /// How many edges one mark draws at rest in this reading. `Both` keeps
     /// every edge; the anchored readings keep each mark's heaviest few.
-    pub(crate) fn per_territory(self) -> Option<usize> {
+    pub(super) fn per_territory(self) -> Option<usize> {
         match self {
             RefDir::Both => None,
             _ => Some(2),
@@ -141,15 +141,15 @@ impl RefDir {
 /// so stepping through selections — or out to the dependency chart and back —
 /// never resets either one.
 #[derive(Clone, Copy)]
-pub(crate) struct DataState {
+pub(super) struct DataState {
     /// The modules the reviewer folded by hand on this chart.
-    pub(crate) folds: Signal<Folds>,
+    pub(super) folds: Signal<Folds>,
     /// Which reading of the chart's uses edges is drawn.
-    pub(crate) ref_dir: Signal<RefDir>,
+    pub(super) ref_dir: Signal<RefDir>,
 }
 
 impl DataState {
-    pub(crate) fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self {
             folds: Signal::new(Folds::new()),
             ref_dir: Signal::new(RefDir::default()),
@@ -176,7 +176,7 @@ pub(super) fn use_survey() -> Option<CodeGraph> {
 /// shell for every `/data` route, so it stays mounted across a selection
 /// change and the server is never asked for the survey twice.
 #[component]
-pub(crate) fn DataSurvey(workspace: String, diff_line: String) -> Element {
+pub(super) fn DataSurvey(workspace: String, diff_line: String) -> Element {
     let resource: SurveyResource = use_resource(code_graph);
     use_context_provider(|| resource);
 
@@ -363,21 +363,22 @@ fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element 
         _ => None,
     };
     let facts = use_memo(use_reactive((&graph,), move |(graph,)| {
-        DataModel::build(&graph, *data.ref_dir.peek(), &data.folds.read()).facts(graph.unresolved)
+        DataModel::build(&graph, *data.ref_dir.peek(), &data.folds.read())
+            .facts(graph.limits.unresolved)
     }));
     // The survey's own limits, for the cartouche's fold: the unresolved
     // census first, then the walk's notes, then the references' — this chart
     // draws both inks, and the holding line is the one it is about.
     let limits: Vec<String> = {
         let mut notes = Vec::new();
-        if graph.unresolved > 0 {
+        if graph.limits.unresolved > 0 {
             notes.push(format!(
                 "{} the survey could not resolve.",
-                plural(graph.unresolved as usize, "name")
+                plural(graph.limits.unresolved as usize, "name")
             ));
         }
-        notes.extend(graph.walk_notes.iter().cloned());
-        notes.extend(graph.notes.iter().cloned());
+        notes.extend(graph.limits.walk_notes.iter().cloned());
+        notes.extend(graph.limits.notes.iter().cloned());
         notes
     };
 

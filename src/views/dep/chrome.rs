@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::graph::dep::{CrateInfo, DepEvent, DepKind, DepGraph};
+use crate::graph::dep::{CrateInfo, DepEvent, DepGraph, DepKind};
 use crate::views::chrome::{Altitude, AltitudeSwitch, plural};
 use crate::views::dep::layout::{DEFAULT_CAP, RadialLayout};
 use crate::views::dep::star::StarMark;
@@ -18,28 +18,29 @@ use crate::views::dep::{DirFilter, step_ring, use_dep};
 /// is, which epoch it is charted against, and every crate that changed in
 /// it. One plate, because the epoch and its changes are one thought.
 #[component]
-pub(super) fn TitleBlock(
-    graph: DepGraph,
-    #[props(default = true)] changes_open: bool,
-) -> Element {
+pub(super) fn TitleBlock(graph: DepGraph, #[props(default = true)] changes_open: bool) -> Element {
     let dep = use_dep();
-    let members = graph.crates.iter().filter(|c| c.is_member).count();
-    let externals = graph
-        .crates
-        .iter()
-        .filter(|c| !c.is_member && !c.ghost)
-        .count();
+    let members = graph.crates.iter().filter(|c| c.at.is_member).count();
+    let externals = graph.crates.iter().filter(|c| c.is_external()).count();
     let affected = graph
         .crates
         .iter()
-        .filter(|c| !c.changed && c.affected_dist.is_some())
+        .filter(|c| c.downstream_hops().is_some())
         .count();
     let epoch = &graph.epoch;
 
-    let mut changed: Vec<CrateInfo> = graph.crates.iter().filter(|c| c.changed).cloned().collect();
-    changed.sort_by(|a, b| a.name.cmp(&b.name));
+    let mut changed: Vec<CrateInfo> = graph
+        .crates
+        .iter()
+        .filter(|c| c.is_changed())
+        .cloned()
+        .collect();
+    changed.sort_by(|a, b| a.at.name.cmp(&b.at.name));
     let visited = dep.visited.read();
-    let seen = changed.iter().filter(|c| visited.contains(&c.name)).count();
+    let seen = changed
+        .iter()
+        .filter(|c| visited.contains(&c.at.name))
+        .count();
     let total = changed.len();
     let focus = dep.trail.read().current_focus();
 
@@ -75,25 +76,25 @@ pub(super) fn TitleBlock(
                         for info in changed {
                             li {
                                 Link {
-                                    to: Route::DepFocus { name: info.name.clone() },
-                                    class: if focus.as_deref() == Some(info.name.as_str()) {
+                                    to: Route::DepFocus { name: info.at.name.clone() },
+                                    class: if focus.as_deref() == Some(info.at.name.as_str()) {
                                         "flex w-full items-center gap-1.5 px-1.5 py-0.5 bg-ink/5"
                                     } else {
                                         "flex w-full items-center gap-1.5 px-1.5 py-0.5 hover:bg-ink/5"
                                     },
                                     StarMark { info: info.clone(), focal: false, box_px: 20.0 }
                                     span { class: "truncate font-data text-[11px] font-medium text-ink",
-                                        "{info.name}"
+                                        "{info.at.name}"
                                     }
                                     span { class: "shrink-0 font-data text-[9px] text-flare",
-                                        "{plural(info.changed_files as usize, \"file\")}"
+                                        "{plural(info.standing.changed_files as usize, \"file\")}"
                                     }
-                                    if info.manifest_changed {
+                                    if info.standing.manifest_changed {
                                         span { class: "shrink-0 font-data text-[9px] text-flare",
                                             "Cargo.toml"
                                         }
                                     }
-                                    if visited.contains(&info.name) {
+                                    if visited.contains(&info.at.name) {
                                         span { class: "ml-auto shrink-0 font-data text-[9px] tracking-[0.12em] text-ink-soft",
                                             "SEEN"
                                         }
@@ -181,14 +182,14 @@ pub(super) fn SearchBox(graph: DepGraph) -> Element {
         let mut hits: Vec<CrateInfo> = graph
             .crates
             .iter()
-            .filter(|c| !c.ghost && c.name.to_lowercase().contains(&q))
+            .filter(|c| !c.ghost && c.at.name.to_lowercase().contains(&q))
             .cloned()
             .collect();
         hits.sort_by_key(|c| {
             (
-                !c.name.to_lowercase().starts_with(&q),
-                !c.is_member,
-                std::cmp::Reverse(c.dependents),
+                !c.at.name.to_lowercase().starts_with(&q),
+                !c.at.is_member,
+                std::cmp::Reverse(c.standing.dependents),
             )
         });
         hits.truncate(9);
@@ -223,7 +224,7 @@ pub(super) fn SearchBox(graph: DepGraph) -> Element {
                         }
                         Key::Enter => {
                             if let Some(hit) = results().get(active().min(n.saturating_sub(1))) {
-                                nav.push(Route::DepFocus { name: hit.name.clone() });
+                                nav.push(Route::DepFocus { name: hit.at.name.clone() });
                                 query.set(String::new());
                             }
                         }
@@ -244,7 +245,7 @@ pub(super) fn SearchBox(graph: DepGraph) -> Element {
                         for (i , hit) in results().into_iter().enumerate() {
                             li {
                                 Link {
-                                    to: Route::DepFocus { name: hit.name.clone() },
+                                    to: Route::DepFocus { name: hit.at.name.clone() },
                                     class: if i == active() {
                                         "flex w-full items-center gap-1.5 px-2.5 py-1 bg-ink/5"
                                     } else {
@@ -252,10 +253,10 @@ pub(super) fn SearchBox(graph: DepGraph) -> Element {
                                     },
                                     onclick: move |_| query.set(String::new()),
                                     StarMark { info: hit.clone(), focal: false, box_px: 18.0 }
-                                    span { class: "truncate font-data text-[11px] text-ink", "{hit.name}" }
-                                    if !hit.is_member {
+                                    span { class: "truncate font-data text-[11px] text-ink", "{hit.at.name}" }
+                                    if !hit.at.is_member {
                                         span { class: "ml-auto shrink-0 font-data text-[9.5px] text-ink-soft",
-                                            "v{hit.version}"
+                                            "v{hit.at.version}"
                                         }
                                     }
                                 }
@@ -275,8 +276,8 @@ fn repeated_names<'a>(crates: impl Iterator<Item = &'a CrateInfo>) -> HashSet<St
     let mut seen: HashSet<&str> = HashSet::new();
     let mut twice: HashSet<String> = HashSet::new();
     for c in crates {
-        if !seen.insert(c.name.as_str()) {
-            twice.insert(c.name.clone());
+        if !seen.insert(c.at.name.as_str()) {
+            twice.insert(c.at.name.clone());
         }
     }
     twice
@@ -320,9 +321,9 @@ fn CrateRow(
     let row = rsx! {
         StarMark { info: info.clone(), focal: false, box_px: 18.0 }
         span { class: "truncate font-data text-[11px] text-ink",
-            "{info.name}"
+            "{info.at.name}"
             if versioned {
-                span { class: "text-ink-line", " v{info.version}" }
+                span { class: "text-ink-line", " v{info.at.version}" }
             }
         }
         if let Some(k) = kind.words() {
@@ -340,7 +341,7 @@ fn CrateRow(
                 div { class: "flex w-full items-center gap-1.5 px-1 py-0.5", {row} }
             } else {
                 Link {
-                    to: Route::DepFocus { name: info.name.clone() },
+                    to: Route::DepFocus { name: info.at.name.clone() },
                     class: "flex w-full items-center gap-1.5 px-1 py-0.5 hover:bg-ink/5",
                     {row}
                 }
@@ -363,7 +364,7 @@ fn CrateList(rows: Vec<(CrateInfo, DepKind, Option<DepEvent>)>) -> Element {
         ul { class: "mt-1",
             for (info , kind , event) in rows.into_iter().take(shown) {
                 CrateRow {
-                    versioned: repeated.contains(info.name.as_str()),
+                    versioned: repeated.contains(info.at.name.as_str()),
                     info,
                     kind,
                     event,
@@ -391,29 +392,39 @@ impl CrateInfo {
                 .map(str::to_string)
         };
         let mut links: Vec<(&'static str, String)> = Vec::new();
-        if let Some(repo) = url(&self.repository) {
+        if let Some(repo) = url(&self.words.repository) {
             links.push(("repo", repo));
         }
-        if self.crates_io {
+        if self.words.crates_io {
             links.push((
                 "crates.io",
-                format!("https://crates.io/crates/{}", self.name),
+                format!("https://crates.io/crates/{}", self.at.name),
             ));
         }
-        match url(&self.documentation) {
+        match url(&self.words.documentation) {
             Some(docs) => links.push(("docs", docs)),
-            None if self.crates_io => links.push((
+            None if self.words.crates_io => links.push((
                 "docs.rs",
-                format!("https://docs.rs/{}/{}", self.name, self.version),
+                format!("https://docs.rs/{}/{}", self.at.name, self.at.version),
             )),
             None => {}
         }
-        if let Some(home) = url(&self.homepage)
+        if let Some(home) = url(&self.words.homepage)
             && !links.iter().any(|(_, u)| *u == home)
         {
             links.push(("homepage", home));
         }
         links
+    }
+
+    /// Whether the manifest said anything a fact sheet could quote. Nothing
+    /// declared and nowhere to go means no sheet at all, rather than an empty
+    /// frame under the crate's name.
+    fn says_anything(&self) -> bool {
+        self.words.description.is_some()
+            || self.words.license.is_some()
+            || self.at.rel_path.is_some()
+            || !self.out_links().is_empty()
     }
 }
 
@@ -450,29 +461,25 @@ fn OutLink(label: &'static str, href: String) -> Element {
 /// it sits on disk, and every page it has elsewhere.
 #[component]
 fn CrateFacts(info: CrateInfo) -> Element {
-    let links = info.out_links();
-    if info.description.is_none()
-        && info.license.is_none()
-        && info.rel_path.is_none()
-        && links.is_empty()
-    {
+    if !info.says_anything() {
         return rsx! {};
     }
+    let links = info.out_links();
     rsx! {
         div { class: "mt-3 space-y-1.5 border-b border-ink-line pb-3",
-            if let Some(desc) = info.description.clone() {
+            if let Some(desc) = info.words.description.clone() {
                 p { class: "font-chart text-[12px] italic leading-snug text-ink", "{desc}" }
             }
             div { class: "space-y-0.5",
-                if let Some(license) = info.license.clone() {
+                if let Some(license) = info.words.license.clone() {
                     FactRow { label: "license", value: license }
                 }
-                if let Some(path) = info.rel_path.clone() {
+                if let Some(path) = info.at.rel_path.clone() {
                     FactRow { label: "path", value: path }
                 }
                 FactRow {
                     label: "dependencies",
-                    value: "{info.direct_deps} direct · {info.external_deps} external",
+                    value: "{info.standing.direct_deps} direct · {info.standing.external_deps} external",
                 }
             }
             if !links.is_empty() {
@@ -546,7 +553,7 @@ pub(super) fn FocusPanel(graph: DepGraph, name: String) -> Element {
     let Some(focal) = graph
         .crates
         .iter()
-        .find(|c| c.name == name && !c.ghost)
+        .find(|c| c.at.name == name && !c.ghost)
         .cloned()
     else {
         return rsx! {
@@ -562,21 +569,21 @@ pub(super) fn FocusPanel(graph: DepGraph, name: String) -> Element {
     };
 
     let by_id: std::collections::HashMap<&str, &CrateInfo> =
-        graph.crates.iter().map(|c| (c.id.as_str(), c)).collect();
+        graph.crates.iter().map(|c| (c.at.id.as_str(), c)).collect();
     // All versions of the focal crate participate.
     let focal_ids: Vec<&str> = graph
         .crates
         .iter()
-        .filter(|c| c.name == name && !c.ghost)
-        .map(|c| c.id.as_str())
+        .filter(|c| c.at.name == name && !c.ghost)
+        .map(|c| c.at.id.as_str())
         .collect();
     // Cargo can resolve several versions of one crate at once; each is its
     // own star on its own ring, and the selection holds all of them.
     let mut versions: Vec<&str> = graph
         .crates
         .iter()
-        .filter(|c| c.name == name && !c.ghost)
-        .map(|c| c.version.as_str())
+        .filter(|c| c.at.name == name && !c.ghost)
+        .map(|c| c.at.version.as_str())
         .collect();
     versions.sort_unstable();
     versions.dedup();
@@ -601,39 +608,32 @@ pub(super) fn FocusPanel(graph: DepGraph, name: String) -> Element {
         }
     }
     for list in [&mut depends_on, &mut used_by] {
-        list.sort_by(|a, b| (a.1 as u8, &a.0.name).cmp(&(b.1 as u8, &b.0.name)));
-        list.dedup_by(|a, b| a.0.id == b.0.id && a.1 == b.1);
+        list.sort_by(|a, b| (a.1 as u8, &a.0.at.name).cmp(&(b.1 as u8, &b.0.at.name)));
+        list.dedup_by(|a, b| a.0.at.id == b.0.at.id && a.1 == b.1);
     }
 
-    let state = if focal.changed {
-        Some(format!(
-            "{} changed",
-            plural(focal.changed_files as usize, "file")
-        ))
-    } else {
-        focal
-            .affected_dist
-            .map(|d| format!("{} downstream of a change", plural(d as usize, "hop")))
-    };
+    // The same branch the star's hover reads, in the same words: what happened
+    // to a crate must not depend on which piece of furniture is saying it.
+    let state = focal.state_words();
 
     rsx! {
         section { class: "plate pointer-events-auto flex max-h-[44dvh] w-full flex-col overflow-hidden sm:max-h-full sm:w-72",
             div { class: "px-4 pt-3 pb-2",
                 Breadcrumb {}
                 h2 { class: "mt-1.5 break-all font-data text-[15px] font-semibold text-ink",
-                    "{focal.name}"
+                    "{focal.at.name}"
                 }
                 p { class: "font-data text-[10.5px] text-ink-soft",
                     "{version_line} · "
-                    if focal.is_member { "workspace member" } else { "external crate" }
+                    if focal.at.is_member { "workspace member" } else { "external crate" }
                 }
                 // The one descent between the altitudes that is not the
                 // ladder: both charts now key a crate on its cargo package
                 // name, so this selects the member's own frame on the paper.
-                if focal.is_member {
+                if focal.at.is_member {
                     Link {
                         class: "mt-1 inline-block font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
-                        to: Route::DataModFocus { module: vec![focal.name.clone()] },
+                        to: Route::DataModFocus { module: vec![focal.at.name.clone()] },
                         "its data ↓"
                     }
                 }
@@ -645,7 +645,7 @@ pub(super) fn FocusPanel(graph: DepGraph, name: String) -> Element {
                 if let Some(state) = state {
                     p { class: "mt-1.5 font-data text-[10px] text-flare", "{state}" }
                 }
-                if focal.manifest_changed {
+                if focal.standing.manifest_changed {
                     p { class: "mt-0.5 font-data text-[10px] text-flare",
                         "Cargo.toml changed — its dependency list"
                     }
@@ -659,7 +659,7 @@ pub(super) fn FocusPanel(graph: DepGraph, name: String) -> Element {
                 }
                 if used_by.is_empty() {
                     p { class: "mt-1 font-data text-[10px] text-ink-soft",
-                        if focal.changed { "nothing depends on it — the change stops here" }
+                        if focal.is_changed() { "nothing depends on it — the change stops here" }
                         else { "nothing in the resolved graph" }
                     }
                 } else {
@@ -687,8 +687,8 @@ pub(super) fn MultiPanel(graph: DepGraph, joined: String) -> Element {
     let sel_ids: HashSet<&str> = graph
         .crates
         .iter()
-        .filter(|c| !c.ghost && sel.contains(c.name.as_str()))
-        .map(|c| c.id.as_str())
+        .filter(|c| !c.ghost && sel.contains(c.at.name.as_str()))
+        .map(|c| c.at.id.as_str())
         .collect();
     let mut deps: HashSet<&str> = HashSet::new();
     let mut users: HashSet<&str> = HashSet::new();
@@ -719,7 +719,7 @@ pub(super) fn MultiPanel(graph: DepGraph, joined: String) -> Element {
                     for name in names.clone() {
                         li {
                             div { class: "flex w-full items-center gap-1.5 px-1 py-0.5",
-                                if let Some(info) = graph.crates.iter().find(|c| c.name == name && !c.ghost) {
+                                if let Some(info) = graph.crates.iter().find(|c| c.at.name == name && !c.ghost) {
                                     StarMark { info: info.clone(), focal: false, box_px: 18.0 }
                                 }
                                 Link {
@@ -774,13 +774,13 @@ pub(super) fn RingPanel(graph: DepGraph, hop: u32) -> Element {
         graph
             .crates
             .iter()
-            .filter(|c| !c.ghost && layout.placed.get(&c.id).is_some_and(|p| p.ring == hop))
+            .filter(|c| !c.ghost && layout.placed.get(&c.at.id).is_some_and(|p| p.ring == hop))
             .cloned()
             .collect()
     };
     crates.sort_by(|a, b| {
-        (std::cmp::Reverse(a.dependents), a.name.as_str())
-            .cmp(&(std::cmp::Reverse(b.dependents), b.name.as_str()))
+        (std::cmp::Reverse(a.standing.dependents), a.at.name.as_str())
+            .cmp(&(std::cmp::Reverse(b.standing.dependents), b.at.name.as_str()))
     });
     let total = crates.len();
     const CHUNK: usize = 14;
@@ -806,18 +806,18 @@ pub(super) fn RingPanel(graph: DepGraph, hop: u32) -> Element {
                     for info in crates.into_iter().take(shown) {
                         li {
                             Link {
-                                to: Route::DepFocus { name: info.name.clone() },
+                                to: Route::DepFocus { name: info.at.name.clone() },
                                 class: "flex w-full items-center gap-1.5 px-1 py-0.5 hover:bg-ink/5",
                                 StarMark { info: info.clone(), focal: false, box_px: 18.0 }
                                 span { class: "truncate font-data text-[11px] text-ink",
-                                    "{info.name}"
-                                    if repeated.contains(info.name.as_str()) {
-                                        span { class: "text-ink-line", " v{info.version}" }
+                                    "{info.at.name}"
+                                    if repeated.contains(info.at.name.as_str()) {
+                                        span { class: "text-ink-line", " v{info.at.version}" }
                                     }
                                 }
-                                if !info.is_member && !repeated.contains(info.name.as_str()) {
+                                if !info.at.is_member && !repeated.contains(info.at.name.as_str()) {
                                     span { class: "ml-auto shrink-0 font-data text-[9.5px] text-ink-soft",
-                                        "v{info.version}"
+                                        "v{info.at.version}"
                                     }
                                 }
                             }

@@ -15,14 +15,14 @@ type GraphResource = Resource<Result<DepGraph, ServerFnError>>;
 
 /// The loaded graph, for route components. `None` only while the shell is
 /// still showing the survey or error state, which never renders an Outlet.
-pub(crate) fn use_graph() -> Option<DepGraph> {
+pub(super) fn use_graph() -> Option<DepGraph> {
     let res = use_context::<GraphResource>();
     let state = res.read();
     state.as_ref().and_then(|r| r.as_ref().ok()).cloned()
 }
 
 /// The browser's back button, from code: one step back along the trail.
-pub(crate) fn history_back() {
+pub(super) fn history_back() {
     #[cfg(target_arch = "wasm32")]
     if let Some(window) = web_sys::window()
         && let Ok(history) = window.history()

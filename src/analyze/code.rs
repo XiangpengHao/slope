@@ -40,7 +40,8 @@ use tokio::sync::OnceCell;
 
 use super::data;
 use crate::graph::data::{
-    CodeGraph, FileInfo, ImplEdge, ItemEdge, ItemKind, ItemMark, MarkRef, Vis,
+    CodeGraph, DeclBody, DeclDiff, DeclHead, FileInfo, ImplEdge, ItemKind, ItemMark, Limits,
+    MarkRef, Reach, Vis,
 };
 use crate::graph::quote::{ItemSource, SrcBlock, SrcLink, SrcRun, Tok};
 
@@ -56,9 +57,14 @@ type ItemSpans = Vec<Vec<(u32, u32)>>;
 /// never a re-read of a file that may have moved on.
 pub(crate) struct CodeIndex {
     pub(crate) graph: CodeGraph,
-    /// Every surveyed file's source text, indexed by [`FileInfo::id`]. It
-    /// never crosses the wire whole.
+    /// Every surveyed file's source text, indexed the way `graph.files` is.
+    /// It never crosses the wire whole.
     sources: Vec<String>,
+    /// Where each mark sits in its own file's item list, by mark id — the key
+    /// into `spans` and `owners`. Server-side, because only the server reads
+    /// the two tables it indexes: it was a field on [`ItemMark`] until the
+    /// audit found the client had never once looked at it.
+    mark_local: Vec<u32>,
     /// Each item's own byte range in its file.
     spans: ItemSpans,
     /// The `impl` or `trait` block each item sits inside, by byte range —
@@ -609,29 +615,25 @@ fn survey_attached(
             .or_default() += count;
     }
 
+    // Fan-in counts every reference that lands on a mark, including the ones
+    // whose other end the survey could only place on a whole file. Those have
+    // no second end to draw, so they are counted here and go no further.
     let mut fan_in: Vec<u32> = vec![0; mark_at.len()];
-    let mut item_edges: Vec<ItemEdge> = edge_acc
-        .into_iter()
-        .map(|((from_file, from, to_file, to), count)| {
-            if let Some(to) = to {
-                fan_in[to as usize] += count;
-            }
-            ItemEdge {
-                from_file,
-                from,
-                to_file,
-                to,
-                count,
-            }
-        })
-        .collect();
-    item_edges.sort_by_key(|e| (e.from_file, e.from, e.to_file, e.to));
-
-    let mut local_refs: Vec<MarkRef> = local_acc
-        .into_iter()
-        .map(|((from, to), count)| MarkRef { from, to, count })
-        .collect();
-    local_refs.sort_by_key(|r| (r.from, r.to));
+    let mut refs: Vec<MarkRef> = Vec::with_capacity(edge_acc.len() + local_acc.len());
+    for ((_, from, _, to), count) in edge_acc {
+        if let Some(to) = to {
+            fan_in[to as usize] += count;
+        }
+        if let (Some(from), Some(to)) = (from, to) {
+            refs.push(MarkRef { from, to, count });
+        }
+    }
+    refs.extend(
+        local_acc
+            .into_iter()
+            .map(|((from, to), count)| MarkRef { from, to, count }),
+    );
+    refs.sort_by_key(|r| (r.from, r.to));
 
     // The landmarks themselves, with the trait impls written for them
     // anywhere in the workspace.
@@ -640,35 +642,36 @@ fn survey_attached(
         impls_of[mark as usize].push(header);
     }
     let mut items: Vec<ItemMark> = Vec::with_capacity(mark_at.len());
+    let mut mark_local: Vec<u32> = Vec::with_capacity(mark_at.len());
     for (id, &(fi, li)) in mark_at.iter().enumerate() {
         let item = &raw[fi as usize].items[li as usize];
         let mut impls = std::mem::take(&mut impls_of[id]);
         impls.sort();
         impls.dedup();
+        mark_local.push(li);
         items.push(ItemMark {
             id: id as u32,
             file: fi,
-            local: li,
-            name: item.name.clone(),
-            label: item.label(),
-            kind: item.kind,
-            vis: item.vis,
-            line: starts[fi as usize].line(item.range.start()),
             parent: parent_of[id],
-            fan_in: fan_in[id],
-            impls,
-            field_rows: std::mem::take(&mut walk.field_rows[id]),
-            variants: std::mem::take(&mut walk.variants[id]),
-            ty: std::mem::take(&mut walk.ty[id]),
-            method_rows: std::mem::take(&mut walk.method_rows[id]),
-            // The structural diff writes these once the graph stands.
-            delta: crate::graph::data::Delta::Same,
-            fields_added: Vec::new(),
-            fields_removed: Vec::new(),
-            variants_added: Vec::new(),
-            variants_removed: Vec::new(),
-            methods_added: Vec::new(),
-            methods_removed: Vec::new(),
+            head: DeclHead {
+                name: item.name.clone(),
+                label: item.label(),
+                kind: item.kind,
+                vis: item.vis,
+                line: starts[fi as usize].line(item.range.start()),
+            },
+            body: DeclBody {
+                field_rows: std::mem::take(&mut walk.field_rows[id]),
+                variants: std::mem::take(&mut walk.variants[id]),
+                ty: std::mem::take(&mut walk.ty[id]),
+                method_rows: std::mem::take(&mut walk.method_rows[id]),
+            },
+            reach: Reach {
+                fan_in: fan_in[id],
+                impls,
+            },
+            // The structural diff writes this once the graph stands.
+            diff: DeclDiff::default(),
         });
     }
 
@@ -679,9 +682,7 @@ fn survey_attached(
 
     let files: Vec<FileInfo> = raw
         .iter()
-        .enumerate()
-        .map(|(i, f)| FileInfo {
-            id: i as u32,
+        .map(|f| FileInfo {
             path: f.path.clone(),
             krate: f.krate.clone(),
         })
@@ -776,21 +777,31 @@ fn survey_attached(
         files,
         items,
         implements,
-        item_edges,
-        local_refs,
+        refs,
         holds: walk.holds,
         ghosts: Vec::new(),
-        unresolved,
-        notes,
-        walk_notes,
+        limits: Limits {
+            unresolved,
+            notes,
+            walk_notes,
+        },
     };
     // The structural diff: per-declaration deltas, ghosts for what the base
     // had, and added/removed hold events, read syntactically from the base.
-    graph.apply_base_diff(dir, &diff, &sources, &spans);
+    graph.apply_base_diff(
+        dir,
+        &diff,
+        super::basediff::Live {
+            sources: &sources,
+            spans: &spans,
+            mark_local: &mark_local,
+        },
+    );
 
     Ok(CodeIndex {
         graph,
         sources,
+        mark_local,
         spans,
         owners,
         ref_spans,
@@ -1465,11 +1476,11 @@ impl CodeIndex {
     /// dedented by the block's indent, so the item stands inside it the way
     /// the file writes it.
     pub(crate) fn item_source(&self, item: u32) -> Option<ItemSource> {
-        let mark = self.graph.items.get(item as usize)?;
+        let mark = self.graph.item(item)?;
         let file = mark.file as usize;
+        let local = *self.mark_local.get(item as usize)? as usize;
         let text = self.sources.get(file)?;
-        let path = self.graph.files.get(file)?.path.clone();
-        let &(start, end) = self.spans.get(file)?.get(mark.local as usize)?;
+        let &(start, end) = self.spans.get(file)?.get(local)?;
         let (start, end) = (start as usize, end as usize);
         if start > end
             || end > text.len()
@@ -1484,7 +1495,7 @@ impl CodeIndex {
         let head = self
             .owners
             .get(file)
-            .and_then(|f| f.get(mark.local as usize).copied().flatten())
+            .and_then(|f| f.get(local).copied().flatten())
             .and_then(|(from, to)| {
                 let (from, to) = (from as usize, to as usize);
                 let brace = text.get(from..to)?.find('{')?;
@@ -1506,7 +1517,7 @@ impl CodeIndex {
         let foot = self
             .owners
             .get(file)
-            .and_then(|f| f.get(mark.local as usize).copied().flatten())
+            .and_then(|f| f.get(local).copied().flatten())
             .map(|(_, to)| to as usize)
             .filter(|&to| to > end && text.get(to - 1..to) == Some("}"))
             .map(|to| (to - 1, to));
@@ -1514,10 +1525,9 @@ impl CodeIndex {
         let mut links = Links::default();
         let mut blocks = Vec::new();
         for at in [head, Some((start, end)), foot].into_iter().flatten() {
-            blocks.push(self.quote(file, at, strip, &mark.label, &mut links)?);
+            blocks.push(self.quote(file, at, strip, &mark.head.label, &mut links)?);
         }
         Some(ItemSource {
-            path,
             blocks,
             links: links.list,
         })

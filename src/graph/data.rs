@@ -82,11 +82,11 @@ impl Vis {
     }
 }
 
-/// One source file in the workspace.
+/// One source file in the workspace. Its id is its index into
+/// [`CodeGraph::files`] — read one back with [`CodeGraph::file`] rather than
+/// storing the index on the file, where it could come to disagree.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct FileInfo {
-    /// Stable within one analysis: index into [`CodeGraph::files`].
-    pub(crate) id: u32,
     /// Path relative to the workspace root, e.g. `src/views/dep/map.rs`.
     pub(crate) path: String,
     /// The cargo **package** that owns this file — `slope-cli`, not the
@@ -130,17 +130,43 @@ pub(crate) enum HoldEvent {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct GhostMark {
     /// `items.len() + index into ghosts` — one id space with the live marks.
-    pub(crate) id: u32,
+    ///
+    /// Private, and assigned by [`CodeGraph::push_ghost`]: the id encodes a
+    /// position in a list the ghost cannot see, so it is not a caller's to
+    /// choose. That method and [`CodeGraph::ghost`] are the only code in the
+    /// crate that knows how the two id spaces meet.
+    id: u32,
+    /// Where it stood at the base.
+    pub(crate) at: GhostAt,
+    /// What its declaration said there.
+    pub(crate) head: DeclHead,
+    /// The rows the base wrote under it.
+    pub(crate) body: BaseBody,
+}
+
+impl GhostMark {
+    /// Where a [`HoldEdge`] lands on it. Stamped by
+    /// [`CodeGraph::push_ghost`], which is the only thing that may set it.
+    pub(crate) fn id(&self) -> u32 {
+        self.id
+    }
+}
+
+/// Where a removed declaration stood. Both may be gone from the working copy
+/// with it, so neither is a [`FileInfo`] the survey still holds.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct GhostAt {
     /// The file that declared it at the base, relative to the workspace root.
-    /// The file itself may be gone too.
     pub(crate) path: String,
-    /// The cargo package that owns that file, as [`FileInfo::krate`].
+    /// The cargo package that owned that file, as [`FileInfo::krate`].
     pub(crate) krate: String,
-    pub(crate) name: String,
-    pub(crate) kind: ItemKind,
-    pub(crate) vis: Vis,
-    /// 1-based line in the base edition of the file.
-    pub(crate) line: u32,
+}
+
+/// The rows a declaration wrote at the base edition. Not [`DeclBody`]: the
+/// diff reads the base syntactically, so a base method is a quoted
+/// (name, signature) and never a [`MethodRow`] with a mark of its own.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct BaseBody {
     /// Fields — or a function's parameters — as the base wrote them.
     pub(crate) field_rows: Vec<DeclRow>,
     /// An enum's variants as the base wrote them.
@@ -151,6 +177,18 @@ pub(crate) struct GhostMark {
     /// ghost's band is drawn whole: the base edition is all there is of it,
     /// so nothing here is gated on a door.
     pub(crate) method_rows: Vec<(String, String)>,
+}
+
+/// One declaration as the base edition wrote it: the head, and every row of
+/// the body, quoted. A ghost *is* this, plus where it stood — so this and a
+/// [`GhostAt`] are all [`CodeGraph::push_ghost`] asks for, and the id is not
+/// part of either. The structural diff builds these and nothing else does, so
+/// it stays off the client with the diff.
+#[cfg(any(feature = "server", test))]
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct GhostDecl {
+    pub(crate) head: DeclHead,
+    pub(crate) body: BaseBody,
 }
 
 /// One quoted row of a declaration: a struct or union field, or a free
@@ -222,20 +260,62 @@ pub(crate) struct ItemMark {
     pub(crate) id: u32,
     /// The file whose source defines it.
     pub(crate) file: u32,
-    /// Index into that file's own items, in source order.
-    pub(crate) local: u32,
-    /// Display name, without any section prefix.
-    pub(crate) name: String,
-    /// The label this item selects by in a URL: `Type::method` inside a
-    /// section, the plain name otherwise.
-    pub(crate) label: String,
-    pub(crate) kind: ItemKind,
-    pub(crate) vis: Vis,
-    pub(crate) line: u32,
     /// Semantic container: the type a method or associated item belongs to,
     /// resolved through the impl's self type even when the impl sits in
     /// another file. `None` for items the file itself contains.
     pub(crate) parent: Option<u32>,
+    /// What its declaration's own head says.
+    pub(crate) head: DeclHead,
+    /// The rows it writes under that head.
+    pub(crate) body: DeclBody,
+    /// What the rest of the workspace does with it.
+    pub(crate) reach: Reach,
+    /// How this declaration differs from the diff base.
+    pub(crate) diff: DeclDiff,
+}
+
+/// What a declaration's own head says — everything rust writes before the
+/// brace, and where it writes it. A live mark and a [`GhostMark`] carry the
+/// same one: a removed declaration had a head too.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DeclHead {
+    /// Display name, without any section prefix.
+    pub(crate) name: String,
+    /// The label this item selects by in a URL: `Type::method` inside a
+    /// section, the plain name otherwise. A ghost has none to select by.
+    pub(crate) label: String,
+    pub(crate) kind: ItemKind,
+    pub(crate) vis: Vis,
+    /// 1-based line in the edition this head was read from.
+    pub(crate) line: u32,
+}
+
+/// The rows a declaration writes under its head, quoted from source. Every
+/// one of them is empty for the kinds that write none.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DeclBody {
+    /// A struct's or union's fields — or a free function's parameters —
+    /// quoted from source in declaration order, each carrying the visibility
+    /// it declares for itself. The data chart quotes them all — what a field
+    /// or a parameter reaches is on the holds edges.
+    pub(crate) field_rows: Vec<DeclRow>,
+    /// An enum's variants as written, in source order — name, payload types,
+    /// and discriminant included.
+    pub(crate) variants: Vec<String>,
+    /// A static's declared type or a free function's return type, as written.
+    /// Empty for a function that returns nothing.
+    pub(crate) ty: String,
+    /// The methods declared for this type anywhere in the workspace, in the
+    /// survey's order — the second band of its block. Every one of them is
+    /// here, whatever its visibility: which ones are rows is a door, and a
+    /// door is the client's to set.
+    pub(crate) method_rows: Vec<MethodRow>,
+}
+
+/// What the rest of the workspace does with one declaration — neither of
+/// these is written where the declaration is, and neither can be read off it.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Reach {
     /// Item-level references reaching it from other files: how much of the
     /// workspace leans on it.
     pub(crate) fan_in: u32,
@@ -244,36 +324,31 @@ pub(crate) struct ItemMark {
     /// workspace. Derives are not here: they stand in the type's own source,
     /// and a derive is not code anyone wrote.
     pub(crate) impls: Vec<String>,
-    /// A struct's or union's fields — or a free function's parameters —
-    /// quoted from source in declaration order, each carrying the visibility
-    /// it declares for itself. The data chart quotes them all — what a field
-    /// or a parameter reaches is on the holds edges. Empty for everything
-    /// else.
-    pub(crate) field_rows: Vec<DeclRow>,
-    /// An enum's variants as written, in source order — name, payload types,
-    /// and discriminant included. Empty for everything that is not an enum.
-    pub(crate) variants: Vec<String>,
-    /// A static's declared type or a free function's return type, as written.
-    /// Empty for everything else, and for a function that returns nothing.
-    pub(crate) ty: String,
-    /// The methods declared for this type anywhere in the workspace, in the
-    /// survey's order — the second band of its block. Every one of them is
-    /// here, whatever its visibility: which ones are rows is a door, and a
-    /// door is the client's to set. Empty for everything that is not a type.
-    pub(crate) method_rows: Vec<MethodRow>,
+}
+
+/// How one declaration differs from the diff base: the verdict, and which
+/// rows moved under it.
+///
+/// One field on [`ItemMark`] rather than seven, because the structural diff
+/// writes all of it at once and long after the survey stands. A freshly
+/// surveyed mark takes the default — the base's shape, nothing moved — so no
+/// caller has to spell out seven empties to say "the diff has not run yet",
+/// and no caller can spell out three of them and forget the rest.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct DeclDiff {
     /// How this declaration differs from the diff base.
     pub(crate) delta: Delta,
-    /// Fields added since the base: indexes into `field_rows`.
+    /// Fields added since the base: indexes into [`ItemMark::field_rows`].
     pub(crate) fields_added: Vec<u32>,
     /// Fields the base had that the working copy dropped, quoted from the
     /// base: (insert before this index of `field_rows`, the row).
     pub(crate) fields_removed: Vec<(u32, DeclRow)>,
-    /// Variants added since the base: indexes into `variants`.
+    /// Variants added since the base: indexes into [`ItemMark::variants`].
     pub(crate) variants_added: Vec<u32>,
     /// Variants the base had that the working copy dropped, quoted from the
     /// base: (insert before this index of `variants`, the variant as written).
     pub(crate) variants_removed: Vec<(u32, String)>,
-    /// Methods added since the base: indexes into `method_rows`.
+    /// Methods added since the base: indexes into [`ItemMark::method_rows`].
     pub(crate) methods_added: Vec<u32>,
     /// Methods the base had that the working copy dropped, quoted from the
     /// base: (insert before this index of `method_rows`, name, signature).
@@ -337,19 +412,6 @@ pub(crate) struct HoldEdge {
     pub(crate) event: Option<HoldEvent>,
 }
 
-/// A reference between two items, aggregated per pair. Endpoints carry their
-/// file, so the client can lift an edge to whatever is visible at the current
-/// fold state without fetching item detail; a `None` item is a reference to a
-/// file as a whole (a `use` of its module).
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct ItemEdge {
-    pub(crate) from_file: u32,
-    pub(crate) from: Option<u32>,
-    pub(crate) to_file: u32,
-    pub(crate) to: Option<u32>,
-    pub(crate) count: u32,
-}
-
 /// One `impl Trait for Type` between two marks the chart draws. The
 /// arrowhead rests on the type, as every family's does: the trait is the
 /// contract, and a change to it travels to everything that promised it.
@@ -364,12 +426,10 @@ pub(crate) struct ImplEdge {
     pub(crate) event: Option<HoldEvent>,
 }
 
-/// A reference between two items of one file, at mark precision, summed. The
-/// cross-file [`ItemEdge`]s carry their endpoints' files because either end
-/// may be a whole file; both ends of one of these is a mark by construction,
-/// so it carries nothing else. The chart needs them apart from the cross-file
-/// list because which file a reference was written in says nothing about
-/// whether one type's code leans on another.
+/// A reference between two marks, summed. Both ends are marks by
+/// construction, and neither carries its file: which file a reference was
+/// written in says nothing about whether one type's code leans on another,
+/// and the file is on the mark for anyone who wants it.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub(crate) struct MarkRef {
     /// The [`ItemMark::id`] whose body names the other. A reference written
@@ -393,12 +453,12 @@ pub(crate) struct CodeGraph {
     /// it stays a string on [`ItemMark::impls`], because it has no second end
     /// to land on.
     pub(crate) implements: Vec<ImplEdge>,
-    /// Cross-file references at item precision, aggregated per pair.
-    pub(crate) item_edges: Vec<ItemEdge>,
-    /// The references the pair above cannot carry: two items of one file,
-    /// both ends a mark. Together the two lists are every resolved reference
-    /// the survey placed at item precision.
-    pub(crate) local_refs: Vec<MarkRef>,
+    /// Every resolved reference the survey placed at item precision, summed
+    /// per pair — across files and inside one file alike. A reference the
+    /// survey could only place on a file as a whole (a `use` of its module)
+    /// has no second end to land on and is not here; it is counted into
+    /// [`ItemMark::fan_in`] and nowhere else.
+    pub(crate) refs: Vec<MarkRef>,
     /// Which type holds which, and through what wrapper — the data
     /// altitude's structure. Every surveyed type is here, private ones
     /// included. Edges carrying a [`HoldEvent`] are the structural diff's:
@@ -407,15 +467,69 @@ pub(crate) struct CodeGraph {
     /// Types, statics, and free functions the base had that the working copy
     /// dropped. Their ids continue after `items`, so `holds` can land on them.
     pub(crate) ghosts: Vec<GhostMark>,
+    /// What this survey could not read, in its own words.
+    pub(crate) limits: Limits,
+}
+
+/// What a survey could not read — the words every cartouche's "what the
+/// survey cannot read" fold is built from, so no chrome has to paraphrase the
+/// survey in prose of its own.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub(crate) struct Limits {
     /// Names the survey could not resolve (type-inference limits). They are
     /// not on the chart; the words on the plate must say so.
     pub(crate) unresolved: u32,
-    /// What the survey could not read about **references**, in plain words —
-    /// the limits of the dashed uses ink.
+    /// What the survey could not read about **references** — the limits of
+    /// the dashed uses ink.
     pub(crate) notes: Vec<String>,
-    /// What the survey could not read about the **holds walk**, in plain words
-    /// — the data chart's limits. Kept apart from `notes` so each cartouche's
-    /// "what the survey cannot read" fold states the limits of the ink its own
-    /// chart draws, and never paraphrases the survey in prose of its own.
+    /// What the survey could not read about the **holds walk** — the data
+    /// chart's limits. Kept apart from `notes` so each fold states the limits
+    /// of the ink its own chart draws, and no more.
     pub(crate) walk_notes: Vec<String>,
+}
+
+impl CodeGraph {
+    /// The live mark one id names.
+    pub(crate) fn item(&self, id: u32) -> Option<&ItemMark> {
+        self.items.get(id as usize)
+    }
+
+    /// The file one [`ItemMark::file`] names.
+    pub(crate) fn file(&self, id: u32) -> Option<&FileInfo> {
+        self.files.get(id as usize)
+    }
+
+    /// The path of the file a mark is written in, relative to the workspace
+    /// root — the two-step every locator and every route needs.
+    pub(crate) fn path_of(&self, mark: &ItemMark) -> Option<&str> {
+        Some(self.file(mark.file)?.path.as_str())
+    }
+
+    /// The ghost one id names, or `None` when the id is a live mark's.
+    ///
+    /// Ghosts share the marks' id space, continuing after `items`, so that a
+    /// [`HoldEdge`] can land on either without knowing which it has. This is
+    /// the only place that decodes that, and [`CodeGraph::push_ghost`] the
+    /// only place that encodes it.
+    pub(crate) fn ghost(&self, id: u32) -> Option<&GhostMark> {
+        (id as usize)
+            .checked_sub(self.items.len())
+            .and_then(|at| self.ghosts.get(at))
+    }
+
+    /// Seat a declaration the base had and the working copy dropped, and hand
+    /// back the id a [`HoldEdge`] can land on. The id is stamped here, not
+    /// passed in: it is a position in these two lists, which is the graph's
+    /// business and no caller's.
+    #[cfg(any(feature = "server", test))]
+    pub(crate) fn push_ghost(&mut self, at: GhostAt, decl: GhostDecl) -> u32 {
+        let id = (self.items.len() + self.ghosts.len()) as u32;
+        self.ghosts.push(GhostMark {
+            id,
+            at,
+            head: decl.head,
+            body: decl.body,
+        });
+        id
+    }
 }

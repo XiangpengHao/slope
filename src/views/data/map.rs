@@ -405,8 +405,11 @@ impl DataMark {
     /// The counted words this block writes at its foot.
     fn fold_words(&self) -> Vec<String> {
         let mut folds = Vec::new();
-        if self.held_by > 0 {
-            folds.push(format!("held by {}", plural(self.held_by as usize, "type")));
+        if self.seat.held_by > 0 {
+            folds.push(format!(
+                "held by {}",
+                plural(self.seat.held_by as usize, "type")
+            ));
         }
         folds
     }
@@ -414,16 +417,16 @@ impl DataMark {
     /// The undrawn-ink counts, for the block's hover words.
     fn count_words(&self) -> String {
         let mut parts = Vec::new();
-        if self.named_by > 0 {
+        if self.undrawn.named_by > 0 {
             parts.push(format!(
                 "named by {}",
-                plural(self.named_by as usize, "signature")
+                plural(self.undrawn.named_by as usize, "signature")
             ));
         }
         // Bodies, not references: the sheet lists them one row each, so the
         // hover word counts the same things the rows do.
-        if !self.used_by.is_empty() {
-            parts.push(match self.used_by.len() {
+        if !self.undrawn.used_by.is_empty() {
+            parts.push(match self.undrawn.used_by.len() {
                 1 => "used by 1 body".to_string(),
                 n => format!("used by {n} bodies"),
             });
@@ -462,21 +465,21 @@ impl MeasuredBlock {
     /// contains is wider than its own words — and the height is every line and
     /// every nested block it draws.
     fn measure(mark: &DataMark, kids: Vec<Self>) -> Self {
-        let decl = mark.kind.decl_words(mark.vis);
-        let head = format!("{decl} {}", mark.name);
+        let decl = mark.head.kind.decl_words(mark.head.vis);
+        let head = format!("{decl} {}", mark.head.name);
         let locator = mark.locator();
         let letter = mark.letter();
         let folds = mark.fold_words();
 
         // What the brackets have to enclose: a shape's rows, or — for a
         // static — the one line that declares its type.
-        let body_rows = match mark.kind {
+        let body_rows = match mark.head.kind {
             ItemKind::Static | ItemKind::Const | ItemKind::TypeAlias => {
-                usize::from(!mark.ty.is_empty())
+                usize::from(!mark.rows.ty.is_empty())
             }
-            _ => mark.fields.len() + mark.variants.len(),
+            _ => mark.rows.fields.len() + mark.rows.variants.len(),
         };
-        let (open, close) = mark.kind.brackets(body_rows);
+        let (open, close) = mark.head.kind.brackets(body_rows);
         let mut widest = text_w(&head, 10.5)
             + if letter.is_some() { 12.0 } else { 0.0 }
             + if open.is_empty() {
@@ -485,10 +488,10 @@ impl MeasuredBlock {
                 text_w(open, 10.5) + 4.0
             };
         let wrapping = MARK_MAX_W - PAD_X;
-        for row in &mark.fields {
+        for row in &mark.rows.fields {
             widest = widest.max((text_w(&row.written(), 10.0) + ROW_INDENT).min(wrapping));
         }
-        for row in &mark.variants {
+        for row in &mark.rows.variants {
             widest = widest.max((text_w(&row.decl, 10.0) + ROW_INDENT).min(wrapping));
         }
         for fold in &folds {
@@ -496,8 +499,8 @@ impl MeasuredBlock {
             // font's exact advance the last characters clip. Carry slack.
             widest = widest.max(text_w(fold, 9.0) * META_SLACK);
         }
-        if !mark.ty.is_empty() {
-            widest = widest.max((text_w(&mark.ty, 9.5) + ROW_INDENT).min(wrapping));
+        if !mark.rows.ty.is_empty() {
+            widest = widest.max((text_w(&mark.rows.ty, 9.5) + ROW_INDENT).min(wrapping));
         }
         let core_w = (widest + PAD_X).clamp(MARK_MIN_W, MARK_MAX_W);
 
@@ -505,16 +508,16 @@ impl MeasuredBlock {
         let w = core_w.max(if kids.is_empty() { 0.0 } else { kids_w + PAD_X });
         let usable = w - PAD_X;
 
-        let ty_lines = if mark.ty.is_empty() {
+        let ty_lines = if mark.rows.ty.is_empty() {
             0.0
         } else {
-            wrapped(&mark.ty, 9.5, usable - ROW_INDENT)
+            wrapped(&mark.rows.ty, 9.5, usable - ROW_INDENT)
         };
         let core_h = PAD_TOP
             + HEAD_H
             + ty_lines * TY_H
-            + mark.fields.len() as f64 * ROW_H
-            + mark.variants.len() as f64 * ROW_H
+            + mark.rows.fields.len() as f64 * ROW_H
+            + mark.rows.variants.len() as f64 * ROW_H
             + if close.is_empty() { 0.0 } else { ROW_H };
         let kids_band = if kids.is_empty() {
             0.0
@@ -531,18 +534,18 @@ impl MeasuredBlock {
         MeasuredBlock {
             id: mark.id,
             decl,
-            name: mark.name.clone(),
+            name: mark.head.name.clone(),
             letter,
-            ghost: mark.ghost,
+            ghost: mark.state.ghost,
             is_static: mark.is_static(),
-            is_enum: mark.kind == ItemKind::Enum,
+            is_enum: mark.head.kind == ItemKind::Enum,
             is_root: mark.is_root(),
             open,
             close,
-            fields: mark.fields.clone(),
-            variants: mark.variants.clone(),
-            ty: mark.ty.clone(),
-            ty_target: mark.ty_target.clone(),
+            fields: mark.rows.fields.clone(),
+            variants: mark.rows.variants.clone(),
+            ty: mark.rows.ty.clone(),
+            ty_target: mark.rows.ty_target.clone(),
             kids,
             kid_at,
             kids_h,
@@ -550,8 +553,8 @@ impl MeasuredBlock {
             folds,
             counts: mark.count_words(),
             locator,
-            path: mark.path.clone(),
-            label: mark.label.clone(),
+            path: mark.head.path.clone(),
+            label: mark.head.label.clone(),
             size: (w, h),
         }
     }
@@ -623,11 +626,12 @@ impl From<&DataModel> for DataDrawing {
     /// Measure every block around its kids, place them, and gather what the
     /// chart draws.
     fn from(model: &DataModel) -> Self {
-        let by_id: HashMap<u32, &DataMark> = model.marks.iter().map(|m| (m.id, m)).collect();
+        let by_id = model.by_id();
         // Post-order: a block is measured around its kids, so the kids go first.
         fn measured(id: u32, by_id: &HashMap<u32, &DataMark>) -> Option<MeasuredBlock> {
             let mark = by_id.get(&id)?;
             let kids = mark
+                .seat
                 .kids
                 .iter()
                 .filter_map(|&kid| measured(kid, by_id))
@@ -639,7 +643,7 @@ impl From<&DataModel> for DataDrawing {
         let mut views: HashMap<u32, MeasuredBlock> = HashMap::new();
         for mark in &model.marks {
             // Only the blocks the frames shelve directly; nested ones are inside.
-            if matches!(mark.tier, Tier::Nested(_)) && !mark.ghost {
+            if matches!(mark.seat.tier, Tier::Nested(_)) && !mark.state.ghost {
                 continue;
             }
             if let Some(view) = measured(mark.id, &by_id) {
@@ -649,9 +653,9 @@ impl From<&DataModel> for DataDrawing {
         }
         let mut rows: HashMap<Anchor, FoldView> = HashMap::new();
         for frame in &model.frames {
-            if frame.folded {
+            if frame.fold.folded {
                 let anchor = Anchor::Mod(frame.id);
-                let words = match frame.packed {
+                let words = match frame.fold.packed {
                     0 => "folded".to_string(),
                     n => format!("+ {}", plural(n as usize, "item")),
                 };
@@ -748,7 +752,7 @@ impl From<&DataModel> for DataDrawing {
                     label,
                     key: frame.key(),
                     words: frame.words(),
-                    folded: frame.folded,
+                    folded: frame.fold.folded,
                 }
             })
             .collect();
@@ -851,7 +855,7 @@ impl From<&DataModel> for DataDrawing {
 /// numbers, punctuation. The one run that names the row's held workspace type
 /// is bold on top of its class, so `Vec<FileDetail>` still reads as the
 /// wrapper it is around the type it reaches.
-pub(crate) fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool)> {
+pub(super) fn spans(text: &str, target: &str) -> Vec<(&'static str, String, bool)> {
     const KEYWORDS: [&str; 8] = ["dyn", "mut", "impl", "fn", "pub", "crate", "const", "as"];
     let ident = |c: char| c.is_alphanumeric() || c == '_';
     let mut out: Vec<(&'static str, String, bool)> = Vec::new();
@@ -1502,12 +1506,12 @@ const READ_ZOOM: f64 = 0.5;
 /// The camera as the reviewer last left it, surviving route-variant
 /// remounts. Provided by the app shell, which outlives every remount.
 #[derive(Clone, Copy)]
-pub(crate) struct DataCamera {
-    pub(crate) viewport: Signal<Option<Viewport>>,
+pub(in crate::views) struct DataCamera {
+    pub(in crate::views) viewport: Signal<Option<Viewport>>,
 }
 
 impl DataCamera {
-    pub(crate) fn new() -> Self {
+    pub(in crate::views) fn new() -> Self {
         Self {
             viewport: Signal::new(None),
         }
@@ -1916,40 +1920,42 @@ fn FitInsets(top: f64, right: f64, bottom: f64, left: f64) -> Element {
 mod tests {
     use super::*;
     use crate::graph::data::Vis;
-    use crate::views::data::model::RowState;
-    use crate::views::data::model::Tier;
+    use crate::views::data::model::{
+        MarkHead, MarkRows, MarkSeat, MarkState, RowState, Tier, Undrawn,
+    };
 
     fn mark(id: u32, name: &str, fields: Vec<(&str, &str, &str)>, kids: Vec<u32>) -> DataMark {
         DataMark {
             id,
             frame: 0,
-            kind: ItemKind::Struct,
-            vis: Vis::Pub,
-            name: name.to_string(),
-            label: name.to_string(),
-            path: "src/graph/data.rs".to_string(),
-            line: 1,
-            delta: crate::graph::data::Delta::Same,
-            ghost: false,
-            fields: fields
-                .into_iter()
-                .map(|(name, decl, target)| FieldRow {
-                    name: name.to_string(),
-                    decl: decl.to_string(),
-                    vis: crate::graph::data::Vis::Private,
-                    target: Held::named(target),
-                    state: RowState::Same,
-                })
-                .collect(),
-            variants: Vec::new(),
-            ty: String::new(),
-            ty_target: Held::default(),
-            tier: Tier::Root,
-            kids,
-            named_by: 0,
-            used_by: Vec::new(),
-            unseen_uses: Vec::new(),
-            held_by: 0,
+            head: MarkHead {
+                kind: ItemKind::Struct,
+                vis: Vis::Pub,
+                name: name.to_string(),
+                label: name.to_string(),
+                path: "src/graph/data.rs".to_string(),
+                line: 1,
+            },
+            rows: MarkRows {
+                fields: fields
+                    .into_iter()
+                    .map(|(name, decl, target)| FieldRow {
+                        name: name.to_string(),
+                        decl: decl.to_string(),
+                        vis: crate::graph::data::Vis::Private,
+                        target: Held::named(target),
+                        state: RowState::Same,
+                    })
+                    .collect(),
+                ..MarkRows::default()
+            },
+            state: MarkState::default(),
+            seat: MarkSeat {
+                tier: Tier::Root,
+                kids,
+                held_by: 0,
+            },
+            undrawn: Undrawn::default(),
         }
     }
 

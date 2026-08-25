@@ -6,11 +6,11 @@ use std::collections::HashMap;
 
 pub(super) struct ManifestEvent {
     /// Dependency name as declared (the table key).
-    pub(crate) name: String,
-    pub(crate) kind: DepKind,
-    pub(crate) event: DepEvent,
+    pub(super) name: String,
+    pub(super) kind: DepKind,
+    pub(super) event: DepEvent,
     /// For removals: the old requirement, for the ghost's caption.
-    pub(crate) detail: Option<String>,
+    pub(super) detail: Option<String>,
 }
 
 /// One dependency table flattened to `name -> requirement`.
