@@ -92,7 +92,7 @@ pub(crate) struct Epoch {
 /// The full analysis result: every resolved crate and edge, plus the diff.
 /// The client decides what to draw; it never receives less than the truth.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub(crate) struct WorkspaceGraph {
+pub(crate) struct DepGraph {
     /// Workspace display name (root directory name).
     pub(crate) name: String,
     /// Absolute workspace root path.

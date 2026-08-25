@@ -16,7 +16,7 @@ use dioxus_flow::prelude::{
     Point, Rect, Side, Size,
 };
 
-use crate::graph::dep::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
+use crate::graph::dep::{CrateInfo, DepEvent, DepKind, DepGraph};
 use crate::views::chrome::{narrow_viewport, prefers_reduced_motion, window_size};
 use crate::views::dep::layout::{DEFAULT_CAP, RadialLayout};
 use crate::views::dep::star::{StarData, StarNode};
@@ -102,7 +102,7 @@ struct DepDrawing {
     names: Vec<String>,
 }
 
-impl WorkspaceGraph {
+impl DepGraph {
     /// Every crate on a route from the root down to the selection: the crates
     /// that depend on it, then the crates that depend on those, hop by hop
     /// until the chain runs out of users — which is where the root sits. The
@@ -138,7 +138,7 @@ impl DepDrawing {
     /// star; what changes with the selection is which edges are drawn, which
     /// stars carry the focal ring, and which are named at rest.
     fn build(
-        graph: &WorkspaceGraph,
+        graph: &DepGraph,
         layout: &RadialLayout,
         sel_names: Vec<String>,
         dir: DirFilter,
@@ -640,7 +640,7 @@ impl DrawnCap {
 
 /// The rings chart, mounted once for the whole session.
 #[component]
-pub(super) fn Chart(graph: WorkspaceGraph) -> Element {
+pub(super) fn Chart(graph: DepGraph) -> Element {
     let dep = use_dep();
     let drawn_cap = use_context::<DrawnCap>().cap;
     let flow = dioxus_flow::use_flow_handle::<StarData>();
@@ -978,8 +978,8 @@ mod tests {
         }
     }
 
-    fn graph(names: &[&str], links: Vec<DepLink>) -> WorkspaceGraph {
-        WorkspaceGraph {
+    fn graph(names: &[&str], links: Vec<DepLink>) -> DepGraph {
+        DepGraph {
             name: "test".into(),
             root: "/test".into(),
             root_crate: Some("root@1.0.0".into()),
@@ -995,7 +995,7 @@ mod tests {
 
     /// Edge ids, sorted. Lines run from the dependency into its user, so an
     /// id reads `dependency->user`.
-    fn drawn(graph: &WorkspaceGraph, sel: &str, dir: DirFilter) -> Vec<String> {
+    fn drawn(graph: &DepGraph, sel: &str, dir: DirFilter) -> Vec<String> {
         let layout = RadialLayout::build(graph, DEFAULT_CAP);
         let drawing = DepDrawing::build(graph, &layout, vec![sel.to_string()], dir, true, None);
         let mut ids: Vec<String> = drawing.lines.iter().map(|e| e.id.clone()).collect();

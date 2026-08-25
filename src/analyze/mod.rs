@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 
 use cargo_metadata::{DependencyKind, MetadataCommand};
 
-use crate::graph::dep::{CrateInfo, DepEvent, DepKind, DepLink, WorkspaceGraph};
+use crate::graph::dep::{CrateInfo, DepEvent, DepKind, DepLink, DepGraph};
 
 /// Whether the survey charts test-only code. Off by default (2026-08-24,
 /// user): a reviewer reads the workspace the workspace ships, and a fixture
@@ -82,7 +82,7 @@ pub(super) fn member_dirs(dir: &Path) -> Result<Vec<(String, String)>, String> {
     Ok(dirs)
 }
 
-pub(crate) fn analyze() -> Result<WorkspaceGraph, String> {
+pub(crate) fn analyze() -> Result<DepGraph, String> {
     let dir = workspace_dir();
     let manifest = dir.join("Cargo.toml");
     if !manifest.exists() {
@@ -366,7 +366,7 @@ pub(crate) fn analyze() -> Result<WorkspaceGraph, String> {
     crates.extend(ghost_nodes);
     crates.sort_by(|a, b| a.name.cmp(&b.name));
 
-    Ok(WorkspaceGraph {
+    Ok(DepGraph {
         name,
         root: root.display().to_string(),
         root_crate: root_pkg.map(|id| node_id[&id].clone()),

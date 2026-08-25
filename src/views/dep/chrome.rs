@@ -8,7 +8,7 @@ use std::collections::HashSet;
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::graph::dep::{CrateInfo, DepEvent, DepKind, WorkspaceGraph};
+use crate::graph::dep::{CrateInfo, DepEvent, DepKind, DepGraph};
 use crate::views::chrome::{Altitude, AltitudeSwitch, plural};
 use crate::views::dep::layout::{DEFAULT_CAP, RadialLayout};
 use crate::views::dep::star::StarMark;
@@ -19,7 +19,7 @@ use crate::views::dep::{DirFilter, step_ring, use_dep};
 /// it. One plate, because the epoch and its changes are one thought.
 #[component]
 pub(super) fn TitleBlock(
-    graph: WorkspaceGraph,
+    graph: DepGraph,
     #[props(default = true)] changes_open: bool,
 ) -> Element {
     let dep = use_dep();
@@ -168,7 +168,7 @@ fn DirectionToggle() -> Element {
 /// Search: find a crate by name and focus it. Arrows walk the hits, Enter
 /// opens the marked one, Escape clears.
 #[component]
-pub(super) fn SearchBox(graph: WorkspaceGraph) -> Element {
+pub(super) fn SearchBox(graph: DepGraph) -> Element {
     let mut query = use_signal(String::new);
     let mut active = use_signal(|| 0usize);
     let nav = use_navigator();
@@ -542,7 +542,7 @@ fn Breadcrumb() -> Element {
 /// The focused crate's fact sheet: the trail, identity, state, and both
 /// directions of its neighborhood as clickable lists.
 #[component]
-pub(super) fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
+pub(super) fn FocusPanel(graph: DepGraph, name: String) -> Element {
     let Some(focal) = graph
         .crates
         .iter()
@@ -681,7 +681,7 @@ pub(super) fn FocusPanel(graph: WorkspaceGraph, name: String) -> Element {
 /// The multi-selection roster: every selected crate, each removable, and
 /// what the union is drawing. Refine on the chart with ctrl-click, or here.
 #[component]
-pub(super) fn MultiPanel(graph: WorkspaceGraph, joined: String) -> Element {
+pub(super) fn MultiPanel(graph: DepGraph, joined: String) -> Element {
     let names: Vec<String> = joined.split('+').map(str::to_string).collect();
     let sel: HashSet<&str> = names.iter().map(String::as_str).collect();
     let sel_ids: HashSet<&str> = graph
@@ -758,7 +758,7 @@ pub(super) fn MultiPanel(graph: WorkspaceGraph, joined: String) -> Element {
 /// One ring's roster: every crate at that dependency distance. The chart is
 /// drawing all of their edges (in the toggled direction).
 #[component]
-pub(super) fn RingPanel(graph: WorkspaceGraph, hop: u32) -> Element {
+pub(super) fn RingPanel(graph: DepGraph, hop: u32) -> Element {
     // Same cap the chart uses for this route, so the roster matches the
     // drawn ring exactly — including the collapsed "N+" band.
     let cap = hop.max(DEFAULT_CAP);

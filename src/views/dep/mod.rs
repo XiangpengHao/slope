@@ -18,7 +18,7 @@ use std::collections::HashSet;
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::graph::dep::WorkspaceGraph;
+use crate::graph::dep::DepGraph;
 use crate::views::dep::chrome::{SearchBox, TitleBlock};
 use crate::views::dep::map::Chart;
 use crate::views::shell::use_graph;
@@ -190,7 +190,7 @@ pub(crate) fn DepRing(hop: u32) -> Element {
 /// with the URL. Mounted by the app shell, which has already loaded the
 /// analysis this chart reads.
 #[component]
-pub(crate) fn DepShell(graph: WorkspaceGraph) -> Element {
+pub(crate) fn DepShell(graph: DepGraph) -> Element {
     let dep = use_dep();
     let route = use_route::<Route>();
 

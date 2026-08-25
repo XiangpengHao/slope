@@ -4,18 +4,18 @@
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::graph::dep::WorkspaceGraph;
-use crate::load::workspace_graph;
+use crate::graph::dep::DepGraph;
+use crate::load::dep_graph;
 use crate::views::data::map::DataCamera;
 use crate::views::data::{DataState, DataSurvey};
 use crate::views::dep::map::DrawnCap;
 use crate::views::dep::{DepShell, DepState};
 
-type GraphResource = Resource<Result<WorkspaceGraph, ServerFnError>>;
+type GraphResource = Resource<Result<DepGraph, ServerFnError>>;
 
 /// The loaded graph, for route components. `None` only while the shell is
 /// still showing the survey or error state, which never renders an Outlet.
-pub(crate) fn use_graph() -> Option<WorkspaceGraph> {
+pub(crate) fn use_graph() -> Option<DepGraph> {
     let res = use_context::<GraphResource>();
     let state = res.read();
     state.as_ref().and_then(|r| r.as_ref().ok()).cloned()
@@ -51,7 +51,7 @@ if (!window.__slopeNavKeys) {
 /// Wraps every page.
 #[component]
 pub(crate) fn AppShell() -> Element {
-    let resource: GraphResource = use_resource(workspace_graph);
+    let resource: GraphResource = use_resource(dep_graph);
     use_context_provider(|| resource);
 
     // Every store of review-session state is provided here, on the layout

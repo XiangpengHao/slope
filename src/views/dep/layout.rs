@@ -16,7 +16,7 @@ use std::f64::consts::TAU;
 
 use dioxus_flow::prelude::Point;
 
-use crate::graph::dep::{DepEvent, WorkspaceGraph};
+use crate::graph::dep::{DepEvent, DepGraph};
 
 /// How many rings the chart shows by default: everything farther collapses
 /// onto the outermost ring as one "N+ hops" band, so the plate stays
@@ -64,7 +64,7 @@ impl RadialLayout {
     /// Lay the graph out on rings, collapsing everything past `cap` hops onto
     /// the outermost ring. Angles never depend on the cap, so expanding only
     /// moves collapsed stars radially outward to their true rings.
-    pub(crate) fn build(graph: &WorkspaceGraph, cap: u32) -> Self {
+    pub(crate) fn build(graph: &DepGraph, cap: u32) -> Self {
         let ghosts: HashSet<&str> = graph
             .crates
             .iter()
@@ -344,8 +344,8 @@ mod tests {
         }
     }
 
-    fn graph(root: Option<&str>, crates: Vec<CrateInfo>, links: Vec<DepLink>) -> WorkspaceGraph {
-        WorkspaceGraph {
+    fn graph(root: Option<&str>, crates: Vec<CrateInfo>, links: Vec<DepLink>) -> DepGraph {
+        DepGraph {
             name: "test".into(),
             root: "/test".into(),
             root_crate: root.map(str::to_string),

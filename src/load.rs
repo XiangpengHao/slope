@@ -10,7 +10,7 @@
 use dioxus::prelude::*;
 
 use crate::graph::data::CodeGraph;
-use crate::graph::dep::WorkspaceGraph;
+use crate::graph::dep::DepGraph;
 use crate::graph::quote::ItemSource;
 
 /// Analyze the target workspace: resolved dependency graph via
@@ -18,7 +18,7 @@ use crate::graph::quote::ItemSource;
 /// `SLOPE_WORKSPACE` (falling back to the server's working directory);
 /// `SLOPE_BASE` overrides the diff base revision.
 #[server]
-pub(crate) async fn workspace_graph() -> Result<WorkspaceGraph, ServerFnError> {
+pub(crate) async fn dep_graph() -> Result<DepGraph, ServerFnError> {
     tokio::task::spawn_blocking(crate::analyze::analyze)
         .await
         .map_err(|e| ServerFnError::new(e.to_string()))?
