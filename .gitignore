@@ -11,3 +11,4 @@
 **/*.rs.bk
 
 /.impeccable
+.direnv

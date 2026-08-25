@@ -96,6 +96,11 @@ pub(crate) fn analyze() -> Result<DepGraph, String> {
     }
 
     let meta = MetadataCommand::new()
+        // Cargo discovers `.cargo/config.toml` from its working directory,
+        // not from `--manifest-path`. Run inside the reviewed workspace so
+        // target-specific settings such as unstable features and source
+        // replacements are part of the same resolution its own builds use.
+        .current_dir(&dir)
         .manifest_path(&manifest)
         .exec()
         .map_err(|e| format!("cargo metadata failed: {e}"))?;

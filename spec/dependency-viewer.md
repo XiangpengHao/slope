@@ -259,7 +259,8 @@ flaring — orientation and diff in the same first glance.
 
 ## Data and diff model
 
-- Graph source: `cargo metadata` — full resolved graph (workspace members,
+- Graph source: `cargo metadata`, launched from the target workspace so cargo
+  reads its `.cargo/config.toml` — full resolved graph (workspace members,
   direct externals, transitive externals), edge kinds normal/dev/build.
 - Diff source: auto-detect VCS (jj first, git fallback; repos may be
   colocated). Default epoch: working copy vs trunk (main/master). Explicit

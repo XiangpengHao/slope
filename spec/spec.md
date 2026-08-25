@@ -33,9 +33,10 @@ Decided so far:
 How it works today:
 
 - backend (`src/analyze/`): runs `cargo metadata` on the target workspace
-  (`SLOPE_WORKSPACE` env, default: current dir). detects the VCS (git
-  first, jj fallback) and diffs the working copy against trunk
-  (main/master merge-base). `SLOPE_BASE` overrides the base revision.
+  (`SLOPE_WORKSPACE` env, default: current dir), with that workspace as the
+  cargo process working directory so its `.cargo/config.toml` is honored.
+  detects the VCS (git first, jj fallback) and diffs the working copy against
+  trunk (main/master merge-base). `SLOPE_BASE` overrides the base revision.
 - a crate is CHANGED when files in its directory changed in that window.
   AFFECTED = transitive dependents of a changed crate, graded by hops.
 - manifest edits are compared against the base revision Cargo.toml:
