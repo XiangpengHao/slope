@@ -57,6 +57,42 @@ body {
   display: none;
 }
 
+/* The visibility reading's slider: the chart's own furniture, not the
+   browser's — a hairline rule for the scale and a small square of ink for the
+   thumb, the same two marks every plate is drawn with. The rungs are labelled
+   underneath, so the track carries no ticks of its own. */
+.slope input[type="range"].vis-slide {
+  appearance: none;
+  -webkit-appearance: none;
+  height: 9px;
+  background: transparent;
+  cursor: pointer;
+}
+.slope input[type="range"].vis-slide::-webkit-slider-runnable-track {
+  height: 1px;
+  background: var(--color-ink-line);
+}
+.slope input[type="range"].vis-slide::-moz-range-track {
+  height: 1px;
+  background: var(--color-ink-line);
+}
+.slope input[type="range"].vis-slide::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 6px;
+  height: 9px;
+  margin-top: -4px;
+  border: 0;
+  background: var(--color-ink);
+}
+.slope input[type="range"].vis-slide::-moz-range-thumb {
+  width: 6px;
+  height: 9px;
+  border: 0;
+  border-radius: 0;
+  background: var(--color-ink);
+}
+
 /* A paper plate with the chart's double-ruled frame. The inner hairline is
    drawn with inset shadows so it also works on replaced elements (inputs). */
 .plate {

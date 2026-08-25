@@ -465,7 +465,7 @@ impl MeasuredBlock {
     /// contains is wider than its own words — and the height is every line and
     /// every nested block it draws.
     fn measure(mark: &DataMark, kids: Vec<Self>) -> Self {
-        let decl = mark.head.kind.decl_words(mark.head.vis);
+        let decl = mark.head.kind.decl_words(&mark.head.vis);
         let head = format!("{decl} {}", mark.head.name);
         let locator = mark.locator();
         let letter = mark.letter();
@@ -1582,7 +1582,7 @@ pub(super) fn DataChart(
 
     let chart = use_memo(use_reactive((&graph,), {
         move |(graph,)| {
-            let model = DataModel::build(&graph, *data.ref_dir.read(), &data.folds.read());
+            let model = DataModel::build(&graph, &data.reading());
             DataDrawing::from(&model)
         }
     }));

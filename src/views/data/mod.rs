@@ -29,7 +29,7 @@ pub(crate) mod quote;
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::graph::data::CodeGraph;
+use crate::graph::data::{CodeGraph, Vis};
 use crate::load::code_graph;
 use crate::views::chrome::plural;
 use crate::views::data::chrome::{DataCartouche, DataSearch, DataSheet};
@@ -134,6 +134,123 @@ impl RefDir {
     }
 }
 
+/// How narrow a declaration may be and still be drawn — the visibility
+/// reading, one stop per rung rust writes. Each stop keeps everything the
+/// stops above it keep and adds the next rung down, so sliding from `pub` to
+/// `all` is one widening move and never a different chart.
+///
+/// It reads the visibility **as declared**: the keyword rust writes in front
+/// of the declaration, not what a chain of private modules leaves reachable
+/// from outside. Effective reachability is a resolution this survey does not
+/// run, and the one thing a reading may never do is guess.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub(super) enum VisFloor {
+    /// Only what leaves the crate: `pub`.
+    Pub,
+    /// `pub` and `pub(crate)`.
+    Crate,
+    /// The rungs above, plus `pub(super)` and `pub(in path)`.
+    Super,
+    /// Every declaration the survey read, private state included. The default:
+    /// what the chart drew before there was a reading to choose.
+    #[default]
+    All,
+}
+
+impl VisFloor {
+    /// The stops in reading order, widest first — the slider's own scale, and
+    /// the only place their order is written.
+    pub(super) const STOPS: [VisFloor; 4] = [
+        VisFloor::Pub,
+        VisFloor::Crate,
+        VisFloor::Super,
+        VisFloor::All,
+    ];
+
+    /// Whether this reading draws a declaration written that visible.
+    pub(super) fn admits(self, vis: &Vis) -> bool {
+        match self {
+            VisFloor::Pub => matches!(vis, Vis::Pub),
+            VisFloor::Crate => matches!(vis, Vis::Pub | Vis::Crate),
+            VisFloor::Super => !matches!(vis, Vis::Private),
+            VisFloor::All => true,
+        }
+    }
+
+    /// The widest reading that still draws a declaration written that visible
+    /// — where the chart has to slide to for a reviewer who asked for that
+    /// declaration by name.
+    pub(super) fn showing(vis: &Vis) -> Self {
+        match vis {
+            Vis::Pub => VisFloor::Pub,
+            Vis::Crate => VisFloor::Crate,
+            Vis::Super | Vis::In(_) => VisFloor::Super,
+            Vis::Private => VisFloor::All,
+        }
+    }
+
+    /// The stop in rust's own words, for the slider's scale.
+    pub(super) fn label(self) -> &'static str {
+        match self {
+            VisFloor::Pub => "pub",
+            VisFloor::Crate => "pub(crate)",
+            VisFloor::Super => "pub(super)",
+            VisFloor::All => "all",
+        }
+    }
+
+    /// What the stop draws, in a sentence, for its hover words.
+    pub(super) fn hint(self) -> &'static str {
+        match self {
+            VisFloor::Pub => "only declarations written pub — what leaves the crate",
+            VisFloor::Crate => "pub and pub(crate) — the crate's own state as well",
+            VisFloor::Super => "also pub(super) and pub(in path) — everything but private state",
+            VisFloor::All => "every declaration the survey read, private state included",
+        }
+    }
+
+    /// Where the slider's thumb rests, and which stop a thumb dragged there
+    /// means. The scale is [`VisFloor::STOPS`]; a value off it means the
+    /// reading does not move.
+    pub(super) fn step(self) -> usize {
+        Self::STOPS
+            .iter()
+            .position(|stop| *stop == self)
+            .unwrap_or(0)
+    }
+
+    /// The stop one step of the slider names, read back from the input's own
+    /// string value.
+    pub(super) fn at_step(step: &str) -> Option<Self> {
+        Self::STOPS.get(step.trim().parse::<usize>().ok()?).copied()
+    }
+
+    /// How many of the survey's data declarations this reading leaves off the
+    /// paper. The chart states what it draws; this is the one number that
+    /// states what it does not, so a narrow reading never reads as an empty
+    /// workspace.
+    pub(super) fn off_paper(self, graph: &CodeGraph) -> usize {
+        graph
+            .items
+            .iter()
+            .filter(|mark| mark.head.kind.is_data() && mark.parent.is_none())
+            .filter(|mark| !self.admits(&mark.head.vis))
+            .count()
+    }
+}
+
+/// The whole reading one build of the chart draws: which direction its uses
+/// edges anchor in, how narrow a declaration may be and still be drawn, and
+/// which modules the reviewer folded by hand. None of the three is a fact
+/// about the workspace — each is a choice the reviewer made about this
+/// reading of it — so they travel into [`DataModel::build`] together.
+#[derive(Clone, PartialEq, Debug, Default)]
+pub(super) struct DataReading {
+    pub(super) ref_dir: RefDir,
+    pub(super) vis_floor: VisFloor,
+    pub(super) folds: Folds,
+}
+
 /// The data chart's own review-session state. Both stores are this altitude's:
 /// a fold is a reading and so is the direction the uses edges are read in, and
 /// what the chart draws is the reading, while the URL carries the selection.
@@ -146,6 +263,8 @@ pub(super) struct DataState {
     pub(super) folds: Signal<Folds>,
     /// Which reading of the chart's uses edges is drawn.
     pub(super) ref_dir: Signal<RefDir>,
+    /// How narrow a declaration may be and still be drawn.
+    pub(super) vis_floor: Signal<VisFloor>,
 }
 
 impl DataState {
@@ -153,6 +272,18 @@ impl DataState {
         Self {
             folds: Signal::new(Folds::new()),
             ref_dir: Signal::new(RefDir::default()),
+            vis_floor: Signal::new(VisFloor::default()),
+        }
+    }
+
+    /// The reading the chart draws right now, for a build of the model. Every
+    /// store is read, not peeked: a build that ignored one of them would go
+    /// stale the moment the reviewer moved that control.
+    pub(super) fn reading(&self) -> DataReading {
+        DataReading {
+            ref_dir: *self.ref_dir.read(),
+            vis_floor: *self.vis_floor.read(),
+            folds: self.folds.read().clone(),
         }
     }
 }
@@ -363,8 +494,9 @@ fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element 
         _ => None,
     };
     let facts = use_memo(use_reactive((&graph,), move |(graph,)| {
-        DataModel::build(&graph, *data.ref_dir.peek(), &data.folds.read())
-            .facts(graph.limits.unresolved)
+        let reading = data.reading();
+        let off_paper = reading.vis_floor.off_paper(&graph);
+        DataModel::build(&graph, &reading).facts(graph.limits.unresolved, off_paper)
     }));
     // The survey's own limits, for the cartouche's fold: the unresolved
     // census first, then the walk's notes, then the references' — this chart
@@ -441,6 +573,41 @@ mod tests {
             mark_route("src/graph/data.rs", "CodeGraph").to_string(),
             "/data/mark/src/graph/data.rs?item=CodeGraph"
         );
+    }
+
+    /// The visibility reading widens one rung at a time, and the slider's
+    /// steps are exactly that order — the scale is the ladder rust writes, so
+    /// no stop can be reached that draws a rung out of turn.
+    #[test]
+    fn the_visibility_reading_widens_one_rung_at_a_time() {
+        let rungs = [
+            Vis::Pub,
+            Vis::Crate,
+            Vis::Super,
+            Vis::In("crate::views".to_string()),
+            Vis::Private,
+        ];
+        let drawn = |floor: VisFloor| rungs.iter().filter(|vis| floor.admits(vis)).count();
+        assert_eq!(
+            VisFloor::STOPS.map(drawn),
+            [1, 2, 4, 5],
+            "each stop keeps the rungs above it and adds the next one down"
+        );
+        for (step, stop) in VisFloor::STOPS.iter().enumerate() {
+            assert_eq!(VisFloor::at_step(&step.to_string()), Some(*stop));
+            assert_eq!(stop.step(), step);
+        }
+        // A value off the scale moves the reading nowhere.
+        assert_eq!(VisFloor::at_step("4"), None);
+        assert_eq!(VisFloor::at_step(""), None);
+        // A reviewer who asks for a declaration by name gets the widest
+        // reading that draws it, and no wider.
+        assert_eq!(VisFloor::showing(&Vis::Crate), VisFloor::Crate);
+        assert_eq!(
+            VisFloor::showing(&Vis::In("crate::views".to_string())),
+            VisFloor::Super
+        );
+        assert_eq!(VisFloor::showing(&Vis::Private), VisFloor::All);
     }
 
     /// Half a key names nothing: the sheet stays open and no plate does.

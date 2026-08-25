@@ -7,13 +7,13 @@
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::graph::data::{CodeGraph, Delta, HoldEvent, HoldKind, ItemMark};
+use crate::graph::data::{CodeGraph, Delta, HoldEvent, HoldKind, ItemMark, Vis};
 use crate::views::chrome::{Altitude, AltitudeSwitch, plural};
 use crate::views::data::model::{
     Anchor, DataFacts, DataMark, DataModel, RowState, Stand, Tier, Unseen, upstream,
 };
 use crate::views::data::{
-    RefDir, Sel, mark_route, mod_route, peek_at, peek_key, peek_route, use_data,
+    RefDir, Sel, VisFloor, mark_route, mod_route, peek_at, peek_key, peek_route, use_data,
 };
 
 /// Which modules the diff landed in, in plain words.
@@ -53,9 +53,11 @@ impl DataFacts {
 /// roots · 63 nested · 16 standing` and `209 body dependences · 127 at rest`
 /// were the model's own bookkeeping in four invented words, and no reviewer
 /// decides anything on them. The tier is what the paper draws and a root's
-/// own hover words teach; the edges are what the chart shows. No doors toggle
-/// either: state does not fold at a door, so every datum is drawn whatever
-/// its `pub`.
+/// own hover words teach; the edges are what the chart shows.
+///
+/// Two readings ride here, because both act on the whole plate: which
+/// direction the uses edges anchor in, and how narrow a declaration may be and
+/// still be drawn.
 #[component]
 pub(super) fn DataCartouche(
     facts: DataFacts,
@@ -90,12 +92,18 @@ pub(super) fn DataCartouche(
                         if let Some(insight) = insight {
                             p { class: "text-ink-soft", "{insight}" }
                         }
+                    } else if facts.off_paper > 0 {
+                        // The counts are the reading's, so its silence has to
+                        // be too: the base may well have changed state this
+                        // reading declines to draw.
+                        p { class: "text-ink-soft", "no shape changes in what this reading draws" }
                     } else {
                         p { class: "text-ink-soft", "no shape changes since the base" }
                     }
                 }
             }
             RefToggle {}
+            VisSlider { off_paper: facts.off_paper }
             SurveyLimits { notes }
         }
     }
@@ -158,6 +166,70 @@ fn RefToggle() -> Element {
                 {seg("uses", "each mark's heaviest body dependence out — what its own code leans on", RefDir::Uses)}
                 {seg("used by", "each mark's heaviest body dependence in — whose code leans on it", RefDir::UsedBy)}
                 {seg("both", "every body dependence between two marks, unthinned", RefDir::Both)}
+            }
+        }
+    }
+}
+
+/// How narrow a declaration may be and still be drawn, as a slider along the
+/// rungs rust writes: `pub`, `pub(crate)`, `pub(super)`, `all` (2026-08-25,
+/// user). Sliding towards `pub` reads the surface a crate publishes and
+/// nothing else, which is the audit a reviewer of a large change actually
+/// runs; sliding back to `all` is one move.
+///
+/// The rungs are the visibility each declaration **writes**, not what a chain
+/// of private modules leaves reachable from outside — so the label says `as
+/// declared` on the plate rather than in a hover the reader has to find. The
+/// foot states how many declarations the reading leaves off, because a narrow
+/// reading and an empty workspace must never look alike.
+#[component]
+fn VisSlider(off_paper: usize) -> Element {
+    let data = use_data();
+    let current = *data.vis_floor.read();
+    let stop_at = move |stop: VisFloor| {
+        let mut floor = data.vis_floor;
+        floor.set(stop);
+    };
+    rsx! {
+        div {
+            class: "border-t border-ink-line px-4 py-1.5",
+            role: "group",
+            "aria-label": "how narrow a declaration may be and still be drawn",
+            span { class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
+                "visibility as declared"
+            }
+            input {
+                class: "vis-slide mt-1.5 block w-full",
+                r#type: "range",
+                min: "0",
+                max: "{VisFloor::STOPS.len() - 1}",
+                step: "1",
+                value: "{current.step()}",
+                title: "{current.hint()}",
+                "aria-valuetext": "{current.label()}",
+                oninput: move |e| {
+                    if let Some(stop) = VisFloor::at_step(&e.value()) {
+                        stop_at(stop);
+                    }
+                },
+            }
+            div { class: "mt-0.5 flex items-baseline justify-between gap-1",
+                for stop in VisFloor::STOPS {
+                    button {
+                        key: "{stop.label()}",
+                        class: "whitespace-nowrap font-data text-[9px]",
+                        class: if current == stop { "text-ink" } else { "text-ink-soft hover:text-ink" },
+                        "aria-pressed": if current == stop { "true" } else { "false" },
+                        title: "{stop.hint()}",
+                        onclick: move |_| stop_at(stop),
+                        "{stop.label()}"
+                    }
+                }
+            }
+            if off_paper > 0 {
+                p { class: "mt-1 font-data text-[9.5px] leading-snug text-ink-soft",
+                    "{plural(off_paper, \"narrower declaration\")} off this reading"
+                }
             }
         }
     }
@@ -370,7 +442,7 @@ impl DataModel {
                         Some(HoldRow {
                             to: mark.map(|m| mark_route(&m.head.path, &m.head.label)),
                             decl: mark
-                                .map(|m| m.head.kind.decl_words(m.head.vis))
+                                .map(|m| m.head.kind.decl_words(&m.head.vis))
                                 .unwrap_or_default(),
                             name: mark.map(|m| m.head.name.clone()).unwrap_or_default(),
                             letter: mark.and_then(|m| m.letter()),
@@ -429,7 +501,7 @@ impl DataModel {
                     count,
                     HoldRow {
                         to: Some(mark_route(&far.head.path, &far.head.label)),
-                        decl: far.head.kind.decl_words(far.head.vis),
+                        decl: far.head.kind.decl_words(&far.head.vis),
                         name: far.head.name.clone(),
                         letter: far.letter(),
                         word,
@@ -485,6 +557,12 @@ impl DataMark {
                  would close the loop stays a line."
                     .to_string()
             }
+            Tier::Standing(Stand::Narrower) => {
+                "secondary data: every type that holds it is narrower than this visibility \
+                 reading draws, so nothing on the paper holds it — widen the reading to see \
+                 what does."
+                    .to_string()
+            }
         }
     }
 }
@@ -527,7 +605,7 @@ impl DataMark {
         let trait_row =
             |t: &ItemMark, event: Option<HoldEvent>, name: String, word: String| HoldRow {
                 to: None,
-                decl: t.head.kind.decl_words(t.head.vis),
+                decl: t.head.kind.decl_words(&t.head.vis),
                 name,
                 letter: t.diff.delta.letter(),
                 word,
@@ -617,7 +695,7 @@ impl DataMark {
                 let own = graph.item(row.mark);
                 HoldRow {
                     to: None,
-                    decl: own.map_or_else(String::new, |m| m.head.kind.decl_words(m.head.vis)),
+                    decl: own.map_or_else(String::new, |m| m.head.kind.decl_words(&m.head.vis)),
                     name: row.name.clone(),
                     letter: added.contains(&(at as u32)).then_some("A"),
                     word: promise.to_string(),
@@ -683,7 +761,7 @@ pub(super) fn DataSheet(
     let data = use_data();
     let sel: Sel = (path.clone(), item.clone());
     let model = use_memo(use_reactive((&graph,), move |(graph,)| {
-        DataModel::build(&graph, *data.ref_dir.peek(), &data.folds.read())
+        DataModel::build(&graph, &data.reading())
     }));
     let model = model.read();
 
@@ -692,13 +770,39 @@ pub(super) fn DataSheet(
         .iter()
         .find(|m| m.head.path == path && m.head.label == item)
     else {
+        // A selection the chart draws no block for is one of two things, and a
+        // reviewer stepping back into a URL kept from a wider reading meets the
+        // second one: a declaration the survey read and the visibility reading
+        // left off. Name the rung it is written at, and offer the one move.
+        let off = graph
+            .items
+            .iter()
+            .find(|m| m.head.label == item && graph.path_of(m) == Some(path.as_str()))
+            .filter(|m| !data.vis_floor.read().admits(&m.head.vis));
         return rsx! {
             section { class: "plate pointer-events-auto w-full px-4 py-3 sm:w-72",
-                p { class: "font-data text-[11px] text-ink",
-                    "Nothing named “{item}” is drawn in {path} on this survey."
+                if let Some(off) = off {
+                    p { class: "font-data text-[11px] leading-relaxed text-ink",
+                        "“{item}” is {off.head.kind.decl_words(&off.head.vis)}, and this reading draws {data.vis_floor.read().label()} only."
+                    }
+                    button {
+                        class: "mt-2 font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4 hover:text-ink-soft",
+                        onclick: {
+                            let vis = off.head.vis.clone();
+                            move |_| {
+                                let mut floor = data.vis_floor;
+                                floor.set(VisFloor::showing(&vis));
+                            }
+                        },
+                        "draw it"
+                    }
+                } else {
+                    p { class: "font-data text-[11px] text-ink",
+                        "Nothing named “{item}” is drawn in {path} on this survey."
+                    }
                 }
                 Link {
-                    class: "mt-2 inline-block font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4",
+                    class: "mt-2 block font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4",
                     to: Route::DataOverview {},
                     "← whole chart"
                 }
@@ -707,8 +811,25 @@ pub(super) fn DataSheet(
     };
 
     let at = Anchor::Mark(mark.id);
-    let decl = mark.head.kind.decl_words(mark.head.vis);
+    let decl = mark.head.kind.decl_words(&mark.head.vis);
     let by_id = model.by_id();
+
+    // One row for any end this chart draws no block for: the declaration's own
+    // words, and a quotation of its source, since there is no block to step to.
+    let namer_row = |namer: u32, event: Option<HoldEvent>, word: &str| -> Option<HoldRow> {
+        let item = graph.item(namer)?;
+        let file = graph.file(item.file)?;
+        Some(HoldRow {
+            to: None,
+            decl: item.head.kind.decl_words(&item.head.vis),
+            name: item.head.name.clone(),
+            letter: None,
+            word: word.to_string(),
+            event: event.map(HoldEvent::word),
+            hint: Some(format!("{}:{}", file.path, item.head.line)),
+            peek: Some(peek_key(&file.path, &item.head.label)),
+        })
+    };
 
     // Who holds it: the drawn relations landing on it, and — first, because
     // the paper says it first — the block it is nested inside.
@@ -718,7 +839,7 @@ pub(super) fn DataSheet(
     {
         held_by.push(HoldRow {
             to: Some(mark_route(&h.head.path, &h.head.label)),
-            decl: h.head.kind.decl_words(h.head.vis),
+            decl: h.head.kind.decl_words(&h.head.vis),
             name: h.head.name.clone(),
             letter: h.letter(),
             word: "owns · nested".to_string(),
@@ -737,6 +858,16 @@ pub(super) fn DataSheet(
                 .collect(),
         ),
     );
+    // The holders this reading left off the paper. `Stand::Narrower` says the
+    // tier in one sentence; these are the rows behind it, each quoting the
+    // holder's own source — an empty `Held by` under that sentence would be
+    // the sheet withholding names it has (2026-08-25).
+    held_by.extend(
+        mark.undrawn
+            .holders_off
+            .iter()
+            .filter_map(|&holder| namer_row(holder, None, "holds it — off this reading")),
+    );
 
     // What it holds: the blocks nested inside it, then the drawn relations.
     let mut holds: Vec<HoldRow> = mark
@@ -746,7 +877,7 @@ pub(super) fn DataSheet(
         .filter_map(|kid| by_id.get(kid))
         .map(|k| HoldRow {
             to: Some(mark_route(&k.head.path, &k.head.label)),
-            decl: k.head.kind.decl_words(k.head.vis),
+            decl: k.head.kind.decl_words(&k.head.vis),
             name: k.head.name.clone(),
             letter: k.letter(),
             word: "owns · nested".to_string(),
@@ -770,42 +901,32 @@ pub(super) fn DataSheet(
     // declarations whose own signature names it (each a link to its
     // definition, since none has a block here), and the types whose API says
     // the word.
-    let namer_row = |namer: u32, event: Option<HoldEvent>| -> Option<HoldRow> {
-        let item = graph.item(namer)?;
-        let file = graph.file(item.file)?;
-        Some(HoldRow {
-            to: None,
-            decl: item.head.kind.decl_words(item.head.vis),
-            name: item.head.name.clone(),
-            letter: None,
-            word: "names it".to_string(),
-            event: event.map(HoldEvent::word),
-            hint: Some(format!("{}:{}", file.path, item.head.line)),
-            peek: Some(peek_key(&file.path, &item.head.label)),
-        })
-    };
     let contracts: Vec<HoldRow> = model
         .naming
         .iter()
         .filter(|n| n.ty == mark.id && !n.from_method)
-        .filter_map(|n| namer_row(n.namer, n.event))
+        .filter_map(|n| namer_row(n.namer, n.event, "names it"))
         .collect();
     let in_api: Vec<HoldRow> = model
         .naming
         .iter()
         .filter(|n| n.ty == mark.id && n.from_method)
-        .filter_map(|n| {
-            let far = by_id.get(&n.namer)?;
-            Some(HoldRow {
+        .filter_map(|n| match by_id.get(&n.namer) {
+            Some(far) => Some(HoldRow {
                 to: Some(mark_route(&far.head.path, &far.head.label)),
-                decl: far.head.kind.decl_words(far.head.vis),
+                decl: far.head.kind.decl_words(&far.head.vis),
                 name: far.head.name.clone(),
                 letter: far.letter(),
                 word: "its API names it".to_string(),
                 event: None,
                 hint: None,
                 peek: None,
-            })
+            }),
+            // The visibility reading left the naming type off the paper. An
+            // API that says this type's name is a fact about this type, so the
+            // row stays and quotes its source instead of stepping to a block
+            // that is not drawn.
+            None => namer_row(n.namer, n.event, "its API names it"),
         })
         .collect();
 
@@ -822,7 +943,7 @@ pub(super) fn DataSheet(
             end.count,
             HoldRow {
                 to: None,
-                decl: item.head.kind.decl_words(item.head.vis),
+                decl: item.head.kind.decl_words(&item.head.vis),
                 name: item.head.name.clone(),
                 letter: None,
                 word: plural(end.count as usize, "reference"),
@@ -1084,6 +1205,17 @@ pub(super) fn DataSearch(graph: CodeGraph) -> Element {
     let mut query = use_signal(String::new);
     let mut active = use_signal(|| 0usize);
     let nav = use_navigator();
+    let data = use_data();
+    // A reviewer who names a declaration has asked for it, so the visibility
+    // reading widens to the rung that draws it rather than landing them on a
+    // sheet that says the chart declines to. The slider moves with it, in
+    // sight, so the reading is never changed behind the reader's back.
+    let widen = move |vis: &Vis| {
+        let mut floor = data.vis_floor;
+        if !floor.peek().admits(vis) {
+            floor.set(VisFloor::showing(vis));
+        }
+    };
 
     // How one hit ranks: a prefix match is what the reviewer meant, then
     // whatever more of the workspace leans on, then the name itself.
@@ -1153,6 +1285,7 @@ pub(super) fn DataSearch(graph: CodeGraph) -> Element {
                         Key::Enter => {
                             if let Some((m, path)) = results().get(active().min(n.saturating_sub(1)))
                             {
+                                widen(&m.head.vis);
                                 nav.push(mark_route(path, &m.head.label));
                                 query.set(String::new());
                             }
@@ -1174,7 +1307,13 @@ pub(super) fn DataSearch(graph: CodeGraph) -> Element {
                                 Link {
                                     to: mark_route(&path, &m.head.label),
                                     class: if i == active() { "flex w-full items-baseline gap-1.5 px-2.5 py-1 bg-ink/5" } else { "flex w-full items-baseline gap-1.5 px-2.5 py-1 hover:bg-ink/5" },
-                                    onclick: move |_| query.set(String::new()),
+                                    onclick: {
+                                        let vis = m.head.vis.clone();
+                                        move |_| {
+                                            widen(&vis);
+                                            query.set(String::new());
+                                        }
+                                    },
                                     span { class: "shrink-0 font-data text-[9.5px] text-ink-soft",
                                         "{m.head.kind.words()}"
                                     }

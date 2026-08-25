@@ -20,9 +20,18 @@
 //! them under one holder would misread the other holders.
 //!
 //! A borrow is a view, not a hold: a type other types only `&`-reach is still
-//! a root, with the borrow drawn as a line. Visibility never folds this
-//! chart — private state is still state — so there is no doors toggle and no
-//! `+ n private` row; the `pub` on a header is words, as everywhere.
+//! a root, with the borrow drawn as a line.
+//!
+//! One reading narrows which blocks are on the paper at all: the visibility
+//! floor (2026-08-25, user). It slides along the rungs rust writes — `pub`,
+//! `pub(crate)`, `pub(super)`, all — so a reviewer auditing what a crate
+//! publishes can read that surface alone, and widening is one move back. It
+//! acts on blocks and never on rows: a block is a quotation of a declaration,
+//! and a quotation with its private fields dropped would misquote it, so every
+//! row of a drawn block stays, wearing its own `pub` as it always did. A type
+//! whose every holder is off the reading does not become a root — nothing on
+//! the paper holds it, but something in the workspace does — so it stands with
+//! [`Stand::Narrower`] and the sheet says why.
 
 use std::collections::{HashMap, HashSet};
 
@@ -30,7 +39,7 @@ use crate::Route;
 use crate::graph::data::{
     CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, ItemMark, MarkRef, Vis,
 };
-use crate::views::data::{RefDir, mark_route};
+use crate::views::data::{DataReading, RefDir, mark_route};
 
 /// Parent chains are shallow by construction (file → type → method); the
 /// bound only keeps a malformed link from spinning.
@@ -432,6 +441,11 @@ pub(super) enum Stand {
     Afar,
     /// Mutual ownership: the seat that would close a loop stays a line.
     Ring,
+    /// Every type that holds it is narrower than the visibility reading draws.
+    /// There is no block on the paper to nest inside and no line to draw, so
+    /// it stands — and it is not a root: the holding is real, the reading is
+    /// what left it off.
+    Narrower,
 }
 
 /// The far end of a body reference this chart draws no block for: a free
@@ -528,6 +542,11 @@ pub(super) struct Undrawn {
     /// Where its own impls reach code the chart draws no mark for, the same
     /// way round. Said on the sheet, never on the paper.
     pub(super) unseen_uses: Vec<Unseen>,
+    /// The types that hold it and the visibility reading left off the paper.
+    /// A holder with no block is still a holder, so it is an end and not a
+    /// count: the sheet gives each one a row that quotes its source, and
+    /// [`Stand::Narrower`] is the tier this list explains.
+    pub(super) holders_off: Vec<u32>,
 }
 
 impl DataMark {
@@ -638,6 +657,9 @@ pub(super) struct DataFacts {
     pub(super) changed_modules: Vec<String>,
     /// Names the survey could not resolve, as [`Limits::unresolved`].
     pub(super) unresolved: u32,
+    /// Data declarations the visibility reading leaves off the paper, as
+    /// [`VisFloor::off_paper`] counts them.
+    pub(super) off_paper: usize,
 }
 
 /// How many of each shape of state the survey found, ghosts excluded.
@@ -683,7 +705,7 @@ impl DataModel {
     /// had none at all: the cartouche stopped stating tier counts on
     /// 2026-08-21 and the counting stayed behind. A census is a reading of
     /// the marks, so it is taken from them, once, by whoever wants it.
-    pub(super) fn facts(&self, unresolved: u32) -> DataFacts {
+    pub(super) fn facts(&self, unresolved: u32, off_paper: usize) -> DataFacts {
         let current = |m: &&DataMark| !m.state.ghost;
         let of_kind = |kind: ItemKind| {
             self.marks
@@ -715,6 +737,7 @@ impl DataModel {
             },
             changed_modules,
             unresolved,
+            off_paper,
         }
     }
 
@@ -777,7 +800,12 @@ fn contained(id: u32, kids: &HashMap<u32, Vec<u32>>) -> usize {
 }
 
 impl DataModel {
-    pub(in crate::views::data) fn build(graph: &CodeGraph, ref_dir: RefDir, folds: &Folds) -> Self {
+    pub(in crate::views::data) fn build(graph: &CodeGraph, reading: &DataReading) -> Self {
+        let &DataReading {
+            ref_dir,
+            vis_floor,
+            ref folds,
+        } = reading;
         let ghost_of = |id: u32| -> Option<&GhostMark> { graph.ghost(id) };
         let kind_of = |id: u32| -> Option<ItemKind> {
             graph
@@ -796,9 +824,12 @@ impl DataModel {
         let ghost_key = |g: &GhostMark| frame_key(&g.at.krate, &g.at.path);
 
         // ---- Which marks are drawn. -----------------------------------------
-        // Every shape and every static, whatever its visibility: state does
-        // not fold at a door. Only a module the reviewer folded by hand takes
-        // state off the paper, onto that boundary's one counted row.
+        // Every shape and every static the visibility reading admits. Two
+        // things take state off the paper and they are both the reviewer's own
+        // move: a module folded by hand, which leaves its state on that
+        // boundary's one counted row, and the visibility floor, which leaves a
+        // narrower declaration off the reading altogether — no row, no count
+        // in a frame, only the one number the cartouche states.
         let file_key: Vec<FrameKey> = graph
             .files
             .iter()
@@ -814,12 +845,15 @@ impl DataModel {
 
         let mut drawn: Vec<u32> = Vec::new();
         let mut packed: Vec<u32> = Vec::new();
+        let mut narrower: HashSet<u32> = HashSet::new();
         for (i, mark) in graph.items.iter().enumerate() {
             if !mark.head.kind.is_data() || mark.parent.is_some() {
                 continue;
             }
             let i = i as u32;
-            if key_of(i).and_then(&fold_key).is_some() {
+            if !vis_floor.admits(&mark.head.vis) {
+                narrower.insert(i);
+            } else if key_of(i).and_then(&fold_key).is_some() {
                 packed.push(i);
             } else {
                 drawn.push(i);
@@ -828,10 +862,12 @@ impl DataModel {
 
         // ---- Frames: one per crate, then the module tree inside it. ---------
         let framed_key = |key: FrameKey| -> FrameKey { fold_key(&key).unwrap_or(key) };
+        // A removed declaration was written as visible as its base edition
+        // wrote it, so the reading reads its head like any other.
         let data_ghosts: Vec<&GhostMark> = graph
             .ghosts
             .iter()
-            .filter(|g| g.head.kind.is_data())
+            .filter(|g| g.head.kind.is_data() && vis_floor.admits(&g.head.vis))
             .collect();
         let mut keys: Vec<FrameKey> = drawn
             .iter()
@@ -938,6 +974,10 @@ impl DataModel {
         // borrow is a view, not a hold, so it never decides the tier.
         let mut holders: HashMap<u32, HashSet<u32>> = HashMap::new();
         let mut shared: HashSet<u32> = HashSet::new();
+        // Drawn types held by declarations this reading left off the paper,
+        // and by which: held state with nothing on the paper to say so. Ends,
+        // not a flag — the sheet gives every one of them a row.
+        let mut held_narrower: HashMap<u32, Vec<u32>> = HashMap::new();
         let mut naming: Vec<Naming> = Vec::new();
         let mut named_set: HashMap<u32, HashSet<u32>> = HashMap::new();
         let mut named_seen: HashSet<(u32, u32)> = HashSet::new();
@@ -951,7 +991,18 @@ impl DataModel {
                 // the boundary's row, and the held type must not read as a
                 // root while a drawn line says otherwise.
                 let placed = anchor_of.get(from as usize).is_some_and(Option::is_some);
-                if edge.event == Some(HoldEvent::Removed) || !placed {
+                if edge.event == Some(HoldEvent::Removed) {
+                    continue;
+                }
+                if !placed {
+                    // A holder the visibility reading left off the paper holds
+                    // it all the same. There is no end to draw the line to, so
+                    // the tier says it in words instead of reading `a root`.
+                    if narrower.contains(&from)
+                        && matches!(edge.kind, HoldKind::Owns | HoldKind::Shares)
+                    {
+                        held_narrower.entry(to).or_default().push(from);
+                    }
                     continue;
                 }
                 match edge.kind {
@@ -1050,7 +1101,10 @@ impl DataModel {
             }
             let held = holders.get(&id).map_or(0, |set| set.len());
             if held == 0 {
-                Tier::Root
+                match held_narrower.contains_key(&id) {
+                    true => Tier::Standing(Stand::Narrower),
+                    false => Tier::Root,
+                }
             } else if held > HELD_CAP {
                 Tier::Standing(Stand::Vocab)
             } else if shared.contains(&id) {
@@ -1237,7 +1291,7 @@ impl DataModel {
                 .map(|(at, row)| FieldRow {
                     name: row.name.clone(),
                     decl: row.ty.clone(),
-                    vis: row.vis,
+                    vis: row.vis.clone(),
                     target: target(id, &row.name),
                     state: if mark.diff.fields_added.contains(&(at as u32)) {
                         RowState::Added
@@ -1256,7 +1310,7 @@ impl DataModel {
                         FieldRow {
                             name: row.name.clone(),
                             decl: row.ty.clone(),
-                            vis: row.vis,
+                            vis: row.vis.clone(),
                             target: target(id, &row.name),
                             state: RowState::Removed,
                         },
@@ -1317,7 +1371,7 @@ impl DataModel {
                     frame,
                     head: MarkHead {
                         kind: mark.head.kind,
-                        vis: mark.head.vis,
+                        vis: mark.head.vis.clone(),
                         name: mark.head.name.clone(),
                         label: mark.head.label.clone(),
                         path: file.path.clone(),
@@ -1363,7 +1417,7 @@ impl DataModel {
                 frame,
                 head: MarkHead {
                     kind: ghost.head.kind,
-                    vis: ghost.head.vis,
+                    vis: ghost.head.vis.clone(),
                     name: ghost.head.name.clone(),
                     label: ghost.head.name.clone(),
                     path: ghost.at.path.clone(),
@@ -1377,7 +1431,7 @@ impl DataModel {
                         .map(|row| FieldRow {
                             name: row.name.clone(),
                             decl: row.ty.clone(),
-                            vis: row.vis,
+                            vis: row.vis.clone(),
                             target: target(ghost.id(), &row.name),
                             state: RowState::Same,
                         })
@@ -1532,6 +1586,12 @@ impl DataModel {
         for mark in &mut marks {
             mark.undrawn.used_by = unseen_ends(unseen_in.get(&mark.id));
             mark.undrawn.unseen_uses = unseen_ends(unseen_out.get(&mark.id));
+            if let Some(holders) = held_narrower.get(&mark.id) {
+                let mut holders = holders.clone();
+                holders.sort_by_key(|&id| (name_of(id), id));
+                holders.dedup();
+                mark.undrawn.holders_off = holders;
+            }
         }
         let multi_crate = crates.len() > 1;
         Self {
@@ -1574,6 +1634,7 @@ pub(in crate::views::data) mod tests {
     use crate::graph::data::{
         DeclBody, DeclDiff, DeclHead, DeclRow, FileInfo, HoldEdge, Limits, Reach, Vis,
     };
+    use crate::views::data::VisFloor;
 
     pub(in crate::views::data) fn file(path: &str) -> FileInfo {
         FileInfo {
@@ -1625,11 +1686,80 @@ pub(in crate::views::data) mod tests {
     }
 
     pub(in crate::views::data) fn build(graph: &CodeGraph) -> DataModel {
-        DataModel::build(graph, RefDir::default(), &Folds::new())
+        DataModel::build(graph, &DataReading::default())
     }
 
     pub(in crate::views::data) fn by_name<'a>(model: &'a DataModel, name: &str) -> &'a DataMark {
         model.marks.iter().find(|m| m.head.name == name).unwrap()
+    }
+
+    /// The visibility reading is a floor on what the paper draws: each stop
+    /// keeps every rung above it and adds the next one down, and nothing else
+    /// about a drawn block changes.
+    #[test]
+    fn the_visibility_reading_draws_only_what_is_written_that_wide() {
+        let mut g = graph(
+            vec![
+                mark(0, 0, "Open", ItemKind::Struct),
+                mark(1, 0, "Crated", ItemKind::Struct),
+                mark(2, 0, "Scoped", ItemKind::Struct),
+                mark(3, 0, "Shut", ItemKind::Struct),
+            ],
+            Vec::new(),
+        );
+        g.items[0].head.vis = Vis::Pub;
+        g.items[1].head.vis = Vis::Crate;
+        g.items[2].head.vis = Vis::In("crate::views".to_string());
+        let drawn = |vis_floor: VisFloor| -> Vec<String> {
+            let reading = DataReading {
+                vis_floor,
+                ..DataReading::default()
+            };
+            DataModel::build(&g, &reading)
+                .marks
+                .iter()
+                .map(|m| m.head.name.clone())
+                .collect()
+        };
+        assert_eq!(drawn(VisFloor::Pub), ["Open"]);
+        assert_eq!(drawn(VisFloor::Crate), ["Open", "Crated"]);
+        assert_eq!(drawn(VisFloor::Super), ["Open", "Crated", "Scoped"]);
+        assert_eq!(drawn(VisFloor::All), ["Open", "Crated", "Scoped", "Shut"]);
+        // What a reading leaves off is a number it states, so a narrow reading
+        // never reads as an empty workspace.
+        assert_eq!(VisFloor::Pub.off_paper(&g), 3);
+        assert_eq!(VisFloor::All.off_paper(&g), 0);
+    }
+
+    /// A type whose every holder is narrower than the reading draws is not a
+    /// root: the holding is real, and the paper simply has no block to draw the
+    /// line from. It stands, and says so.
+    #[test]
+    fn a_type_the_reading_leaves_no_holder_for_stands_rather_than_reads_as_a_root() {
+        let mut g = graph(
+            vec![
+                mark(0, 0, "Keeper", ItemKind::Struct),
+                mark(1, 0, "Held", ItemKind::Struct),
+            ],
+            vec![owns(0, 1)],
+        );
+        // The holder stays private; what it holds is published.
+        g.items[1].head.vis = Vis::Pub;
+        let reading = DataReading {
+            vis_floor: VisFloor::Pub,
+            ..DataReading::default()
+        };
+        let model = DataModel::build(&g, &reading);
+        let held = by_name(&model, "Held");
+        assert_eq!(held.seat.tier, Tier::Standing(Stand::Narrower));
+        assert!(!held.is_root());
+        // And no ink is drawn to a block that is not on the paper — but the
+        // holder is still an end the sheet can name and quote, so it is
+        // carried as one rather than left to the tier sentence alone.
+        assert!(model.holds.is_empty());
+        assert_eq!(held.undrawn.holders_off, vec![0]);
+        // Widened, the nesting is back exactly as it was.
+        assert_eq!(by_name(&build(&g), "Held").seat.tier, Tier::Nested(0));
     }
 
     #[test]

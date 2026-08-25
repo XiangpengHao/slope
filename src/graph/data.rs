@@ -49,7 +49,7 @@ impl ItemKind {
 
     /// `pub fn`, `struct`, `pub(crate) mod` — what rust writes in front of a
     /// name. A private item declares no visibility, so neither does its row.
-    pub(crate) fn decl_words(self, vis: Vis) -> String {
+    pub(crate) fn decl_words(self, vis: &Vis) -> String {
         match vis.keyword() {
             Some(vis) => format!("{vis} {}", self.words()),
             None => self.words().to_string(),
@@ -57,26 +57,35 @@ impl ItemKind {
     }
 }
 
-/// How widely an item is declared visible. `pub(crate)`, `pub(super)`, and
-/// `pub(in path)` are not `pub`, and the survey keeps them apart: a chart may
-/// read visibility, and none of them may guess it.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+/// How widely a declaration is written visible, rung by rung. `pub(crate)` is
+/// not `pub` and `pub(super)` is not `pub(crate)`, and the survey keeps all
+/// four apart: the data chart's visibility reading slides along these rungs,
+/// and a rung the survey blurred is a rung a chart would have to guess at.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub(crate) enum Vis {
-    /// `pub` — visible outside its own crate.
+    /// `pub` — the declaration leaves its own crate.
     Pub,
-    /// `pub(crate)`, `pub(super)`, `pub(in path)`.
+    /// `pub(crate)` — the whole crate, and no further.
     Crate,
-    /// No `pub` at all.
+    /// `pub(super)` — the parent module only.
+    Super,
+    /// `pub(in path)`, carrying the path exactly as the source writes it. Rust
+    /// names one module to stop at, so the keyword is that line and not
+    /// another rung's: `pub(in crate::views)` is written, never guessed at.
+    In(String),
+    /// No `pub` at all, or `pub(self)`, which is no wider than none.
     Private,
 }
 
 impl Vis {
     /// The visibility as rust writes it. Private declares nothing, so it has
     /// no keyword: rust writes nothing at all, and so does the interface.
-    pub(crate) fn keyword(self) -> Option<&'static str> {
+    pub(crate) fn keyword(&self) -> Option<String> {
         match self {
-            Vis::Pub => Some("pub"),
-            Vis::Crate => Some("pub(crate)"),
+            Vis::Pub => Some("pub".to_string()),
+            Vis::Crate => Some("pub(crate)".to_string()),
+            Vis::Super => Some("pub(super)".to_string()),
+            Vis::In(path) => Some(format!("pub(in {path})")),
             Vis::Private => None,
         }
     }

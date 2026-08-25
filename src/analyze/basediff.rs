@@ -1127,7 +1127,7 @@ impl Wire {
                 .body
                 .field_rows
                 .iter()
-                .map(|row| (row.name.as_str(), row.ty.as_str(), row.vis))
+                .map(|row| (row.name.as_str(), row.ty.as_str(), row.vis.clone()))
                 .collect()
         };
         assert_eq!(
@@ -1145,7 +1145,7 @@ impl Wire {
         // A signature reads as rows and a return line: the parameters as the
         // base wrote them, the return type in the slot a static's type uses.
         assert_eq!(
-            (decls[5].head.kind, decls[5].head.vis),
+            (decls[5].head.kind, decls[5].head.vis.clone()),
             (ItemKind::Fn, Vis::Pub)
         );
         // A parameter declares no visibility of its own, ever.
@@ -1159,6 +1159,39 @@ impl Wire {
         assert_eq!(decls[5].body.ty, "Result<Index, String>");
         // Handing nothing back is not a return line, written either way.
         assert!(decls[4].body.ty.is_empty() && decls[6].body.ty.is_empty());
+    }
+
+    /// The four rungs rust writes stay apart, each with its own words: the data
+    /// chart's visibility reading slides along them, so a rung read as another
+    /// draws the wrong declarations — and prints a keyword the source never
+    /// wrote.
+    #[test]
+    fn every_visibility_rung_is_read_as_written() {
+        let text = r#"
+pub struct Open;
+pub(crate) struct Crated;
+pub(super) struct Parented;
+pub(in crate::views::data) struct Scoped;
+pub(self) struct Shut;
+struct Bare;
+"#;
+        let decls = BaseDecl::scan(text);
+        assert_eq!(
+            decls.iter().map(|d| d.head.vis.clone()).collect::<Vec<_>>(),
+            vec![
+                Vis::Pub,
+                Vis::Crate,
+                Vis::Super,
+                Vis::In("crate::views::data".to_string()),
+                Vis::Private,
+                Vis::Private,
+            ]
+        );
+        // And the words a plate engraves are the source's own.
+        let words = |at: usize| decls[at].head.kind.decl_words(&decls[at].head.vis);
+        assert_eq!(words(2), "pub(super) struct");
+        assert_eq!(words(3), "pub(in crate::views::data) struct");
+        assert_eq!(words(5), "struct");
     }
 
     /// A type's band is written outside its declaration, so the base has to

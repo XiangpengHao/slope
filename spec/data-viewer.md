@@ -20,11 +20,11 @@ silently became load-bearing. Visitor mode: **Operate**.
 
 ## The thesis, in four rules
 
-1. **Marks are state.** One block per struct, enum, union and static —
-   whatever its visibility, because state does not fold at a door. Functions,
-   traits, consts and aliases have no block: a signature names state, it does
-   not keep any. Methods are not rows either — a block is state only, and what
-   a type promises is read on its selection sheet.
+1. **Marks are state.** One block per struct, enum, union and static the
+   visibility reading admits. Functions, traits, consts and aliases have no
+   block: a signature names state, it does not keep any. Methods are not rows
+   either — a block is state only, and what a type promises is read on its
+   selection sheet.
 2. **The tier is the chart.** Top-level data is a **root**: a static, or a
    type no other workspace type keeps in a field (`Owns` or `Shares`; a
    borrow is a view, not a hold). Roots stand at module level and wear the
@@ -90,7 +90,29 @@ silently became load-bearing. Visitor mode: **Operate**.
   the type). Arrowhead on the dependent in both. The `references` toggle is
   the shared reading (uses / used by / both); each block rests its heaviest
   two ties, the rest ink in on hover and stay while either end is selected.
-- **No doors toggle and no budget fold.** Every datum is drawn. The only
+- **The visibility reading** (2026-08-25, user): a four-stop slider on the
+  cartouche — `pub`, `pub(crate)`, `pub(super)`, `all` — sets how narrow a
+  declaration may be and still have a block. Each stop keeps the rungs above
+  it and adds the next one down, so the reviewer auditing what a crate
+  publishes reads that surface alone and widens in one move. Three rules keep
+  it honest:
+  - **As declared, never as reached.** The rung is the keyword rust writes in
+    front of the declaration. What a chain of private modules leaves reachable
+    from outside is a resolution this survey does not run, and the label on
+    the plate says `visibility as declared` so no reader has to hover to
+    learn which of the two it is.
+  - **It cuts blocks, not rows.** A block is a quotation of a declaration, and
+    a quotation with its private fields dropped misquotes it. Every row of a
+    drawn block stays, wearing its own `pub` as always.
+  - **A hidden holder is not the absence of a holder.** A type whose every
+    holder is narrower than the reading draws does not become a root: it
+    stands, and its sheet says the reading is what left the holder off.
+  A declaration off the reading leaves no row and no count in its frame —
+  only the cartouche's one line, `n narrower declarations off this reading`,
+  so a narrow reading never reads as an empty workspace. Naming a declaration
+  in the search widens the reading to the stop that draws it; a URL kept from
+  a wider reading opens a sheet that names the rung and offers `draw it`.
+- **No budget fold.** Every datum the reading admits is drawn. The only
   counted rows are a hand-folded module's `+ n items` and the vocabulary
   fan-in fold.
 - **Selection** is a URL and a reading: blast radius walks every structural
@@ -185,19 +207,23 @@ do?*
 ## Chrome
 
 - Cartouche: workspace name; `n structs · n enums · n statics` (unions when
-  present); the four-rung ladder; the diff line, flare counts, insight line.
-  One toggle: `references`. No visibility toggle — state does not fold at
-  a door. The tier counts and the edge counts came off (2026-08-21,
+  present) — the census of what the reading draws, not of the survey; the
+  four-rung ladder; the diff line, flare counts, insight line. Two readings:
+  the `references` toggle and the `visibility as declared` slider, whose foot
+  states what it left off. The tier counts and the edge counts came off (2026-08-21,
   distill): four invented terms defined only in chrome prose, and no
   decision rides on them. The tier is what the paper draws; a root's own
   hover words teach it (`a root — no type holds it`), and the sheet's
   tier line says it in a sentence.
 - Sheet (mark selection): header, locator, **the tier in one sentence**
   ("top-level data: no type holds it — a root." / "secondary data — drawn
-  inside its holder's block." / the standing reasons — the nested line does
+  inside its holder's block." / the standing reasons, the visibility
+  reading's own among them — the nested line does
   not name the holder, which is the first row of the section right below
   it), the diff's rows,
-  then kept strictly apart: `Held by` (nesting first, then drawn relations),
+  then kept strictly apart: `Held by` (nesting first, then drawn relations,
+  then any holder the visibility reading left off the paper, quoted from its
+  own source),
   `In the contract of` (each namer naming the file and line it is written
   on), `In the API of`, the reach line ("a shape change here reaches 4 more
   types upstream, and 9 signatures name what it reaches."), `Holds`, what the

@@ -657,7 +657,7 @@ fn survey_attached(
                 name: item.name.clone(),
                 label: item.label(),
                 kind: item.kind,
-                vis: item.vis,
+                vis: item.vis.clone(),
                 line: starts[fi as usize].line(item.range.start()),
             },
             body: DeclBody {
@@ -896,14 +896,18 @@ fn compact(text: impl ToString) -> String {
 }
 
 impl From<Option<ast::Visibility>> for Vis {
-    /// Visibility as declared. `pub(crate)`, `pub(super)`, and `pub(in path)`
-    /// stop at the crate boundary and must not read as `pub`; `pub(self)` is
-    /// no wider than no `pub` at all.
+    /// Visibility as declared, rung by rung. `pub(crate)`, `pub(super)` and
+    /// `pub(in path)` all stop at the crate boundary and must not read as
+    /// `pub`, and none of them may read as each other: the data chart's
+    /// visibility reading slides along the rungs. `pub(self)` is no wider than
+    /// no `pub` at all, and a `pub(in path)` keeps its path as written.
     fn from(vis: Option<ast::Visibility>) -> Self {
-        match vis.map(|v| v.kind()) {
+        match vis.as_ref().map(|v| v.kind()) {
             None | Some(VisibilityKind::PubSelf) => Vis::Private,
             Some(VisibilityKind::Pub) => Vis::Pub,
-            Some(_) => Vis::Crate,
+            Some(VisibilityKind::PubCrate) => Vis::Crate,
+            Some(VisibilityKind::PubSuper) => Vis::Super,
+            Some(VisibilityKind::In(path)) => Vis::In(compact(path.syntax().text())),
         }
     }
 }
@@ -957,7 +961,7 @@ impl ItemScope {
 
     fn vis(&self, vis: Option<ast::Visibility>) -> Vis {
         match Vis::from(vis) {
-            Vis::Private => self.inherited.unwrap_or(Vis::Private),
+            Vis::Private => self.inherited.clone().unwrap_or(Vis::Private),
             declared => declared,
         }
     }
@@ -1023,7 +1027,7 @@ fn collect_items(
         } else if let Some(t) = ast::Trait::cast(child.clone()) {
             if let Some(name) = name_of(t.name()) {
                 let vis = ctx.vis(t.visibility());
-                out.push(ctx.item(&name, ItemKind::Trait, range, vis));
+                out.push(ctx.item(&name, ItemKind::Trait, range, vis.clone()));
                 if let Some(list) = t.assoc_item_list() {
                     let inner = ItemScope {
                         prefix: ctx.prefix.clone(),
@@ -1073,7 +1077,7 @@ fn collect_items(
                     prefix: format!("{}{name}::", ctx.prefix),
                     section: ctx.section.clone(),
                     owner: ctx.owner,
-                    inherited: ctx.inherited,
+                    inherited: ctx.inherited.clone(),
                 };
                 collect_items(list.syntax(), &inner, out, skipped);
             }

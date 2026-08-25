@@ -1,5 +1,5 @@
 
-- use descriptive names for variables and functions, don't use generic names like `Built`, `Common`, `View`.
+- use descriptive, intention-revealing names for variables and functions, don't use generic names like `Built`, `Common`, `View`.
 
 - try to not use free form functions, perfer to use member methods.
   Example 1: `fn build_chart(model: &DataModel) -> Built`, instead use a member method like: `fn build_chart(&self) -> Built`. Even better, use a `From` trait to build the chart from the data model.
