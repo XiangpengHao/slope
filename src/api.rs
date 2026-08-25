@@ -540,8 +540,89 @@ pub(crate) struct CodeGraph {
 /// answer from the cache.
 #[server]
 pub(crate) async fn code_graph() -> Result<CodeGraph, ServerFnError> {
-    crate::analyze::code::graph()
+    crate::analyze::code::survey_index()
         .await
-        .map(|graph| (*graph).clone())
+        .map(|idx| idx.graph.clone())
         .map_err(ServerFnError::new)
+}
+
+// ---------------------------------------------------------------------------
+// The quotation: one item's own source, for the ends this chart draws no block.
+// ---------------------------------------------------------------------------
+
+/// What one run of source text is, for colouring. The classes are a lexer's,
+/// not a palette's: the client decides how each one is inked.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) enum Tok {
+    /// A rust keyword.
+    Kw,
+    Comment,
+    /// A doc comment: `///`, `//!`, `/** */`.
+    Doc,
+    /// A string, char, or byte literal.
+    Str,
+    Num,
+    Lifetime,
+    /// Anything inside an attribute, `#[derive(Clone)]` included.
+    Attr,
+    /// A name whose first letter is uppercase.
+    Type,
+    /// The name in a `fn` declaration.
+    Fn,
+    /// A macro name, called or declared.
+    Macro,
+    Ident,
+    Punct,
+    Space,
+}
+
+/// One run of quoted source: its text, its colour class, and — when the run
+/// is a resolved reference to something in the workspace — where it goes, as
+/// an index into [`ItemSource::links`].
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct SrcRun {
+    pub(crate) text: String,
+    pub(crate) tok: Tok,
+    pub(crate) link: Option<u32>,
+}
+
+/// Where a clickable run of quoted source goes: the item it resolved to.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct SrcLink {
+    /// Target file path relative to the workspace root.
+    pub(crate) path: String,
+    /// The target's [`ItemMark::label`] — `Type::method` inside a section,
+    /// the plain name otherwise. Empty when the reference names the file as a
+    /// whole (a `use` of its module), which this chart cannot go to.
+    pub(crate) label: String,
+}
+
+/// One item's own source text, lexed into coloured runs — what Go to
+/// Definition lands on. The interface quotes the file rather than describing
+/// it, so nothing here is reconstructed: the runs concatenate back to exactly
+/// the bytes on disk, minus the shared indent every line was stripped of.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub(crate) struct ItemSource {
+    /// Path relative to the workspace root, for the locator.
+    pub(crate) path: String,
+    /// 1-based line the first quoted line is, in the real file.
+    pub(crate) first_line: u32,
+    /// Per line, its runs of text in order. A run whose name resolved to
+    /// something in the workspace carries a link.
+    pub(crate) lines: Vec<Vec<SrcRun>>,
+    /// The navigation targets the runs link to, deduplicated.
+    pub(crate) links: Vec<SrcLink>,
+}
+
+/// One item's source, lexed — `item` is an index into [`CodeGraph::items`].
+/// The sheet asks for it when a reviewer opens a row this chart draws no
+/// block for: a function, a trait, a method. A ghost has no source to quote —
+/// its definition left the working copy — and is not askable.
+#[server]
+pub(crate) async fn item_source(item: u32) -> Result<ItemSource, ServerFnError> {
+    let idx = crate::analyze::code::survey_index()
+        .await
+        .map_err(ServerFnError::new)?;
+    idx.item_source(item)
+        .ok_or_else(|| ServerFnError::new(format!("item {item} is not in this survey")))
 }

@@ -641,7 +641,7 @@ impl DataModel {
 impl ItemKind {
     /// A mark this chart draws: the shapes state takes, and the statics that
     /// anchor it. Everything else names state without keeping any.
-    fn is_data(self) -> bool {
+    pub(super) fn is_data(self) -> bool {
         matches!(
             self,
             ItemKind::Struct | ItemKind::Enum | ItemKind::Union | ItemKind::Static

@@ -12,7 +12,9 @@ use crate::views::chrome::{Altitude, AltitudeSwitch, plural};
 use crate::views::data::model::{
     Anchor, DataFacts, DataMark, DataModel, RowState, Stand, Tier, Unseen, upstream,
 };
-use crate::views::data::{RefDir, mark_route, mod_route, use_data};
+use crate::views::data::{
+    RefDir, Sel, mark_route, mod_route, peek_at, peek_key, peek_route, use_data,
+};
 
 /// Which modules the diff landed in, in plain words.
 fn insight(modules: &[String]) -> Option<String> {
@@ -222,8 +224,9 @@ impl HoldKind {
 }
 
 /// One row of the sheet's relation lists: a drawn mark (a link that
-/// re-centers the selection on it), or a folded module's counted row, which is
-/// words.
+/// re-centers the selection on it), an end this chart draws no block for (a
+/// link that quotes its source beside the sheet), or a folded module's counted
+/// row.
 #[derive(Clone, PartialEq)]
 struct HoldRow {
     pub(crate) to: Option<Route>,
@@ -237,12 +240,24 @@ struct HoldRow {
     /// as written. The row's hover words, never its ink — 256 pixels of mono
     /// is a name, not a signature.
     pub(crate) hint: Option<String>,
+    /// The end this row names, for the quotation plate: `file@label`, as the
+    /// URL carries it. Set on every row whose end has no block on this chart
+    /// — a function, a trait, a method — and `None` where the row already
+    /// goes somewhere the chart draws.
+    pub(crate) peek: Option<String>,
 }
 
 /// One chunked list of relation rows: the first eight, then a typographic
 /// "show all n".
+///
+/// A row is a link wherever it names something a reviewer can go to. Which
+/// door it opens depends on what the end is: an end the chart draws a block
+/// for re-centers the selection on it; an end it draws none for — a function,
+/// a trait, a method — opens beside the sheet as a quotation of its own
+/// source, and the row stays inked while it is open, so the plate is never
+/// loose from the row that asked for it.
 #[component]
-fn HoldList(rows: Vec<HoldRow>) -> Element {
+fn HoldList(rows: Vec<HoldRow>, sel: Sel, open: Option<String>) -> Element {
     let mut all = use_signal(|| false);
     let total = rows.len();
     let shown = if all() || total <= 8 { total } else { 8 };
@@ -250,43 +265,44 @@ fn HoldList(rows: Vec<HoldRow>) -> Element {
         ul { class: "mt-1",
             for (i , row) in rows.iter().take(shown).enumerate() {
                 li { key: "{i}",
-                    if let Some(to) = row.to.clone() {
-                        Link {
-                            class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] hover:bg-ink/5",
-                            to,
-                            title: row.hint.clone(),
-                            if !row.decl.is_empty() {
-                                span { class: "shrink-0 text-ink-soft", "{row.decl}" }
-                            }
-                            // The name is the one thing the row exists to
-                            // state: it takes the row's free width, and the
-                            // count-and-clause column truncates against a
-                            // hard cap before the name gives up a pixel.
-                            span { class: "flex-1 shrink-0 font-medium text-ink", "{row.name}" }
-                            if let Some(letter) = row.letter {
-                                span { class: "shrink-0 font-bold text-flare", "{letter}" }
-                            }
-                            span { class: "max-w-[45%] shrink-0 truncate text-right text-[9px] text-ink-soft",
-                                "{row.word}"
-                            }
-                            if let Some(event) = row.event {
-                                span { class: "shrink-0 text-[9px] text-flare", "{event}" }
-                            }
-                        }
-                    } else {
-                        span {
-                            class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] text-ink-soft",
-                            title: row.hint.clone(),
-                            if !row.decl.is_empty() {
-                                span { class: "shrink-0", "{row.decl}" }
-                            }
-                            span { class: "min-w-0 flex-1 truncate", "{row.name}" }
-                            span { class: "max-w-[45%] shrink-0 truncate text-right text-[9px]",
-                                "{row.word}"
-                            }
-                            if let Some(event) = row.event {
-                                span { class: "shrink-0 text-[9px] text-flare", "{event}" }
-                            }
+                    {
+                        let quote = row.peek.as_deref().and_then(peek_at);
+                        let to = row
+                            .to
+                            .clone()
+                            .or_else(|| quote.map(|(path, label)| peek_route(&sel, path, label)));
+                        let here = row.peek.is_some() && row.peek == open;
+                        // Where a row's own words already say where it is
+                        // written, its hover words say what opening it does —
+                        // the same sentence the chart's quoted rows use for
+                        // the run that goes to a block.
+                        let title = match (&row.hint, row.to.is_none() && quote.is_some()) {
+                            (Some(hint), true) => Some(format!("{hint} — quote its source")),
+                            (hint, _) => hint.clone(),
+                        };
+                        // The open row keeps its ink and takes its left
+                        // padding back off the rule, so nothing shifts when a
+                        // quotation opens.
+                        let ink = match here {
+                            true => "border-l-2 border-ink bg-ink/5 pr-1 pl-[2px]",
+                            false => "px-1",
+                        };
+                        match to {
+                            Some(to) => rsx! {
+                                Link {
+                                    class: "flex w-full items-baseline gap-1.5 py-0.5 font-data text-[10.5px] hover:bg-ink/5 {ink}",
+                                    to,
+                                    title,
+                                    RowCells { row: row.clone(), dead: false }
+                                }
+                            },
+                            None => rsx! {
+                                span {
+                                    class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] text-ink-soft",
+                                    title: row.hint.clone(),
+                                    RowCells { row: row.clone(), dead: true }
+                                }
+                            },
                         }
                     }
                 }
@@ -298,6 +314,41 @@ fn HoldList(rows: Vec<HoldRow>) -> Element {
                 onclick: move |_| all.set(true),
                 "show all {total}"
             }
+        }
+    }
+}
+
+/// One row's own cells, the same however the row is opened — or not opened at
+/// all: the declaration it wears, its name, its diff letter, what the relation
+/// says, and the diff event. A row that goes nowhere is one voice quieter,
+/// which is the only difference.
+#[component]
+fn RowCells(row: HoldRow, dead: bool) -> Element {
+    rsx! {
+        if !row.decl.is_empty() {
+            span {
+                class: "shrink-0",
+                class: if !dead { "text-ink-soft" },
+                "{row.decl}"
+            }
+        }
+        // The name is the one thing the row exists to state: it takes the
+        // row's free width, and the count-and-clause column truncates against
+        // a hard cap before the name gives up a pixel.
+        span {
+            class: if dead { "min-w-0 flex-1 truncate" } else { "flex-1 shrink-0 font-medium text-ink" },
+            "{row.name}"
+        }
+        if let Some(letter) = row.letter {
+            span { class: "shrink-0 font-bold text-flare", "{letter}" }
+        }
+        span {
+            class: "max-w-[45%] shrink-0 truncate text-right text-[9px]",
+            class: if !dead { "text-ink-soft" },
+            "{row.word}"
+        }
+        if let Some(event) = row.event {
+            span { class: "shrink-0 text-[9px] text-flare", "{event}" }
         }
     }
 }
@@ -325,6 +376,7 @@ impl DataModel {
                             word: kind.word(via),
                             event,
                             hint: None,
+                            peek: None,
                         }
                     }
                     Anchor::Mod(frame) => {
@@ -343,6 +395,7 @@ impl DataModel {
                             word: kind.word(via),
                             event,
                             hint: None,
+                            peek: None,
                         }
                     }
                 }
@@ -379,6 +432,7 @@ impl DataModel {
                         word,
                         event: None,
                         hint: None,
+                        peek: None,
                     },
                 ))
             })
@@ -459,6 +513,14 @@ impl DataMark {
                 .get(m.file as usize)
                 .map(|f| format!("{}:{}", f.path, m.line))
         };
+        // What a row of this section can be quoted from: a trait and a method
+        // are written somewhere, and this chart draws neither a block.
+        let quotable = |m: &ItemMark| {
+            graph
+                .files
+                .get(m.file as usize)
+                .map(|f| peek_key(&f.path, &m.label))
+        };
         let trait_row =
             |t: &ItemMark, event: Option<HoldEvent>, name: String, word: String| HoldRow {
                 to: None,
@@ -468,6 +530,7 @@ impl DataMark {
                 word,
                 event: event.map(HoldEvent::word),
                 hint: where_written(t),
+                peek: quotable(t),
             };
         if let Some(item) = graph.items.get(self.id as usize) {
             // Which promises the workspace declares itself: those the survey
@@ -510,6 +573,10 @@ impl DataMark {
                         word,
                         event: None,
                         hint: None,
+                        // A foreign trait is written outside the workspace:
+                        // the survey never read it, so there is nothing to
+                        // quote.
+                        peek: None,
                     }),
                 }
             }
@@ -557,6 +624,7 @@ impl DataMark {
                         Some(at) => format!("{} · {at}", row.sig),
                         None => row.sig.clone(),
                     }),
+                    peek: own.and_then(quotable),
                 }
             }));
             // What the base wrote for it and this copy does not, quoted from the
@@ -569,6 +637,9 @@ impl DataMark {
                 word: String::new(),
                 event: Some(HoldEvent::Removed.word()),
                 hint: Some(sig.clone()),
+                // Its source left the working copy with it; the base's
+                // signature is all there is to say.
+                peek: None,
             }));
         } else if let Some(ghost) = (self.id as usize)
             .checked_sub(graph.items.len())
@@ -584,6 +655,7 @@ impl DataMark {
                 word: String::new(),
                 event: None,
                 hint: Some(sig.clone()),
+                peek: None,
             }));
         }
         Offers { promises, methods }
@@ -595,8 +667,15 @@ impl DataMark {
 /// loud, because `named by 12 signatures` is ink this chart refuses to draw
 /// and a reviewer must never mistake for silence.
 #[component]
-pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element {
+pub(super) fn DataSheet(
+    graph: CodeGraph,
+    path: String,
+    item: String,
+    /// Which of its rows is open as a quotation, as the URL carries it.
+    peek: Option<String>,
+) -> Element {
     let data = use_data();
+    let sel: Sel = (path.clone(), item.clone());
     let model = use_memo(use_reactive((&graph,), move |(graph,)| {
         DataModel::build(&graph, *data.ref_dir.peek(), &data.folds.read())
     }));
@@ -640,6 +719,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
             word: "owns · nested".to_string(),
             event: None,
             hint: None,
+            peek: None,
         });
     }
     held_by.extend(
@@ -666,6 +746,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
             word: "owns · nested".to_string(),
             event: None,
             hint: None,
+            peek: None,
         })
         .collect();
     holds.extend(
@@ -695,6 +776,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
             word: "names it".to_string(),
             event: event.map(HoldEvent::word),
             hint: Some(format!("{}:{}", file.path, item.line)),
+            peek: Some(peek_key(&file.path, &item.label)),
         })
     };
     let contracts: Vec<HoldRow> = model
@@ -717,6 +799,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
                 word: "its API names it".to_string(),
                 event: None,
                 hint: None,
+                peek: None,
             })
         })
         .collect();
@@ -740,6 +823,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
                 word: plural(end.count as usize, "reference"),
                 event: None,
                 hint: Some(format!("{}:{}", file.path, item.line)),
+                peek: Some(peek_key(&file.path, &item.label)),
             },
         ))
     };
@@ -902,19 +986,19 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
                         }
                     }
                 } else {
-                    HoldList { rows: held_by }
+                    HoldList { sel: sel.clone(), open: peek.clone(), rows: held_by }
                 }
                 if !contracts.is_empty() {
                     h3 { class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
                         "In the contract of ({contracts.len()})"
                     }
-                    HoldList { rows: contracts }
+                    HoldList { sel: sel.clone(), open: peek.clone(), rows: contracts }
                 }
                 if !in_api.is_empty() {
                     h3 { class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
                         "In the API of ({in_api.len()})"
                     }
-                    HoldList { rows: in_api }
+                    HoldList { sel: sel.clone(), open: peek.clone(), rows: in_api }
                 }
                 if !reach.is_empty() {
                     p { class: "mt-1 px-1 font-data text-[10px] leading-relaxed text-ink-soft",
@@ -933,7 +1017,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
                         "holds no workspace types."
                     }
                 } else {
-                    HoldList { rows: holds }
+                    HoldList { sel: sel.clone(), open: peek.clone(), rows: holds }
                 }
                 if !promises.is_empty() {
                     h3 {
@@ -941,7 +1025,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
                         title: "the trait impls written for it by hand, wherever in the workspace they are written; a derive stands in the type's own source and is not one of these",
                         "Implements ({promises.len()})"
                     }
-                    HoldList { rows: promises }
+                    HoldList { sel: sel.clone(), open: peek.clone(), rows: promises }
                 }
                 if !methods.is_empty() {
                     h3 {
@@ -950,7 +1034,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
                         title: "every method written for it anywhere in the workspace, its own first, then the ones a contract asked for; each row's hover words are its signature as written",
                         "Methods ({methods.len()})"
                     }
-                    HoldList { rows: methods }
+                    HoldList { sel: sel.clone(), open: peek.clone(), rows: methods }
                 }
                 if !mark.ghost {
                     h3 { class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
@@ -961,7 +1045,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
                             "no body in the workspace reaches it."
                         }
                     } else {
-                        HoldList { rows: used_by }
+                        HoldList { sel: sel.clone(), open: peek.clone(), rows: used_by }
                     }
                     h3 { class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
                         "Uses ({uses.len()})"
@@ -971,7 +1055,7 @@ pub(super) fn DataSheet(graph: CodeGraph, path: String, item: String) -> Element
                             "its impls reach nothing in the workspace."
                         }
                     } else {
-                        HoldList { rows: uses }
+                        HoldList { sel: sel.clone(), open: peek.clone(), rows: uses }
                     }
                 }
             }

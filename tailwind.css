@@ -17,17 +17,20 @@
   --color-ink-faint: #b3bac4; /* ghost outlines only */
   --color-flare: #a54c06; /* CHANGED, and nothing else, ever */
 
-  /* Token colors. These live inside a quoted row and nowhere else: a row is
-     a quotation of the reviewer's file, and an editor colors a quotation by
-     token class. Every one clears 4.5:1 on paper, and none of them is in the
-     flare's hue — amber still means CHANGED, inside a quotation included.
-     The palette was the removed code map's source pane's; what ships now is
-     the part a declared row can say. */
+  /* Token colors. These live inside a quotation and nowhere else: a quoted
+     row on a block, or a whole item quoted on the quotation plate, and an
+     editor colors a quotation by token class. Every one clears 4.5:1 on
+     paper, and none of them is in the flare's hue — amber still means
+     CHANGED, inside a quotation included. */
   --color-tok-kw: #1c4f8b; /* keywords */
   --color-tok-type: #0f6a6a; /* type names and lifetimes */
   --color-tok-sum: #6b3fa0; /* an enum's own name, on the data chart's blocks */
   --color-tok-num: #8a2f7a; /* number literals */
   --color-tok-punct: #4b5563; /* punctuation */
+  --color-tok-fn: #6b3fa0; /* fn and macro names */
+  --color-tok-str: #9c2f4a; /* string, char, byte literals */
+  --color-tok-doc: #2f6b45; /* doc comments */
+  --color-tok-comment: #5f7060; /* plain comments */
 }
 
 html,
@@ -1078,6 +1081,102 @@ details.fold:not([open]) > summary::after {
   .slope .data-node {
     transition: none;
   }
+}
+
+/* ————— The quotation plate: one row of a sheet, opened at its source. —————
+
+   A sheet lists ends this chart draws no block for — the function that leans
+   on the selection, the trait it promises, the method written for it. Opening
+   one quotes it here: the survey's own bytes, in the reviewer's own indent,
+   with a gutter counting from the item's first line in the real file. The
+   plate stands to the sheet's left, so the row and what it says are read side
+   by side. */
+
+.slope .quote-pane {
+  overflow: auto;
+  border-top: 1px solid var(--color-ink-line);
+  padding: 8px 0 9px;
+  font-family: var(--font-data);
+  font-size: 11px;
+  line-height: 1.55;
+  tab-size: 4;
+}
+/* The lines are as wide as the widest of them: a definition is read, not
+   reflowed, so a long line scrolls instead of wrapping. */
+.slope .quote-lines {
+  width: max-content;
+  min-width: 100%;
+}
+.slope .quote-line {
+  display: flex;
+  align-items: flex-start;
+  white-space: pre;
+}
+/* The gutter counts in the real file's numbers and stays put while the text
+   scrolls sideways — the one thing a reader needs to keep while reading. It is
+   not selectable: copying a quotation should paste code, not line numbers. */
+.slope .quote-ln {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  width: 50px;
+  padding-right: 12px;
+  text-align: right;
+  font-size: 9.5px;
+  color: var(--color-ink-soft);
+  background: var(--color-paper);
+  user-select: none;
+  -webkit-user-select: none;
+}
+.slope .quote-src {
+  user-select: text;
+  -webkit-user-select: text;
+  padding-right: 16px;
+}
+.slope .quote-pane .tok-kw {
+  color: var(--color-tok-kw);
+}
+.slope .quote-pane .tok-fn,
+.slope .quote-pane .tok-macro {
+  color: var(--color-tok-fn);
+}
+.slope .quote-pane .tok-type,
+.slope .quote-pane .tok-lifetime {
+  color: var(--color-tok-type);
+}
+.slope .quote-pane .tok-str {
+  color: var(--color-tok-str);
+}
+.slope .quote-pane .tok-num {
+  color: var(--color-tok-num);
+}
+.slope .quote-pane .tok-doc {
+  color: var(--color-tok-doc);
+}
+.slope .quote-pane .tok-comment {
+  color: var(--color-tok-comment);
+}
+.slope .quote-pane .tok-attr {
+  color: var(--color-ink-soft);
+}
+.slope .quote-pane .tok-punct {
+  color: var(--color-tok-punct);
+}
+.slope .quote-pane .tok-ident {
+  color: var(--color-ink);
+}
+/* A resolved run is a link: it keeps its token's colour, and a quiet underline
+   alone says it goes somewhere — firmer under the pointer. Nothing new to
+   learn: it is the affordance a quoted row's own type names already use. */
+.slope .quote-pane .tok-link {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 30%, transparent);
+  text-underline-offset: 3px;
+}
+.slope .quote-pane .tok-link:hover {
+  text-decoration-color: currentColor;
 }
 
 /* ————— The one authored motion: the survey constellation draws itself. ————— */

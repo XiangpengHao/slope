@@ -1538,7 +1538,8 @@ fn frame_chart(
     );
 }
 
-/// Keyboard at the data altitude: `f` refits, Escape deselects, `/` finds.
+/// Keyboard at the data altitude: `f` refits, Escape steps back out of the
+/// deepest thing open — a quotation first, then the selection — and `/` finds.
 const DATA_KEYS_JS: &str = r#"
 if (window.__slopeKeys) {
     document.removeEventListener('keydown', window.__slopeKeys);
@@ -1563,7 +1564,13 @@ document.addEventListener('keydown', window.__slopeKeys);
 
 /// The data chart, mounted for `/data`.
 #[component]
-pub(super) fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
+pub(super) fn DataChart(
+    graph: CodeGraph,
+    sel: Option<DataSel>,
+    /// Where Escape lands while a quotation is open: the same selection,
+    /// unquoted. `None` when nothing is quoted, and Escape deselects.
+    unquote: Option<Route>,
+) -> Element {
     let data = use_data();
     let camera = use_context::<DataCamera>();
     let flow = dioxus_flow::use_flow_handle::<DataNodeData>();
@@ -1615,6 +1622,15 @@ pub(super) fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
         let mut sel_on = sel_on;
         if *sel_on.peek() != on {
             sel_on.set(on);
+        }
+    }));
+    // The keyboard listener is mounted once and outlives every route change,
+    // so what Escape closes rides in on a signal rather than the props.
+    let quoted: Signal<Option<Route>> = use_signal(|| None);
+    use_effect(use_reactive((&unquote,), move |(unquote,)| {
+        let mut quoted = quoted;
+        if *quoted.peek() != unquote {
+            quoted.set(unquote);
         }
     }));
 
@@ -1736,8 +1752,14 @@ pub(super) fn DataChart(graph: CodeGraph, sel: Option<DataSel>) -> Element {
                             frame_chart(flow, bounds, *sel_on.peek(), duration);
                         }
                     }
-                    "Escape" if *sel_on.peek() => {
-                        nav.push(Route::DataOverview {});
+                    // One step out per press, deepest first: the quotation a
+                    // row opened, then the selection itself.
+                    "Escape" => {
+                        if let Some(back) = quoted.peek().clone() {
+                            nav.push(back);
+                        } else if *sel_on.peek() {
+                            nav.push(Route::DataOverview {});
+                        }
                     }
                     _ => {}
                 }

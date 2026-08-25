@@ -95,8 +95,10 @@ drew the workspace's files as blocks inside nested directory frames, with
 resolved reference ties between them, and a definition plate that quoted
 an item's own source with every resolved name in it a link. it is gone
 (user decision), along with `spec/code-viewer.md`, the `/code` route
-family, the `file_detail` and `item_source` server functions, and the
-source lexer that coloured the quoted plate.
+family and the `file_detail` server function. `item_source` and the source
+lexer went with it and came back the same day (user): the data sheet's rows
+now quote one item at a time on their own plate — see
+`spec/data-viewer.md`. what stayed gone is the map.
 
 the ladder is now **`dependencies · data`**, two rungs. what went with the
 map:
@@ -118,14 +120,18 @@ map:
   `slope-cli` with the dep cartouche.
 - the data sheet's rows for what this chart draws no block for — a trait
   it promises, a method written for it, a free function that names or uses
-  it — linked to the code plate. they keep their row and now name the file
-  and line the declaration is written on, as the row's hover words. the
-  sheet's `open its definition →` foot is gone; the header's own
-  `src/api.rs:67` locator is what a reviewer reads instead.
+  it — linked to the code plate. they keep their row, they name the file and
+  line the declaration is written on in the row's hover words, and since
+  2026-08-24 (user) clicking one quotes it beside the sheet on the
+  **quotation plate** (`peek=<file>@<label>` on the selection's own URL).
+  the sheet's `open its definition →` foot is still gone: a foot pointed at
+  one definition, and every row now opens its own.
 - the survey still runs rust-analyzer and still resolves every reference
   at item precision: the data chart's dashed uses edges are those. what
-  went is the file-precision reference list, each file's per-item cutaway,
-  and the quoted source — none of it read by the data chart.
+  went is the file-precision reference list and each file's per-item
+  cutaway. the sources, the item spans and the reference spans are kept on
+  the server again (`analyze::code::CodeIndex`), because a quotation must be
+  the bytes the survey read.
 
 ## Name (renamed 2026-08-20)
 

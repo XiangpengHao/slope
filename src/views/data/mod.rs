@@ -16,12 +16,15 @@
 //! a block is state only. The selection sheet is a list rather than a
 //! drawing, so it does say what the selected type offers — the contracts it
 //! promises, and every method written for it anywhere in the workspace, each
-//! row naming the file and line it is written on.
+//! row naming the file and line it is written on. Clicking such a row —
+//! anything this chart draws no block for — quotes its source on the
+//! quotation plate beside the sheet, so the reading never leaves the chart.
 
 pub(crate) mod chrome;
 pub(crate) mod layout;
 pub(crate) mod map;
 pub(crate) mod model;
+pub(crate) mod quote;
 
 use dioxus::prelude::*;
 
@@ -31,6 +34,7 @@ use crate::views::chrome::plural;
 use crate::views::data::chrome::{DataCartouche, DataSearch, DataSheet};
 use crate::views::data::map::DataChart;
 use crate::views::data::model::{DataModel, Folds};
+use crate::views::data::quote::Quotation;
 
 /// What the route selects on the chart.
 #[derive(Clone, PartialEq, Debug)]
@@ -48,7 +52,9 @@ impl DataSel {
     /// is not this chart's.
     fn of(route: &Route) -> Option<Self> {
         match route {
-            Route::DataFocus { path, item } => Some(DataSel::Mark(path.join("/"), item.clone())),
+            Route::DataFocus { path, item, .. } => {
+                Some(DataSel::Mark(path.join("/"), item.clone()))
+            }
             Route::DataModFocus { module } => Some(DataSel::Mod(module.clone())),
             _ => None,
         }
@@ -60,6 +66,37 @@ pub(super) fn mark_route(path: &str, item: &str) -> Route {
     Route::DataFocus {
         path: path.split('/').map(str::to_string).collect(),
         item: item.to_string(),
+        peek: None,
+    }
+}
+
+/// The selection a sheet — and any quotation opened from it — hangs off: the
+/// datum's own file, then the label it selects by.
+pub(super) type Sel = (String, String);
+
+/// Which row of a sheet is open as a quotation, in the URL: the file the
+/// quoted item is written in, then its label. Two facts, joined by a
+/// character neither a path nor a rust name can contain, so the address bar
+/// still says in words what is on the plate.
+pub(super) fn peek_key(path: &str, label: &str) -> String {
+    format!("{path}@{label}")
+}
+
+/// The (file, label) a `peek=` names, or `None` where it names nothing this
+/// survey can quote.
+pub(super) fn peek_at(key: &str) -> Option<(&str, &str)> {
+    let (path, label) = key.split_once('@')?;
+    (!path.is_empty() && !label.is_empty()).then_some((path, label))
+}
+
+/// The route that keeps the current selection and opens one of its rows as a
+/// quotation. The selection never moves: a quotation is a reading of the
+/// sheet, not a step to another mark.
+pub(super) fn peek_route(sel: &Sel, path: &str, label: &str) -> Route {
+    Route::DataFocus {
+        path: sel.0.split('/').map(str::to_string).collect(),
+        item: sel.1.clone(),
+        peek: Some(peek_key(path, label)),
     }
 }
 
@@ -257,22 +294,43 @@ pub(crate) fn DataOverview() -> Element {
     rsx! {}
 }
 
-/// `/data/mark/:..path?:item` — one datum selected. The chart keeps the
-/// blast radius inked; this sheet says who holds it, who names it, and who
-/// uses it, in rows a reader can follow.
+/// `/data/mark/:..path?:item` — one datum selected, and optionally one of its
+/// rows opened as a quotation (`peek=<file>@<label>`). The chart keeps the
+/// blast radius inked; the sheet says who holds it, who names it, and who
+/// uses it, in rows a reader can follow; the quotation stands to the sheet's
+/// left, so the row and what it says are read side by side.
 #[component]
-pub(crate) fn DataFocus(path: Vec<String>, item: String) -> Element {
+pub(crate) fn DataFocus(path: Vec<String>, item: String, peek: Option<String>) -> Element {
     let Some(graph) = use_survey() else {
         return rsx! {};
     };
     let joined = path.join("/");
+    let quoted = peek
+        .as_deref()
+        .and_then(peek_at)
+        .map(|(at, label)| (at.to_string(), label.to_string()));
     rsx! {
         div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-auto z-10 flex items-end sm:inset-x-auto sm:inset-y-0 sm:right-0 sm:items-start sm:p-3",
             DataSheet {
                 key: "{joined}|{item}",
-                graph,
+                graph: graph.clone(),
                 path: joined.clone(),
-                item,
+                item: item.clone(),
+                peek,
+            }
+        }
+        if let Some((at, label)) = quoted {
+            // The quotation takes the width the sheet cannot: it seats to the
+            // left of it on the desktop, and on a narrow viewport it covers
+            // the sheet, which is one back-step away.
+            div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-3 z-20 flex items-end sm:inset-x-auto sm:inset-y-0 sm:right-[19.5rem] sm:items-start sm:p-3 sm:pl-0",
+                Quotation {
+                    key: "{at}|{label}",
+                    graph,
+                    sel: (joined, item),
+                    path: at,
+                    label,
+                }
             }
         }
     }
@@ -293,6 +351,16 @@ fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element 
     let data = use_data();
     let route = use_route::<Route>();
     let sel = DataSel::of(&route);
+    // What Escape closes first, while a row of the sheet is quoted: the same
+    // selection with the quotation shut.
+    let unquote = match &route {
+        Route::DataFocus {
+            path,
+            item,
+            peek: Some(_),
+        } => Some(mark_route(&path.join("/"), item)),
+        _ => None,
+    };
     let facts = use_memo(use_reactive((&graph,), move |(graph,)| {
         DataModel::build(&graph, *data.ref_dir.peek(), &data.folds.read()).facts(graph.unresolved)
     }));
@@ -313,7 +381,7 @@ fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element 
     };
 
     rsx! {
-        DataChart { graph: graph.clone(), sel }
+        DataChart { graph: graph.clone(), sel, unquote }
         Outlet::<Route> {}
         div { class: "pointer-events-none absolute left-3 top-3 z-10 hidden w-64 sm:block",
             DataCartouche {
@@ -338,5 +406,46 @@ fn DataShell(graph: CodeGraph, workspace: String, diff_line: String) -> Element 
         div { class: "pointer-events-none absolute right-3 top-3 z-10 hidden w-72 flex-col gap-2 sm:flex",
             DataSearch { graph }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The URL is the review trail, so a quotation has to survive a round
+    /// trip through it — including a method's label, which carries its own
+    /// `::`, and a path, which carries its own `/`.
+    #[test]
+    fn a_quoted_row_round_trips_through_the_url() {
+        let key = peek_key("src/views/data/chrome.rs", "DataModel::hold_rows");
+        assert_eq!(
+            peek_at(&key),
+            Some(("src/views/data/chrome.rs", "DataModel::hold_rows"))
+        );
+        let route = peek_route(
+            &("src/api.rs".to_string(), "CodeGraph".to_string()),
+            "src/views/data/chrome.rs",
+            "DataModel::hold_rows",
+        );
+        // The selection is untouched by the quotation: a plate opens, the
+        // chart does not move.
+        assert_eq!(
+            route.to_string(),
+            "/data/mark/src/api.rs?peek=src/views/data/chrome.rs@DataModel::hold_rows&item=CodeGraph"
+        );
+        // And an unquoted selection's URL is exactly what it always was.
+        assert_eq!(
+            mark_route("src/api.rs", "CodeGraph").to_string(),
+            "/data/mark/src/api.rs?item=CodeGraph"
+        );
+    }
+
+    /// Half a key names nothing: the sheet stays open and no plate does.
+    #[test]
+    fn a_key_that_names_no_pair_quotes_nothing() {
+        assert_eq!(peek_at("src/api.rs"), None);
+        assert_eq!(peek_at("@CodeGraph"), None);
+        assert_eq!(peek_at("src/api.rs@"), None);
     }
 }

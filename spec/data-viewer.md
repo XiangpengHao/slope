@@ -6,7 +6,9 @@ same types as contracts; that chart was removed on 2026-08-24 (user decision)
 and this one is the altitude that reads types as data. The code map that stood
 between this rung and the crates was removed the same day — see
 `spec/spec.md`. Route family: `/data`, `/data/mark/:..path?item=`,
-`/data/mod/:..module`.
+`/data/mod/:..module`. A selection may carry one more query —
+`peek=<file>@<label>`, one of its sheet rows opened as a quotation of its own
+source (2026-08-24).
 
 ## Job and audience
 
@@ -49,7 +51,10 @@ silently became load-bearing. Visitor mode: **Operate**.
    free functions, traits and consts in one weight-ranked list, each row
    saying its keyword and its count, a link where the chart draws that end a
    block and the file and line it is written on where it does not. No
-   sentence is left counting what a reviewer cannot go and read.
+   sentence is left counting what a reviewer cannot go and read. Since
+   2026-08-24 (user) every one of those blockless rows is a link too: it
+   quotes the item's own source beside the sheet, so nothing a row names has
+   to be read in another window.
 
 ## Decisions (user-confirmed 2026-08-21)
 
@@ -135,6 +140,40 @@ own legibility floor. The fixes, all user-directed:
   variant quotation drops interior doc comments (fixes a corrupted row on
   both altitudes).
 
+## The quotation plate (2026-08-24, user)
+
+Clicking a sheet row the chart draws no block for — a function in `Used by`
+or `Uses`, a namer in `In the contract of`, a trait in `Implements`, a method
+in `Methods` — quotes it on a plate immediately left of the sheet. It answers
+the one question those rows used to leave open: *what does that code actually
+do?*
+
+- **The URL carries it**: `/data/mark/:..path?peek=<file>@<label>&item=<label>`.
+  The selection never moves — a quotation is a reading of the sheet, not a
+  step to another mark — so the chart, its blast radius and the camera hold
+  still. The back button closes the quotation; Escape closes it before it
+  deselects; `close ×` says the same in words. An unquoted selection's URL is
+  exactly what it was before.
+- **The plate**: the item's kind and name (`fn AltitudeSwitch` — the kind's
+  word alone, because the survey reads `pub(super)` as `pub(crate)` and the
+  head must not contradict the source quoted under it), the locator
+  (`src/views/chrome.rs:37`), then the item's own source — the bytes
+  the survey read, dedented by the indent every line shares and nothing else
+  — with a gutter counting from its first line in the real file. Long lines
+  scroll; nothing wraps and nothing is cut. It caps at the room between the
+  cartouche and the sheet and at the glass's height.
+- **The row stays inked** while its quotation is open (2px ink left edge,
+  `bg-ink/5`), so the plate is never loose from the row that asked for it.
+- **Every resolved name inside is a link**: to that datum's block where the
+  chart draws one (`item=`), to its own quotation where it does not (`peek=`),
+  so following the code is the same gesture as following the chart. A
+  reference to a whole module is not a link — this altitude has no place for
+  one.
+- **What has no source is not a link**: a foreign trait the survey never
+  read, a method the base had and the working copy dropped, a ghost's API.
+- The colours are the block-row palette plus the four classes only a body
+  says — fn/macro name, string, doc comment, comment (see DESIGN.md).
+
 ## Chrome
 
 - Cartouche: workspace name; `n structs · n enums · n statics` (unions when
@@ -158,7 +197,8 @@ own legibility floor. The fixes, all user-directed:
   `Used by` / `Uses` with the undrawn-residue lines. The header's own
   `src/api.rs:67` locator is where the mark itself is written; the sheet had
   an `open its definition →` foot to the code plate until that chart was
-  removed (2026-08-24).
+  removed (2026-08-24); the rows themselves now open the quotation plate
+  instead, one row at a time.
 - **`Implements`** is one row per hand-written trait impl gathered from
   anywhere in the workspace, quoting the trait as its header writes it
   (`From<Option<ast::Visibility>>`), naming where the contract is written
@@ -184,7 +224,14 @@ own legibility floor. The fixes, all user-directed:
 
 ## Implementation notes
 
-- `src/views/data/{model,layout,map,chrome,mod}.rs`. The sheet's
+- `src/views/data/{model,layout,map,chrome,mod,quote}.rs`. The quotation
+  plate is `data::quote`, over one server call: `api::item_source(item)` hands
+  back the item's source lexed into token-classed runs with the resolved
+  references attached as links. The server keeps what the graph does not carry
+  over the wire — every surveyed file's text, each item's byte range, and
+  every resolved reference's own name-token range — in
+  `analyze::code::CodeIndex`, so a quotation is always the text the survey
+  itself read and never a re-read of a file that has moved on. The sheet's
   `Implements` reads `ItemMark::impls` (hand-written headers) against
   `CodeGraph::implements` (the survey's resolved impl edges, workspace traits
   only, carrying the diff event), matching a written header to a resolved edge

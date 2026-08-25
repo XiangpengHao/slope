@@ -19,8 +19,11 @@ mod views;
 /// `/data` is the data altitude: every struct, enum, union and static the
 /// workspace keeps, tiered into roots and the state nested inside them;
 /// selecting one is `/data/mark/:..path?item=` (its defining file, then its
-/// label), and a whole module boundary is `/data/mod/:..module`. `/` is the
-/// dependency chart, the rung a review starts on.
+/// label), and a whole module boundary is `/data/mod/:..module`. A selection
+/// may also carry `peek=<file>@<label>`: one row of its sheet opened as a
+/// quotation of its own source, for the ends this chart draws no block for —
+/// a function, a trait, a method. `/` is the dependency chart, the rung a
+/// review starts on.
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
@@ -34,8 +37,11 @@ enum Route {
         DepRing { hop: u32 },
         #[route("/data")]
         DataOverview {},
-        #[route("/data/mark/:..path?:item")]
-        DataFocus { path: Vec<String>, item: String },
+        // The query fields are declared in the order the pattern names them:
+        // the router's macro walks the two lists together. `peek` leads so an
+        // unquoted selection's URL is exactly what it always was.
+        #[route("/data/mark/:..path?:peek&:item")]
+        DataFocus { path: Vec<String>, peek: Option<String>, item: String },
         #[route("/data/mod/:..module")]
         DataModFocus { module: Vec<String> },
 }
