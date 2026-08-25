@@ -106,30 +106,45 @@ pub(super) fn mod_route(key: Vec<String>) -> Route {
     Route::DataModFocus { module: key }
 }
 
-/// Which reading of the chart's uses edges is drawn. Direction alone cannot
-/// thin an unanchored chart — every edge is one type's use and another's users
-/// — so each mode anchors on the marks themselves: a block draws only its own
-/// heaviest edges in the chosen direction, and hovering it reveals the rest.
-/// `Both` is the unthinned picture, kept as an explicit choice.
+/// Which reading of the chart's body references is drawn.
+///
+/// Direction only means something **against an anchor**: the same hairline is
+/// one type's use and another type's users, so `uses` and `used by` can pick
+/// different edges only once the chart knows which mark the reader has in
+/// hand. The first build had no anchor and reached for a per-mark quota of
+/// two instead, which is why moving the switch changed nothing a reader could
+/// see (2026-08-25, user). The anchor is now what the reviewer is looking at,
+/// and it is never invented:
+///
+/// - the **selection**, whenever there is one — its own references ink in the
+///   chosen direction, and hovering any block reads the same way;
+/// - the **diff** on the resting plate — `uses` draws what the changed
+///   declarations lean on, `used by` draws whose code leans on them, which is
+///   the blast-radius question this chart exists for;
+/// - and where a workspace has neither, every reference is drawn, because a
+///   reading with nothing in focus has no direction to take.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub(super) enum RefDir {
-    /// What each mark's own code reaches for — its heaviest edges out. The
-    /// default: the question a reviewer brings to a change is what it leans on.
+    /// What the anchor's own code reaches for — its edges out. The default:
+    /// the question a reviewer brings to a change is what it leans on.
     #[default]
     Uses,
-    /// Whose code leans on each mark — its heaviest edges in.
+    /// Whose code leans on the anchor — its edges in.
     UsedBy,
-    /// Every edge, unthinned.
+    /// Every reference the anchor touches, both ways round, and — with no
+    /// anchor at all — the unthinned plate.
     Both,
 }
 
 impl RefDir {
-    /// How many edges one mark draws at rest in this reading. `Both` keeps
-    /// every edge; the anchored readings keep each mark's heaviest few.
-    pub(super) fn per_territory(self) -> Option<usize> {
+    /// Whether this reading draws one reference edge anchored on `at`. `def`
+    /// is the end being leaned on, `user` the end doing the leaning — the same
+    /// two words the survey resolves an edge into.
+    pub(super) fn draws<T: PartialEq>(self, at: &T, def: &T, user: &T) -> bool {
         match self {
-            RefDir::Both => None,
-            _ => Some(2),
+            RefDir::Uses => user == at,
+            RefDir::UsedBy => def == at,
+            RefDir::Both => user == at || def == at,
         }
     }
 }
@@ -239,9 +254,9 @@ impl VisFloor {
     }
 }
 
-/// The whole reading one build of the chart draws: which direction its uses
-/// edges anchor in, how narrow a declaration may be and still be drawn, and
-/// which modules the reviewer folded by hand. None of the three is a fact
+/// The whole reading one build of the chart draws: which direction its body
+/// references are read in, how narrow a declaration may be and still be
+/// drawn, and which modules the reviewer folded by hand. None of the three is a fact
 /// about the workspace — each is a choice the reviewer made about this
 /// reading of it — so they travel into [`DataModel::build`] together.
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -252,8 +267,8 @@ pub(super) struct DataReading {
 }
 
 /// The data chart's own review-session state. Both stores are this altitude's:
-/// a fold is a reading and so is the direction the uses edges are read in, and
-/// what the chart draws is the reading, while the URL carries the selection.
+/// a fold is a reading and so is the direction the body references are read
+/// in, and what the chart draws is the reading, while the URL carries the selection.
 /// Provided as a context by the app shell, which outlives every route change,
 /// so stepping through selections — or out to the dependency chart and back —
 /// never resets either one.
@@ -261,7 +276,7 @@ pub(super) struct DataReading {
 pub(super) struct DataState {
     /// The modules the reviewer folded by hand on this chart.
     pub(super) folds: Signal<Folds>,
-    /// Which reading of the chart's uses edges is drawn.
+    /// Which direction the chart's body references are read in.
     pub(super) ref_dir: Signal<RefDir>,
     /// How narrow a declaration may be and still be drawn.
     pub(super) vis_floor: Signal<VisFloor>,

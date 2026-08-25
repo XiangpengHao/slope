@@ -56,8 +56,8 @@ impl DataFacts {
 /// own hover words teach; the edges are what the chart shows.
 ///
 /// Two readings ride here, because both act on the whole plate: which
-/// direction the uses edges anchor in, and how narrow a declaration may be and
-/// still be drawn.
+/// direction the body references are read in, and how narrow a declaration may
+/// be and still be drawn.
 #[component]
 pub(super) fn DataCartouche(
     facts: DataFacts,
@@ -131,10 +131,10 @@ fn SurveyLimits(notes: Vec<String>) -> Element {
     }
 }
 
-/// Which reading of the chart's uses edges is drawn. It rides on the
-/// cartouche because it acts on the whole plate: each block draws its heaviest
-/// edges in the chosen direction, and hovering a block reveals the rest.
-/// `both` is the unthinned picture.
+/// Which direction the chart's body references are read in. It rides on the
+/// cartouche because it acts on the whole plate, against whatever the reviewer
+/// has in focus: the selected mark, the hovered block, or — with the paper at
+/// rest — the declarations the diff touched.
 #[component]
 fn RefToggle() -> Element {
     let data = use_data();
@@ -158,14 +158,14 @@ fn RefToggle() -> Element {
         div {
             class: "border-t border-ink-line px-4 py-1.5",
             role: "group",
-            "aria-label": "which reading of the chart's body dependence is drawn",
+            "aria-label": "which direction the chart's body references are read in",
             span { class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
                 "references"
             }
             div { class: "mt-1 flex items-stretch gap-0.5",
-                {seg("uses", "each mark's heaviest body dependence out — what its own code leans on", RefDir::Uses)}
-                {seg("used by", "each mark's heaviest body dependence in — whose code leans on it", RefDir::UsedBy)}
-                {seg("both", "every body dependence between two marks, unthinned", RefDir::Both)}
+                {seg("uses", "what the selection — or, at rest, what the diff — leans on", RefDir::Uses)}
+                {seg("used by", "whose code leans on the selection — or, at rest, on the diff", RefDir::UsedBy)}
+                {seg("both", "both ways round; with nothing selected and no diff, every reference", RefDir::Both)}
             }
         }
     }
@@ -178,10 +178,13 @@ fn RefToggle() -> Element {
 /// runs; sliding back to `all` is one move.
 ///
 /// The rungs are the visibility each declaration **writes**, not what a chain
-/// of private modules leaves reachable from outside — so the label says `as
-/// declared` on the plate rather than in a hover the reader has to find. The
-/// foot states how many declarations the reading leaves off, because a narrow
-/// reading and an empty workspace must never look alike.
+/// of private modules leaves reachable from outside. That distinction is the
+/// group's hover words, not its label: `visibility as declared` spent three
+/// words of plate on a caveat, and the scale underneath — `pub`, `pub(crate)`
+/// — already says which alphabet it reads (2026-08-25, distill). The foot
+/// states how many declarations the reading leaves off, in as few characters
+/// as say it, because a narrow reading and an empty workspace must never look
+/// alike.
 #[component]
 fn VisSlider(off_paper: usize) -> Element {
     let data = use_data();
@@ -195,8 +198,10 @@ fn VisSlider(off_paper: usize) -> Element {
             class: "border-t border-ink-line px-4 py-1.5",
             role: "group",
             "aria-label": "how narrow a declaration may be and still be drawn",
-            span { class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
-                "visibility as declared"
+            span {
+                class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
+                title: "the visibility each declaration writes — not what a chain of private modules leaves reachable from outside",
+                "visibility"
             }
             input {
                 class: "vis-slide mt-1.5 block w-full",
@@ -227,8 +232,10 @@ fn VisSlider(off_paper: usize) -> Element {
                 }
             }
             if off_paper > 0 {
-                p { class: "mt-1 font-data text-[9.5px] leading-snug text-ink-soft",
-                    "{plural(off_paper, \"narrower declaration\")} off this reading"
+                p {
+                    class: "mt-1 font-data text-[9.5px] leading-snug text-ink-soft",
+                    title: "{plural(off_paper, \"declaration\")} written narrower than this reading draws",
+                    "{off_paper} off"
                 }
             }
         }
@@ -417,6 +424,7 @@ fn RowCells(row: HoldRow, dead: bool) -> Element {
         span {
             class: "max-w-[45%] shrink-0 truncate text-right text-[9px]",
             class: if !dead { "text-ink-soft" },
+            title: "{row.word}",
             "{row.word}"
         }
         if let Some(event) = row.event {
@@ -488,7 +496,7 @@ impl DataModel {
                     return None;
                 };
                 let far = by_id.get(id)?;
-                let mut word = plural(count as usize, "reference");
+                let mut word = plural(count as usize, "ref");
                 // One clause at most, and only when the whole row fits: the
                 // name is the one thing the row exists to state, so the clause
                 // drops before the name would clip.
@@ -524,6 +532,40 @@ fn ranked(mut rows: Vec<(u32, HoldRow)>) -> Vec<HoldRow> {
     rows.into_iter().map(|(_, row)| row).collect()
 }
 
+/// One row per end, however many ways that end reaches this one. A type whose
+/// API names the selection *and* whose bodies lean on it is two facts about
+/// one neighbour; under separate headings that was two lists, and in one list
+/// it would read as the same row engraved twice. The first mention keeps the
+/// place — the order inside a heading is the strength of the claim — and the
+/// later words join it, so the row says `API · 13 references` and the name is
+/// written once.
+fn per_end(rows: Vec<HoldRow>) -> Vec<HoldRow> {
+    let mut out: Vec<HoldRow> = Vec::new();
+    for row in rows {
+        let same = out.iter_mut().find(|r| {
+            r.name == row.name && r.decl == row.decl && r.to == row.to && r.peek == row.peek
+        });
+        let Some(seen) = same else {
+            out.push(row);
+            continue;
+        };
+        // One word per kind, and no more: a merged row says `owns · API · 6
+        // refs` and stops there. What a body reference carries past its count
+        // — the heaviest method the count came through — is a caption, and a
+        // caption on a merged row is the one thing wide enough to truncate.
+        let add = row.word.split(" · ").next().unwrap_or_default();
+        if !add.is_empty() && !seen.word.split(" · ").any(|w| w == add) {
+            seen.word = match seen.word.is_empty() {
+                true => add.to_string(),
+                false => format!("{} · {add}", seen.word),
+            };
+        }
+        seen.event = seen.event.or(row.event);
+        seen.hint = seen.hint.take().or(row.hint);
+    }
+    out
+}
+
 impl DataMark {
     /// The tier, said out loud — the one sentence this altitude exists for.
     fn tier_line(&self) -> String {
@@ -532,35 +574,30 @@ impl DataMark {
         }
         match self.seat.tier {
             Tier::Root if self.is_static() => "a root — state no type holds.".to_string(),
-            Tier::Root => "top-level data: no type holds it — a root.".to_string(),
+            Tier::Root => "a root: no type holds it.".to_string(),
             // The holder is the first row of the section right below this line;
             // naming it twice in six words was the sheet saying the same thing to
             // itself (2026-08-21, distill).
-            Tier::Nested(_) => "secondary data — drawn inside its holder's block.".to_string(),
+            Tier::Nested(_) => "drawn inside its holder's block.".to_string(),
             Tier::Standing(Stand::Shared) => {
-                "secondary data, shared: a handle holds it, and sharing has no single container, \
-                 so it stands beside its holders with every line drawn."
+                "shared through a handle: no single container, so it stands beside its holders."
                     .to_string()
             }
             Tier::Standing(Stand::Vocab) => format!(
-                "secondary data, vocabulary: {} hold it — too many to seat under one — so its \
-                 fan-in rests folded on its own foot.",
+                "{} hold it — too many to seat under one, so its fan-in rests folded.",
                 plural(self.seat.held_by as usize, "type")
             ),
             Tier::Standing(Stand::Afar) => {
-                "secondary data: its holder is in another module, and cross-module ownership \
-                 stays drawn ink."
-                    .to_string()
+                "its holder is in another module, so the ownership stays a line.".to_string()
             }
             Tier::Standing(Stand::Ring) => {
-                "secondary data, in a ring: it and its holder own each other, and the seat that \
-                 would close the loop stays a line."
+                "it and its holder own each other, so the seat that would close the loop stays a \
+                 line."
                     .to_string()
             }
             Tier::Standing(Stand::Narrower) => {
-                "secondary data: every type that holds it is narrower than this visibility \
-                 reading draws, so nothing on the paper holds it — widen the reading to see \
-                 what does."
+                "every type that holds it is narrower than this reading draws — widen it to see \
+                 them."
                     .to_string()
             }
         }
@@ -746,10 +783,16 @@ impl DataMark {
     }
 }
 
-/// One selected datum's sheet: its tier, who holds it, which contracts name
-/// it, what it holds, and who uses it — with the counted residue said out
-/// loud, because `named by 12 signatures` is ink this chart refuses to draw
-/// and a reviewer must never mistake for silence.
+/// One selected datum's sheet: its tier, everything that reaches it,
+/// everything it reaches, and what it offers — with the counted residue said
+/// out loud in rows, because `named by 12 signatures` is ink this chart
+/// refuses to draw and a reviewer must never mistake for silence.
+///
+/// Two relation headings, not six. Holding, being named in a contract, being
+/// named in an API and being used by a body are four kinds of one fact — that
+/// something reaches this — and the sheet said each of them in its own
+/// heading, which read as four unrelated questions (2026-08-25, user). The
+/// kind is a word on the row now; the heading is the direction.
 #[component]
 pub(super) fn DataSheet(
     graph: CodeGraph,
@@ -831,24 +874,33 @@ pub(super) fn DataSheet(
         })
     };
 
-    // Who holds it: the drawn relations landing on it, and — first, because
-    // the paper says it first — the block it is nested inside.
-    let mut held_by: Vec<HoldRow> = Vec::new();
+    // Everything that reaches it, in one list. The sheet used to spend three
+    // headings on this — `Held by`, `In the contract of`, `In the API of` —
+    // and two more on `Holds` and `Uses`, five names for two directions
+    // (2026-08-25, user). A relation's *kind* is a word on its row, which is
+    // where a word that varies row by row belongs; the heading says only which
+    // way the arrow points.
+    //
+    // The order inside is the strength of the claim: the structure that holds
+    // it first — the block it is nested in leads, because the paper says that
+    // first — then the signatures that name it, then the bodies that use it,
+    // heaviest first.
+    let mut used_by: Vec<HoldRow> = Vec::new();
     if let Tier::Nested(holder) = mark.seat.tier
         && let Some(h) = by_id.get(&holder)
     {
-        held_by.push(HoldRow {
+        used_by.push(HoldRow {
             to: Some(mark_route(&h.head.path, &h.head.label)),
             decl: h.head.kind.decl_words(&h.head.vis),
             name: h.head.name.clone(),
             letter: h.letter(),
-            word: "owns · nested".to_string(),
+            word: "owns".to_string(),
             event: None,
             hint: None,
             peek: None,
         });
     }
-    held_by.extend(
+    used_by.extend(
         model.hold_rows(
             model
                 .holds
@@ -860,17 +912,53 @@ pub(super) fn DataSheet(
     );
     // The holders this reading left off the paper. `Stand::Narrower` says the
     // tier in one sentence; these are the rows behind it, each quoting the
-    // holder's own source — an empty `Held by` under that sentence would be
-    // the sheet withholding names it has (2026-08-25).
-    held_by.extend(
+    // holder's own source — an empty list under that sentence would be the
+    // sheet withholding names it has (2026-08-25).
+    used_by.extend(
         mark.undrawn
             .holders_off
             .iter()
-            .filter_map(|&holder| namer_row(holder, None, "holds it — off this reading")),
+            .filter_map(|&holder| namer_row(holder, None, "owns · off")),
+    );
+    // The naming ink this chart refuses to draw, in rows: the free
+    // declarations whose own signature names it (each a link to its
+    // definition, since none has a block here), and the types whose API says
+    // the word. One word each — the declaration column already says which is
+    // which.
+    used_by.extend(
+        model
+            .naming
+            .iter()
+            .filter(|n| n.ty == mark.id && !n.from_method)
+            .filter_map(|n| namer_row(n.namer, n.event, "signature")),
+    );
+    used_by.extend(
+        model
+            .naming
+            .iter()
+            .filter(|n| n.ty == mark.id && n.from_method)
+            .filter_map(|n| match by_id.get(&n.namer) {
+                Some(far) => Some(HoldRow {
+                    to: Some(mark_route(&far.head.path, &far.head.label)),
+                    decl: far.head.kind.decl_words(&far.head.vis),
+                    name: far.head.name.clone(),
+                    letter: far.letter(),
+                    word: "API".to_string(),
+                    event: None,
+                    hint: None,
+                    peek: None,
+                }),
+                // The visibility reading left the naming type off the paper. An
+                // API that says this type's name is a fact about this type, so
+                // the row stays and quotes its source instead of stepping to a
+                // block that is not drawn.
+                None => namer_row(n.namer, n.event, "API"),
+            }),
     );
 
-    // What it holds: the blocks nested inside it, then the drawn relations.
-    let mut holds: Vec<HoldRow> = mark
+    // What it reaches, the same way round: the blocks nested inside it, then
+    // the structure it holds, then the marks its own bodies use.
+    let mut uses: Vec<HoldRow> = mark
         .seat
         .kids
         .iter()
@@ -880,13 +968,13 @@ pub(super) fn DataSheet(
             decl: k.head.kind.decl_words(&k.head.vis),
             name: k.head.name.clone(),
             letter: k.letter(),
-            word: "owns · nested".to_string(),
+            word: "owns".to_string(),
             event: None,
             hint: None,
             peek: None,
         })
         .collect();
-    holds.extend(
+    uses.extend(
         model.hold_rows(
             model
                 .holds
@@ -896,39 +984,6 @@ pub(super) fn DataSheet(
                 .collect(),
         ),
     );
-
-    // The naming ink this chart refuses to draw, in rows: the free
-    // declarations whose own signature names it (each a link to its
-    // definition, since none has a block here), and the types whose API says
-    // the word.
-    let contracts: Vec<HoldRow> = model
-        .naming
-        .iter()
-        .filter(|n| n.ty == mark.id && !n.from_method)
-        .filter_map(|n| namer_row(n.namer, n.event, "names it"))
-        .collect();
-    let in_api: Vec<HoldRow> = model
-        .naming
-        .iter()
-        .filter(|n| n.ty == mark.id && n.from_method)
-        .filter_map(|n| match by_id.get(&n.namer) {
-            Some(far) => Some(HoldRow {
-                to: Some(mark_route(&far.head.path, &far.head.label)),
-                decl: far.head.kind.decl_words(&far.head.vis),
-                name: far.head.name.clone(),
-                letter: far.letter(),
-                word: "its API names it".to_string(),
-                event: None,
-                hint: None,
-                peek: None,
-            }),
-            // The visibility reading left the naming type off the paper. An
-            // API that says this type's name is a fact about this type, so the
-            // row stays and quotes its source instead of stepping to a block
-            // that is not drawn.
-            None => namer_row(n.namer, n.event, "its API names it"),
-        })
-        .collect();
 
     // The implementation ink, both ways round — and then the same ink from
     // the ends this chart draws no block for (2026-08-23, user). A free
@@ -946,14 +1001,14 @@ pub(super) fn DataSheet(
                 decl: item.head.kind.decl_words(&item.head.vis),
                 name: item.head.name.clone(),
                 letter: None,
-                word: plural(end.count as usize, "reference"),
+                word: plural(end.count as usize, "ref"),
                 event: None,
                 hint: Some(format!("{}:{}", file.path, item.head.line)),
                 peek: Some(peek_key(&file.path, &item.head.label)),
             },
         ))
     };
-    let used_by: Vec<HoldRow> = ranked(
+    used_by.extend(ranked(
         model
             .uses_rows(
                 model
@@ -966,8 +1021,8 @@ pub(super) fn DataSheet(
             .into_iter()
             .chain(mark.undrawn.used_by.iter().filter_map(unseen_row))
             .collect(),
-    );
-    let uses: Vec<HoldRow> = ranked(
+    ));
+    uses.extend(ranked(
         model
             .uses_rows(
                 model
@@ -980,7 +1035,10 @@ pub(super) fn DataSheet(
             .into_iter()
             .chain(mark.undrawn.unseen_uses.iter().filter_map(unseen_row))
             .collect(),
-    );
+    ));
+
+    let used_by = per_end(used_by);
+    let uses = per_end(uses);
 
     let Offers { promises, methods } = mark.offers(&graph);
 
@@ -1048,13 +1106,6 @@ pub(super) fn DataSheet(
     // however few of it there is to say.
     let promised = !promises.is_empty();
     let tier = mark.tier_line();
-    // The four-way truth on a quiet datum: the verdict a reviewer deletes on.
-    let quiet = mark.is_root()
-        && !mark.is_static()
-        && held_by.is_empty()
-        && contracts.is_empty()
-        && in_api.is_empty()
-        && used_by.is_empty();
 
     rsx! {
         section { class: "plate pointer-events-auto flex max-h-[44dvh] w-full flex-col overflow-hidden sm:max-h-full sm:w-72",
@@ -1099,33 +1150,17 @@ pub(super) fn DataSheet(
                 }
             }
             div { class: "min-h-0 flex-1 overflow-y-auto px-4 pb-3",
-                h3 { class: "mt-1 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
-                    "Held by ({held_by.len()})"
+                h3 {
+                    class: "mt-1 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
+                    title: "everything that reaches it — the types that hold it, the signatures that name it, the bodies that use it; each row's own word says which",
+                    "Used by ({used_by.len()})"
                 }
-                if held_by.is_empty() {
+                if used_by.is_empty() {
                     p { class: "mt-1 font-data text-[10px] text-ink-soft",
-                        if quiet {
-                            "nothing in the workspace reaches it: no type holds it, no signature names it, no body uses it."
-                        } else if mark.is_static() {
-                            "no type holds it — a static is where holding begins."
-                        } else {
-                            "no type holds it — it enters through the contracts below."
-                        }
+                        "nothing in the workspace reaches it."
                     }
                 } else {
-                    HoldList { sel: sel.clone(), open: peek.clone(), rows: held_by }
-                }
-                if !contracts.is_empty() {
-                    h3 { class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
-                        "In the contract of ({contracts.len()})"
-                    }
-                    HoldList { sel: sel.clone(), open: peek.clone(), rows: contracts }
-                }
-                if !in_api.is_empty() {
-                    h3 { class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
-                        "In the API of ({in_api.len()})"
-                    }
-                    HoldList { sel: sel.clone(), open: peek.clone(), rows: in_api }
+                    HoldList { sel: sel.clone(), open: peek.clone(), rows: used_by }
                 }
                 if !reach.is_empty() {
                     p { class: "mt-1 px-1 font-data text-[10px] leading-relaxed text-ink-soft",
@@ -1136,15 +1171,17 @@ pub(super) fn DataSheet(
                         }
                     }
                 }
-                h3 { class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
-                    "Holds ({holds.len()})"
+                h3 {
+                    class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
+                    title: "everything it reaches — the state it holds, and the marks its own bodies use",
+                    "Uses ({uses.len()})"
                 }
-                if holds.is_empty() {
+                if uses.is_empty() {
                     p { class: "mt-1 font-data text-[10px] text-ink-soft",
-                        "holds no workspace types."
+                        "it reaches nothing in the workspace."
                     }
                 } else {
-                    HoldList { sel: sel.clone(), open: peek.clone(), rows: holds }
+                    HoldList { sel: sel.clone(), open: peek.clone(), rows: uses }
                 }
                 if !promises.is_empty() {
                     h3 {
@@ -1162,28 +1199,6 @@ pub(super) fn DataSheet(
                         "Methods ({methods.len()})"
                     }
                     HoldList { sel: sel.clone(), open: peek.clone(), rows: methods }
-                }
-                if !mark.state.ghost {
-                    h3 { class: "mt-3 border-t border-ink-line pt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
-                        "Used by ({used_by.len()})"
-                    }
-                    if used_by.is_empty() {
-                        p { class: "mt-1 font-data text-[10px] text-ink-soft",
-                            "no body in the workspace reaches it."
-                        }
-                    } else {
-                        HoldList { sel: sel.clone(), open: peek.clone(), rows: used_by }
-                    }
-                    h3 { class: "mt-3 font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
-                        "Uses ({uses.len()})"
-                    }
-                    if uses.is_empty() {
-                        p { class: "mt-1 font-data text-[10px] text-ink-soft",
-                            "its impls reach nothing in the workspace."
-                        }
-                    } else {
-                        HoldList { sel: sel.clone(), open: peek.clone(), rows: uses }
-                    }
                 }
             }
             if mark.state.ghost {

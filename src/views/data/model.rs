@@ -84,8 +84,6 @@ const HELD_CAP: usize = 3;
 /// Resting uses edges whose counts are engraved. Past this the labels are the
 /// chart's texture instead of its data.
 pub(super) const TIE_LABELS: usize = 12;
-/// Uses edges one mark rests in an anchored reading.
-const TIES_PER_MARK: usize = 2;
 
 // ---------------------------------------------------------------------------
 // The chart's vocabulary: where an edge can land, what a frame is, and how a
@@ -1537,27 +1535,24 @@ impl DataModel {
                 .cmp(&(b.def, b.user))
                 .then(b.count.cmp(&a.count))
         });
-        // Which of them rest, under the shared reading: each mark keeps its
-        // heaviest few, the rest ink in on hover and for as long as either
-        // end is selected — a fold by attention, never a cut.
-        if let Some(cap) = ref_dir.per_territory().map(|c| c.min(TIES_PER_MARK)) {
-            let mut by_anchor: HashMap<Anchor, Vec<usize>> = HashMap::new();
-            for (i, tie) in ties.iter().enumerate() {
-                let anchor = match ref_dir {
-                    RefDir::UsedBy => tie.def,
-                    _ => tie.user,
-                };
-                by_anchor.entry(anchor).or_default().push(i);
-            }
-            let resting: HashSet<usize> = by_anchor
-                .into_values()
-                .flat_map(|mut idx| {
-                    idx.sort_unstable_by_key(|&i| (std::cmp::Reverse(ties[i].count), i));
-                    idx.into_iter().take(cap)
-                })
-                .collect();
-            for (i, tie) in ties.iter_mut().enumerate() {
-                tie.rest = resting.contains(&i);
+        // Which of them rest, under the shared reading. With no selection the
+        // anchor is the diff — `uses` rests what the changed declarations lean
+        // on, `used by` rests whose code leans on them — so the resting plate
+        // answers the blast-radius question instead of drawing every hairline
+        // the survey resolved. The rest ink in the moment either end is
+        // hovered or selected: a fold by attention, never a cut, and never a
+        // per-mark quota. A workspace the diff did not touch has no anchor to
+        // read a direction against, and keeps every tie.
+        let flared: HashSet<Anchor> = marks
+            .iter()
+            .filter(|m| m.letter().is_some())
+            .map(|m| Anchor::Mark(m.id))
+            .collect();
+        if ref_dir != RefDir::Both && !flared.is_empty() {
+            for tie in &mut ties {
+                tie.rest = flared
+                    .iter()
+                    .any(|at| ref_dir.draws(at, &tie.def, &tie.user));
             }
         }
         let label_bar = {
@@ -1987,6 +1982,61 @@ pub(in crate::views::data) mod tests {
         );
         assert_eq!(model.ties.len(), 1);
         assert_eq!(model.ties[0].count, 2);
+    }
+
+    /// The `references` reading has to move the picture, which is the one
+    /// thing its first build did not do (2026-08-25, user): it thinned by a
+    /// per-mark quota of two, so `uses` and `used by` kept nearly the same
+    /// hairlines. Direction only selects against an anchor, and with the paper
+    /// at rest the anchor is the diff — so the three readings keep three
+    /// different sets of resting ties.
+    #[test]
+    fn each_references_reading_rests_a_different_set_of_ties() {
+        let mut g = graph(
+            vec![
+                mark(0, 0, "Changed", ItemKind::Struct),
+                mark(1, 0, "Leaned", ItemKind::Struct),
+                mark(2, 0, "Leaner", ItemKind::Struct),
+            ],
+            vec![],
+        );
+        // `Changed` leans on `Leaned`; `Leaner` leans on `Changed`. Only the
+        // first declaration moved since the base, so it is the anchor.
+        g.items[0].diff.delta = Delta::Changed;
+        g.refs = vec![
+            MarkRef {
+                from: 0,
+                to: 1,
+                count: 3,
+            },
+            MarkRef {
+                from: 2,
+                to: 0,
+                count: 5,
+            },
+        ];
+        fn resting(g: &CodeGraph, ref_dir: RefDir) -> Vec<u32> {
+            let reading = DataReading {
+                ref_dir,
+                ..DataReading::default()
+            };
+            let mut counts: Vec<u32> = DataModel::build(g, &reading)
+                .ties
+                .iter()
+                .filter(|t| t.rest)
+                .map(|t| t.count)
+                .collect();
+            counts.sort_unstable();
+            counts
+        }
+        assert_eq!(resting(&g, RefDir::Uses), [3]);
+        assert_eq!(resting(&g, RefDir::UsedBy), [5]);
+        assert_eq!(resting(&g, RefDir::Both), [3, 5]);
+        // A workspace the diff did not touch has no anchor to read a direction
+        // against, and never pretends otherwise: every tie stays on the paper.
+        g.items[0].diff.delta = Delta::Same;
+        assert_eq!(resting(&g, RefDir::Uses), [3, 5]);
+        assert_eq!(resting(&g, RefDir::UsedBy), [3, 5]);
     }
 
     #[test]

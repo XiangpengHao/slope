@@ -87,9 +87,33 @@ silently became load-bearing. Visitor mode: **Operate**.
   below.
 - **Two inks**: solid holding (wrapper's word; width by kind) and dashed
   counted uses edges (one type's impls leaning on another, ends climbed to
-  the type). Arrowhead on the dependent in both. The `references` toggle is
-  the shared reading (uses / used by / both); each block rests its heaviest
-  two ties, the rest ink in on hover and stay while either end is selected.
+  the type). Arrowhead on the dependent in both. The `references` toggle
+  (`uses` / `used by` / `both`) is the shared reading, and it reads **against
+  an anchor** (fixed 2026-08-25, user: "the edges won't change as I change,
+  no?"). The same hairline is one type's use and another type's users, so
+  direction can pick different edges only once the chart knows which mark the
+  reader has in hand. The anchor is never invented — it is whatever the
+  reviewer is looking at:
+  - the **selection**, whenever there is one: `uses` inks the marks it leans
+    on, `used by` the marks that lean on it, `both` either. Blocks and
+    hairlines light together, so the switch moves the picture at once.
+  - **hover**, the same way round — a wire lights only when the hovered mark
+    is the end the reading asks for. Structure has no direction and lights
+    from either end.
+  - the **diff**, on the resting plate: `uses` rests what the changed
+    declarations lean on, `used by` rests whose code leans on them. That is
+    the blast-radius question this chart exists for, and it means the resting
+    paper carries a handful of meaningful hairlines instead of every one the
+    survey resolved.
+  - and where a workspace has neither a selection nor a diff, every reference
+    is drawn under all three readings, because a reading with nothing in focus
+    has no direction to take.
+
+  The first build had no anchor and thinned by a per-mark quota of two
+  instead, so `uses` and `used by` kept nearly the same lines and moving the
+  switch changed nothing a reader could see. The quota is gone;
+  `each_references_reading_rests_a_different_set_of_ties` in
+  `views::data::model` holds the three sets apart.
 - **The visibility reading** (2026-08-25, user): a four-stop slider on the
   cartouche — `pub`, `pub(crate)`, `pub(super)`, `all` — sets how narrow a
   declaration may be and still have a block. Each stop keeps the rungs above
@@ -98,9 +122,10 @@ silently became load-bearing. Visitor mode: **Operate**.
   it honest:
   - **As declared, never as reached.** The rung is the keyword rust writes in
     front of the declaration. What a chain of private modules leaves reachable
-    from outside is a resolution this survey does not run, and the label on
-    the plate says `visibility as declared` so no reader has to hover to
-    learn which of the two it is.
+    from outside is a resolution this survey does not run. The plate's label
+    is `visibility` and the caveat is its hover words (2026-08-25, distill):
+    the scale underneath already says which alphabet it reads, and the foot
+    states what the reading left off as `n off` rather than a sentence.
   - **It cuts blocks, not rows.** A block is a quotation of a declaration, and
     a quotation with its private fields dropped misquotes it. Every row of a
     drawn block stays, wearing its own `pub` as always.
@@ -164,9 +189,9 @@ own legibility floor. The fixes, all user-directed:
 
 ## The quotation plate (2026-08-24, user)
 
-Clicking a sheet row the chart draws no block for — a function in `Used by`
-or `Uses`, a namer in `In the contract of`, a trait in `Implements`, a method
-in `Methods` — quotes it on a plate immediately left of the sheet. It answers
+Clicking a sheet row the chart draws no block for — a function or a namer in
+`Used by`, a trait in `Implements`, a method in `Methods` — quotes it on a
+plate immediately left of the sheet. It answers
 the one question those rows used to leave open: *what does that code actually
 do?*
 
@@ -209,26 +234,32 @@ do?*
 - Cartouche: workspace name; `n structs · n enums · n statics` (unions when
   present) — the census of what the reading draws, not of the survey; the
   four-rung ladder; the diff line, flare counts, insight line. Two readings:
-  the `references` toggle and the `visibility as declared` slider, whose foot
-  states what it left off. The tier counts and the edge counts came off (2026-08-21,
+  the `references` toggle and the `visibility` slider, whose foot states what
+  it left off in two characters and a word. The tier counts and the edge counts came off (2026-08-21,
   distill): four invented terms defined only in chrome prose, and no
   decision rides on them. The tier is what the paper draws; a root's own
   hover words teach it (`a root — no type holds it`), and the sheet's
   tier line says it in a sentence.
 - Sheet (mark selection): header, locator, **the tier in one sentence**
-  ("top-level data: no type holds it — a root." / "secondary data — drawn
-  inside its holder's block." / the standing reasons, the visibility
-  reading's own among them — the nested line does
-  not name the holder, which is the first row of the section right below
-  it), the diff's rows,
-  then kept strictly apart: `Held by` (nesting first, then drawn relations,
-  then any holder the visibility reading left off the paper, quoted from its
-  own source),
-  `In the contract of` (each namer naming the file and line it is written
-  on), `In the API of`, the reach line ("a shape change here reaches 4 more
-  types upstream, and 9 signatures name what it reaches."), `Holds`, what the
-  type itself offers as `Implements` / `Methods` (2026-08-24, user), and
-  `Used by` / `Uses` with the undrawn-residue lines. The header's own
+  ("a root: no type holds it." / "drawn inside its holder's block." / the
+  standing reasons, the visibility reading's own among them — the nested line
+  does not name the holder, which is the first row of the section right below
+  it), the diff's rows, then **two relation headings and no more**
+  (2026-08-25, user): `Used by`, the reach line ("a shape change here reaches
+  4 more types upstream and 9 signatures."), `Uses`, and what the type itself
+  offers as `Implements` / `Methods` (2026-08-24, user).
+  - `Held by`, `In the contract of`, `In the API of`, `Holds`, `Used by` and
+    `Uses` were six headings for two directions, and read as six unrelated
+    questions. Being held, being named in a contract, being named in an API
+    and being used by a body are four kinds of one fact — something reaches
+    this — so the heading says the direction and the **row's own word says
+    the kind**: `owns`, the wrapper's word (`Vec`, `Arc`, `dyn`), `owns · off`
+    for a holder this reading left off the paper, `signature` for a free
+    declaration whose signature names it, `API` for a type whose methods do,
+    and `n references` for a body.
+  - Inside each heading the order is the strength of the claim: structure
+    first (the block it nests in leads, because the paper says that first),
+    then the signatures, then the bodies, heaviest first. The header's own
   `src/api.rs:67` locator is where the mark itself is written; the sheet had
   an `open its definition →` foot to the code plate until that chart was
   removed (2026-08-24); the rows themselves now open the quotation plate

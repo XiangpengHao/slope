@@ -31,7 +31,7 @@ use crate::graph::data::{CodeGraph, HoldEvent, HoldKind, ItemKind};
 use crate::views::chrome::{narrow_viewport, plural, prefers_reduced_motion, window_size};
 use crate::views::data::layout::{self, DataLayout, Placed, Sizes};
 use crate::views::data::model::{Anchor, DataMark, DataModel, FieldRow, Held, Tier, upstream};
-use crate::views::data::{DataSel, mark_route, mod_route, use_data};
+use crate::views::data::{DataSel, RefDir, mark_route, mod_route, use_data};
 
 // ---------------------------------------------------------------------------
 // Block furniture, in flow units — one unit is one CSS pixel at zoom 1. These
@@ -257,22 +257,34 @@ struct ModHome {
 }
 
 /// The selection's ink: the chosen mark, its blast radius up the holding
-/// order (nesting included), what it directly holds, and its uses
-/// neighbours.
+/// order (nesting included), what it directly holds, and the reference
+/// neighbours the current direction reads.
+///
+/// A selection is the anchor the `references` reading wants: `uses` keeps the
+/// marks this one leans on, `used by` the marks that lean on it, and the
+/// resulting `near` set is what the chart lights — blocks and hairlines alike
+/// — so moving the switch with something selected moves the picture.
 #[derive(Clone, PartialEq)]
 struct DataKin {
     sel: Option<Anchor>,
     home: Option<ModHome>,
+    dir: RefDir,
     up: std::collections::HashSet<Anchor>,
     down: std::collections::HashSet<Anchor>,
     near: std::collections::HashSet<Anchor>,
 }
 
 impl DataKin {
-    fn read(sel: Anchor, holds: &[(Anchor, Anchor)], ties: &[(Anchor, Anchor)]) -> Self {
+    fn read(
+        sel: Anchor,
+        dir: RefDir,
+        holds: &[(Anchor, Anchor)],
+        ties: &[(Anchor, Anchor)],
+    ) -> Self {
         Self {
             sel: Some(sel),
             home: None,
+            dir,
             up: upstream(holds, sel),
             down: holds
                 .iter()
@@ -281,10 +293,10 @@ impl DataKin {
                 .collect(),
             near: ties
                 .iter()
-                .filter_map(|&(def, user)| match (def == sel, user == sel) {
-                    (true, false) => Some(user),
-                    (false, true) => Some(def),
-                    _ => None,
+                .filter(|&&(def, user)| dir.draws(&sel, &def, &user))
+                .map(|&(def, user)| match def == sel {
+                    true => user,
+                    false => def,
                 })
                 .collect(),
         }
@@ -292,6 +304,7 @@ impl DataKin {
 
     fn read_mod(
         frame: u32,
+        dir: RefDir,
         frames: &[FrameView],
         homes: &HashMap<Anchor, u32>,
         holds: &[(Anchor, Anchor)],
@@ -318,13 +331,22 @@ impl DataKin {
             .map(|(anchor, _)| *anchor)
             .collect();
         kept.extend(climb(frame));
+        // The boundary is the anchor here, one mark at a time: a tie counts
+        // when the end the direction asks for is seated inside it. Holding is
+        // read both ways round whatever the reading — the `references` switch
+        // is the dashed family's, and structure is not a reference.
         let near = holds
             .iter()
-            .chain(ties)
-            .filter_map(|&(a, b)| match (inside.contains(&a), inside.contains(&b)) {
-                (true, false) => Some(b),
-                (false, true) => Some(a),
-                _ => None,
+            .map(|&(a, b)| (a, b, true))
+            .chain(ties.iter().map(|&(a, b)| (a, b, false)))
+            .filter_map(|(a, b, structural)| {
+                let anchored =
+                    |x: &Anchor| inside.contains(x) && (structural || dir.draws(x, &a, &b));
+                match (anchored(&a), anchored(&b)) {
+                    (true, false) => Some(b),
+                    (false, true) => Some(a),
+                    _ => None,
+                }
             })
             .collect();
         Self {
@@ -334,6 +356,7 @@ impl DataKin {
                 kept,
                 inside,
             }),
+            dir,
             up: std::collections::HashSet::new(),
             down: std::collections::HashSet::new(),
             near,
@@ -387,11 +410,16 @@ impl DataKin {
         (upward(held) && upward(holder)) || (Some(holder) == self.sel && self.down.contains(&held))
     }
 
+    /// Whether one reference edge is the selection's, in the direction being
+    /// read. `a` is the end being leaned on, `b` the end leaning.
     fn tie_near(&self, a: Anchor, b: Anchor) -> bool {
         if let Some(home) = &self.home {
-            return home.inside.contains(&a) || home.inside.contains(&b);
+            return home
+                .inside
+                .iter()
+                .any(|inside| self.dir.draws(inside, &a, &b));
         }
-        Some(a) == self.sel || Some(b) == self.sel
+        self.sel.is_some_and(|sel| self.dir.draws(&sel, &a, &b))
     }
 }
 
@@ -1396,6 +1424,7 @@ impl WireView {
     fn classes(
         &self,
         is_ref: bool,
+        dir: RefDir,
         hot: Option<Anchor>,
         kin: Option<&DataKin>,
     ) -> Vec<&'static str> {
@@ -1407,10 +1436,18 @@ impl WireView {
         }
         let is_kin = kin.is_some_and(|k| !is_ref && k.wire_kin(self.a, self.b));
         let is_near = kin.is_some_and(|k| is_ref && k.tie_near(self.a, self.b));
+        // Hovering a block is the cheapest anchor there is, so it reads the
+        // same direction the plate does: a reference wire lights only when the
+        // hovered mark is the end the reading asks for. Structure has no
+        // direction to read and lights from either end.
+        let is_hot = hot.is_some_and(|h| match is_ref {
+            true => dir.draws(&h, &self.a, &self.b),
+            false => h == self.a || h == self.b,
+        });
         let worn = [
             (!self.event.is_empty(), self.event),
             (!self.rest, "is-folded"),
-            (hot.is_some_and(|h| h == self.a || h == self.b), "is-hot"),
+            (is_hot, "is-hot"),
             (is_kin, "is-kin"),
             (is_near, "is-near"),
             (kin.is_some() && !is_kin && !is_near, "is-dim"),
@@ -1426,6 +1463,7 @@ impl WireView {
 fn WireLayer(
     holds: Vec<WireView>,
     ties: Vec<WireView>,
+    dir: RefDir,
     hot: Signal<Option<Anchor>>,
     kin: Option<DataKin>,
 ) -> Element {
@@ -1438,7 +1476,7 @@ fn WireLayer(
             0.25 * w.from.y + 0.5 * ctrl.y + 0.25 * w.to.y,
         );
         let classes = w
-            .classes(family.ends_with("data-ref"), hot, kin.as_ref())
+            .classes(family.ends_with("data-ref"), dir, hot, kin.as_ref())
             .join(" ");
         rsx! {
             g {
@@ -1605,13 +1643,19 @@ pub(super) fn DataChart(
                     DataNodeData::Mark(m) => find(m, &path, &label),
                     _ => None,
                 })?;
-                Some(DataKin::read(Anchor::Mark(id), &drawing.pairs, &tie_pairs))
+                Some(DataKin::read(
+                    Anchor::Mark(id),
+                    *data.ref_dir.read(),
+                    &drawing.pairs,
+                    &tie_pairs,
+                ))
             }
             DataSel::Mod(key) => {
                 let frame = drawing.frames.iter().find(|f| f.key == key)?.id;
                 let hold_pairs: Vec<(Anchor, Anchor)> = drawing.pairs.clone();
                 Some(DataKin::read_mod(
                     frame,
+                    *data.ref_dir.read(),
                     &drawing.frames,
                     &drawing.homes,
                     &hold_pairs,
@@ -1894,6 +1938,7 @@ pub(super) fn DataChart(
                     WireLayer {
                         holds: wires.read().0.clone(),
                         ties: wires.read().1.clone(),
+                        dir: *data.ref_dir.read(),
                         hot,
                         kin: kin(),
                     }
