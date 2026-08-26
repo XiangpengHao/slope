@@ -469,14 +469,15 @@ details.fold:not([open]) > summary::after {
   color: var(--color-flare);
 }
 /* While the diff has anything to say, whatever it never touched rests at a
-   lighter pressure; hovering gives a block back its full ink. */
+   lighter pressure. */
+/* A dimmed reading does not lift on hover. It used to — and every block the
+   pointer crossed re-ran a 400ms opacity fade over a node-sized area, so
+   sweeping the chart was a repaint storm. Attending a dimmed block is the
+   hover reading itself (its wires light, a leaf's frame darkens, a holder's
+   name lights); committing to it is a click. */
 .slope .data-node.is-rest,
 .slope .data-foldrow.is-rest {
   opacity: 0.62;
-}
-.slope .data-node.is-rest:hover,
-.slope .data-foldrow.is-rest:hover {
-  opacity: 1;
 }
 .slope .dm-head {
   display: flex;
@@ -714,9 +715,6 @@ details.fold:not([open]) > summary::after {
 .slope .data-frame-group.is-dim {
   opacity: 0.3;
 }
-.slope .data-frame-group.is-dim:hover {
-  opacity: 1;
-}
 /* The fold mark: `−` while the module is on the paper, `+` once it is one row.
    The chart already says `+ n` for everything it holds back, so a folded
    module wears the same sign the counted rows do. */
@@ -757,16 +755,43 @@ details.fold:not([open]) > summary::after {
 .slope .df-world-layer.data-wires {
   z-index: 0;
 }
+/* The hovered reading's ink rides in a compositor layer of its own: a change
+   of reading then invalidates a few lit paths, not the raster tiles the
+   resting sheet shares with the blocks. `will-change` is what pins the layer
+   off — this div is the one part of the chart repainted while the pointer
+   travels, so the promotion is spent exactly where the churn is. It wears
+   `data-wires` too, so its ink is ruled by the same family styles. */
+.slope .df-world-layer.data-wires-hot {
+  will-change: transform;
+}
+/* No mount fade on the hover ink: the reading is already gated by the
+   settled hover, and starting an animation per reading moved the compositor's
+   layer tree — a document-wide repaint each time. */
+.slope .data-wires-hot .data-wire,
+.slope .fn-wires-hot .fn-wire {
+  animation: none;
+}
 .slope .data-wire {
   animation: edge-ink 400ms ease-out;
 }
+/* A reading lights wires that run right across the glass, so the change is
+   drawn rather than cut — the reader sees which lines answered, instead of
+   the sheet blinking into a new state. Paired with the settled hover in
+   `views/chrome.rs`: that decides *when* a reading changes, this decides how
+   it arrives. */
 .slope .data-wire .wire-path {
   fill: none;
   stroke: var(--color-ink-line);
+  transition:
+    stroke 160ms ease-out,
+    opacity 160ms ease-out;
 }
 .slope .data-wire .wire-head {
   fill: var(--color-ink-line);
   stroke: none;
+  transition:
+    fill 160ms ease-out,
+    opacity 160ms ease-out;
 }
 .slope .data-wire .wire-label {
   font-family: var(--font-data);
@@ -882,10 +907,6 @@ details.fold:not([open]) > summary::after {
 .slope .data-node.is-dim {
   opacity: 0.35;
 }
-/* A receded block still answers a look. */
-.slope .data-node.is-dim:hover {
-  opacity: 1;
-}
 .slope .data-node.is-sel .data-mark {
   border-color: var(--color-ink);
   outline: 1.5px solid var(--color-ink);
@@ -943,9 +964,6 @@ details.fold:not([open]) > summary::after {
 .slope .data-node.is-near {
   opacity: 0.62;
 }
-.slope .data-node.is-near:hover {
-  opacity: 1;
-}
 /* ---- The data altitude's nesting. ----------------------------------------
    Secondary data is drawn inside the block of the type that owns it hardest:
    a hairline rule closes the rows, and the owned blocks sit on the clear
@@ -974,13 +992,6 @@ details.fold:not([open]) > summary::after {
 }
 .slope .data-mark.is-near-own > .dm-own {
   opacity: 0.62;
-}
-.slope .data-mark.is-dim-own:hover > .dm-own,
-.slope .data-mark.is-near-own:hover > .dm-own {
-  opacity: 1;
-}
-.slope .data-mark.is-dim-own:hover {
-  border-color: var(--color-ink);
 }
 /* The chosen block wears the app's focus ring — the block itself, not the
    node, because the selection can be a block nested three layers deep. */
@@ -1110,7 +1121,9 @@ details.fold:not([open]) > summary::after {
   fill: var(--color-ink);
 }
 @media (prefers-reduced-motion: reduce) {
-  .slope .data-wire {
+  .slope .data-wire,
+  .slope .data-wire .wire-path,
+  .slope .data-wire .wire-head {
     animation: none;
     transition: none;
   }
@@ -1309,9 +1322,6 @@ details.fold:not([open]) > summary::after {
 .slope .fn-node.is-rest {
   opacity: 0.62;
 }
-.slope .fn-node.is-rest:hover {
-  opacity: 1;
-}
 .slope .fm-head {
   display: flex;
   align-items: baseline;
@@ -1454,16 +1464,33 @@ details.fold:not([open]) > summary::after {
 .slope .df-world-layer.fn-wires {
   z-index: 1;
 }
+/* The same isolation as `data-wires-hot`, for the same measured reason. */
+.slope .df-world-layer.fn-wires-hot {
+  will-change: transform;
+}
 .slope .fn-wire {
   pointer-events: none;
 }
+/* Drawn, not cut, for the same reason the data family's ink is — see there. */
 .slope .fn-wire .wire-path {
   stroke: var(--color-ink-line);
   fill: none;
+  transition:
+    stroke 160ms ease-out,
+    opacity 160ms ease-out;
 }
 .slope .fn-wire .wire-head {
   fill: var(--color-ink-line);
   stroke: none;
+  transition:
+    fill 160ms ease-out,
+    opacity 160ms ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .slope .fn-wire .wire-path,
+  .slope .fn-wire .wire-head {
+    transition: none;
+  }
 }
 .slope .fn-wire .wire-label {
   font-family: var(--font-data);

@@ -30,7 +30,7 @@ use dioxus_flow::prelude::{
 
 use crate::Route;
 use crate::graph::data::{CodeGraph, ItemKind};
-use crate::views::chrome::{narrow_viewport, prefers_reduced_motion, window_size};
+use crate::views::chrome::{narrow_viewport, prefers_reduced_motion, use_settled, window_size};
 use crate::views::func::layout::{FnLayout, Lane, Placed, Prism, Sizes};
 use crate::views::func::model::{Call, CallKind, FnMark, FnModel, SigRow, Tier};
 use crate::views::func::{CallDir, FnSel, Group, band_route, mark_route, mod_route, use_fns};
@@ -758,6 +758,37 @@ fn arrowhead(b: Point, ctrl: Point, size: f64) -> String {
     )
 }
 
+/// One wire, drawn: curve, head, and the label riding the curve's midpoint.
+fn draw_wire(w: &WireView, side: f64, classes: &str) -> Element {
+    let (d, ctrl) = curve(w.from, w.to, side);
+    let head = arrowhead(w.to, ctrl, 3.2 + w.width);
+    let (lx, ly) = (
+        0.25 * w.from.x + 0.5 * ctrl.x + 0.25 * w.to.x,
+        0.25 * w.from.y + 0.5 * ctrl.y + 0.25 * w.to.y,
+    );
+    rsx! {
+        g { key: "{w.key}", class: "fn-wire {w.class}",
+            class: "{classes}",
+            path {
+                class: "wire-path",
+                d,
+                fill: "none",
+                style: "stroke-width: {w.width}px;",
+            }
+            path { class: "wire-head", d: head }
+            if let Some(label) = w.label.clone() {
+                text {
+                    class: "wire-label",
+                    x: "{lx}",
+                    y: "{ly - 3.0}",
+                    text_anchor: "middle",
+                    "{label}"
+                }
+            }
+        }
+    }
+}
+
 /// Both families as one engraved layer, the contracts first and lighter.
 ///
 /// No wire on this chart ever takes the flare. The structural diff reads the
@@ -767,56 +798,20 @@ fn arrowhead(b: Point, ctrl: Point, size: f64) -> String {
 /// washed a large change's sheet amber and said nothing true — the diff is on
 /// the blocks, where the survey can actually see it.
 #[component]
-fn WireLayer(
-    wires: Vec<WireView>,
-    dir: CallDir,
-    hot: Signal<Option<u32>>,
-    kin: Option<FnKin>,
-) -> Element {
-    let hot = hot();
+fn WireLayer(wires: Vec<WireView>, kin: Option<FnKin>) -> Element {
+    // A wire the chart folded away — every call but the way in — is not in
+    // the DOM at all until a selection asks for it back; the hover reading
+    // gives it back through [`HotWireLayer`] instead, in a layer of its own,
+    // so this layer never changes while the pointer merely travels. (Kept
+    // out entirely, never `display: none`: toggling display on an svg child
+    // relayouts the whole svg, and this svg's painted bounds are the world.)
     let wire = |w: &WireView, side: f64| {
-        let (d, ctrl) = curve(w.from, w.to, side);
-        let head = arrowhead(w.to, ctrl, 3.2 + w.width);
-        let (lx, ly) = (
-            0.25 * w.from.x + 0.5 * ctrl.x + 0.25 * w.to.x,
-            0.25 * w.from.y + 0.5 * ctrl.y + 0.25 * w.to.y,
-        );
-        // Hovering a block is the cheapest anchor there is, and it reads the
-        // same direction the plate does: a wire lights when the hovered mark is
-        // the end this reading asks for.
-        let is_hot = hot.is_some_and(|h| dir.draws(h, w.def, w.user));
-        let inked = w.rest || is_hot || kin.as_ref().is_some_and(|k| k.inks(w));
-        let mut classes: Vec<&str> = vec![w.class];
+        let inked = w.rest || kin.as_ref().is_some_and(|k| k.inks(w));
         if !inked {
-            classes.push("is-folded");
+            return None;
         }
-        if is_hot {
-            classes.push("is-hot");
-        }
-        if let Some(k) = kin.as_ref() {
-            classes.push(k.wire_class(w));
-        }
-        let classes = classes.join(" ");
-        rsx! {
-            g { key: "{w.key}", class: "fn-wire {classes}",
-                path {
-                    class: "wire-path",
-                    d,
-                    fill: "none",
-                    style: "stroke-width: {w.width}px;",
-                }
-                path { class: "wire-head", d: head }
-                if let Some(label) = w.label.clone() {
-                    text {
-                        class: "wire-label",
-                        x: "{lx}",
-                        y: "{ly - 3.0}",
-                        text_anchor: "middle",
-                        "{label}"
-                    }
-                }
-            }
-        }
+        let classes = kin.as_ref().map_or("", |k| k.wire_class(w));
+        Some(draw_wire(w, side, classes))
     };
     rsx! {
         svg {
@@ -828,6 +823,34 @@ fn WireLayer(
             }
             for w in wires.iter().filter(|w| w.class == "is-call") {
                 {wire(w, 1.0)}
+            }
+        }
+    }
+}
+
+/// The hovered reading's own ink, drawn over the resting family in a
+/// compositor layer of its own — the same split, for the same measured
+/// reason, as the data chart's [`HotWireLayer`]. A wire lights when the
+/// hovered mark is the end this reading asks for.
+#[component]
+fn HotWireLayer(wires: Vec<WireView>, dir: CallDir, hot: Signal<Option<u32>>) -> Element {
+    // The svg stays mounted through an empty reading — see the data chart's
+    // overlay for why.
+    let h = hot();
+    let lit = |w: &WireView, side: f64| {
+        h.is_some_and(|h| dir.draws(h, w.def, w.user))
+            .then(|| draw_wire(w, side, "is-hot"))
+    };
+    rsx! {
+        svg {
+            width: "2",
+            height: "2",
+            style: "position: absolute; left: 0; top: 0; overflow: visible;",
+            for w in wires.iter().filter(|w| w.class == "is-answers") {
+                {lit(w, -1.0)}
+            }
+            for w in wires.iter().filter(|w| w.class == "is-call") {
+                {lit(w, 1.0)}
             }
         }
     }
@@ -1020,7 +1043,11 @@ pub(super) fn FnChart(
     }));
 
     let nodes: Signal<Vec<FlowNode<FnNodeData>>> = use_signal(Vec::new);
+    // What the pointer is over, and what the chart answers it with. The
+    // second is the first once it has been held long enough to be a
+    // question — see `use_settled`.
     let hot: Signal<Option<u32>> = use_signal(|| None);
+    let settled = use_settled(hot);
     // Where the left edge of the readable glass falls in world units — what a
     // band's caption pins itself to, so the ladder is never off-screen.
     let glass_left: Signal<f64> = use_signal(|| 0.0);
@@ -1207,11 +1234,13 @@ pub(super) fn FnChart(
                     }
                 }
                 WorldLayer { class: "fn-wires",
-                    WireLayer {
+                    WireLayer { wires: chart.read().wires.clone(), kin: kin() }
+                }
+                WorldLayer { class: "fn-wires fn-wires-hot",
+                    HotWireLayer {
                         wires: chart.read().wires.clone(),
                         dir: *fns.calls.read(),
-                        hot,
-                        kin: kin(),
+                        hot: settled,
                     }
                 }
                 dioxus_flow::prelude::Controls {}

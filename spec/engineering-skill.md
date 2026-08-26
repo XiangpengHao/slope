@@ -45,3 +45,22 @@ Instead, we use use a much narrower constructor, with new(arg1, arg2, arg3), and
 - Typically a function should not have more than 3 parameters (including self if it is a member method). If it does, it is a sign of either too large function body, or a container struct should hold the parameters. 
 
 - A struct should not have more than 7 fields, more than that adds cognitive burden. Use private structs to group related fields.
+
+### How to refactor crate boundary
+
+Frist, think from first principle and answer each of the following questions:
+- What does this crate do? What should this crate do?
+- What is the minimal information this crate needs to do its job?
+- What are the preconditions and postconditions of this crate's input/output?
+
+Then, assuming you can make breaking changes, answer:
+- How to compose this information? Builder style? Public structs with getters and setters? Runtime dynamic steering?
+- What is the data model for the information? How to represent data so that illegal states are not possible?
+- Where to check the preconditions? In the constructor? How to make sure preconditions are always held for all valid representations?
+- How to test postconditions? Is it testable?
+- How does ergnomic Rust code look like? What traits should be implemented?
+
+Finally, do the refactoring:
+- Refactoring should not be mechanical, for every breaking change, ask what should stay in the app verus move to the crate?
+- A crate boundary exists because the boundary is much narrower than the details, ow. we'd just inline the crate details into the app.
+

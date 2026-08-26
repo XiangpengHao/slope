@@ -28,7 +28,9 @@ use dioxus_flow::prelude::{
 
 use crate::Route;
 use crate::graph::data::{CodeGraph, HoldEvent, HoldKind, ItemKind};
-use crate::views::chrome::{narrow_viewport, plural, prefers_reduced_motion, window_size};
+use crate::views::chrome::{
+    narrow_viewport, plural, prefers_reduced_motion, use_settled, window_size,
+};
 use crate::views::data::layout::{self, DataLayout, Placed, Sizes};
 use crate::views::data::model::{Anchor, DataMark, DataModel, FieldRow, Held, Tier, upstream};
 use crate::views::data::{DataSel, RefDir, mark_route, mod_route, use_data};
@@ -1420,87 +1422,93 @@ fn arrowhead(b: Point, ctrl: Point, size: f64) -> String {
 }
 
 impl WireView {
-    /// Every class this wire wears in the reading it is drawn in.
-    fn classes(
-        &self,
-        is_ref: bool,
-        dir: RefDir,
-        hot: Option<Anchor>,
-        kin: Option<&DataKin>,
-    ) -> Vec<&'static str> {
+    /// Whether the hovered anchor's reading lights this wire. A reference
+    /// wire lights only when the hovered mark is the end the reading asks
+    /// for; structure has no direction to read and lights from either end.
+    fn hot_for(&self, is_ref: bool, dir: RefDir, hot: Anchor) -> bool {
+        !self.bundle
+            && match is_ref {
+                true => dir.draws(&hot, &self.a, &self.b),
+                false => hot == self.a || hot == self.b,
+            }
+    }
+
+    /// The classes this wire wears at rest and under a selection — `None`
+    /// when the chart folded it away and no selection asks for it back, in
+    /// which case the wire is not in the DOM at all. Out entirely, never
+    /// `display: none`: toggling display on an svg child relayouts the whole
+    /// svg, and this svg's painted bounds are the world. The hover reading
+    /// never touches these classes either — its ink is [`HotWireLayer`],
+    /// drawn in a layer of its own.
+    fn rest_classes(&self, is_ref: bool, kin: Option<&DataKin>) -> Option<Vec<&'static str>> {
         // A bundle exists only inside a module reading and is that reading's
         // own ink: the solid family at the radius pressure, the dashed a step
         // behind.
         if self.bundle {
-            return vec![if is_ref { "is-near" } else { "is-kin" }];
+            return Some(vec![if is_ref { "is-near" } else { "is-kin" }]);
         }
         let is_kin = kin.is_some_and(|k| !is_ref && k.wire_kin(self.a, self.b));
         let is_near = kin.is_some_and(|k| is_ref && k.tie_near(self.a, self.b));
-        // Hovering a block is the cheapest anchor there is, so it reads the
-        // same direction the plate does: a reference wire lights only when the
-        // hovered mark is the end the reading asks for. Structure has no
-        // direction to read and lights from either end.
-        let is_hot = hot.is_some_and(|h| match is_ref {
-            true => dir.draws(&h, &self.a, &self.b),
-            false => h == self.a || h == self.b,
-        });
+        if !self.rest && !is_kin && !is_near {
+            return None;
+        }
         let worn = [
             (!self.event.is_empty(), self.event),
-            (!self.rest, "is-folded"),
-            (is_hot, "is-hot"),
             (is_kin, "is-kin"),
             (is_near, "is-near"),
             (kin.is_some() && !is_kin && !is_near, "is-dim"),
         ];
-        worn.into_iter()
-            .filter_map(|(on, class)| on.then_some(class))
-            .collect()
+        Some(
+            worn.into_iter()
+                .filter_map(|(on, class)| on.then_some(class))
+                .collect(),
+        )
+    }
+}
+
+/// One wire, drawn: curve, head, and the label riding the curve's midpoint.
+fn draw_wire(w: &WireView, family: &'static str, side: f64, classes: &str) -> Element {
+    let (d, ctrl) = curve(w.from, w.to, side);
+    let head = arrowhead(w.to, ctrl, 3.4 + w.width);
+    let (lx, ly) = (
+        0.25 * w.from.x + 0.5 * ctrl.x + 0.25 * w.to.x,
+        0.25 * w.from.y + 0.5 * ctrl.y + 0.25 * w.to.y,
+    );
+    rsx! {
+        g {
+            key: "{w.key}",
+            class: "{family} {w.class}",
+            class: "{classes}",
+            path {
+                class: "wire-path",
+                d,
+                fill: "none",
+                style: "stroke-width: {w.width}px;",
+            }
+            path { class: "wire-head", d: head }
+            if let Some(label) = w.label.clone() {
+                text {
+                    class: "wire-label",
+                    x: "{lx}",
+                    y: "{ly - 3.0}",
+                    text_anchor: "middle",
+                    "{label}"
+                }
+            }
+        }
     }
 }
 
 /// Both families as one engraved layer, the uses family first and lighter.
+/// This layer changes on selection and on folding — never while the pointer
+/// merely travels — so its raster tiles stay valid under a whole sweep.
 #[component]
-fn WireLayer(
-    holds: Vec<WireView>,
-    ties: Vec<WireView>,
-    dir: RefDir,
-    hot: Signal<Option<Anchor>>,
-    kin: Option<DataKin>,
-) -> Element {
-    let hot = hot();
+fn WireLayer(holds: Vec<WireView>, ties: Vec<WireView>, kin: Option<DataKin>) -> Element {
     let wire = |w: &WireView, family: &'static str, side: f64| {
-        let (d, ctrl) = curve(w.from, w.to, side);
-        let head = arrowhead(w.to, ctrl, 3.4 + w.width);
-        let (lx, ly) = (
-            0.25 * w.from.x + 0.5 * ctrl.x + 0.25 * w.to.x,
-            0.25 * w.from.y + 0.5 * ctrl.y + 0.25 * w.to.y,
-        );
         let classes = w
-            .classes(family.ends_with("data-ref"), dir, hot, kin.as_ref())
+            .rest_classes(family.ends_with("data-ref"), kin.as_ref())?
             .join(" ");
-        rsx! {
-            g {
-                key: "{w.key}",
-                class: "{family} {w.class}",
-                class: "{classes}",
-                path {
-                    class: "wire-path",
-                    d,
-                    fill: "none",
-                    style: "stroke-width: {w.width}px;",
-                }
-                path { class: "wire-head", d: head }
-                if let Some(label) = w.label.clone() {
-                    text {
-                        class: "wire-label",
-                        x: "{lx}",
-                        y: "{ly - 3.0}",
-                        text_anchor: "middle",
-                        "{label}"
-                    }
-                }
-            }
-        }
+        Some(draw_wire(w, family, side, &classes))
     };
     rsx! {
         svg {
@@ -1512,6 +1520,54 @@ fn WireLayer(
             }
             for hold in holds.iter() {
                 {wire(hold, "data-wire data-hold", 1.0)}
+            }
+        }
+    }
+}
+
+/// The hovered reading's own ink: lit copies of the wires the settled hover
+/// asks for — folded ones included — drawn over the resting family in a
+/// compositor layer of their own (`data-wires-hot`).
+///
+/// Why a second layer at all: a wire's painted bounds are its whole diagonal,
+/// so recoloring even a few in place dirties raster tiles clear across the
+/// glass — the blocks' tiles among them. Measured, one pointer sweep across
+/// the chart invalidated the world-sized layer six times over and queued
+/// 700ms of re-raster; the compositor drew what it had, and whole blocks
+/// checkerboarded in and out under the mouse. Drawn out here, a change of
+/// reading invalidates this small layer and nothing else.
+#[component]
+fn HotWireLayer(
+    holds: Vec<WireView>,
+    ties: Vec<WireView>,
+    dir: RefDir,
+    hot: Signal<Option<Anchor>>,
+) -> Element {
+    // The svg stays mounted through an empty reading: unmounting it moved
+    // the compositor's layer tree twice per gutter, and each move repainted
+    // the document. An empty svg draws nothing and moves nothing.
+    let h = hot();
+    let lit = |w: &WireView, family: &'static str, side: f64| {
+        h.is_some_and(|h| w.hot_for(family.ends_with("data-ref"), dir, h))
+            .then(|| {
+                let classes = if w.event.is_empty() {
+                    "is-hot".to_string()
+                } else {
+                    format!("is-hot {}", w.event)
+                };
+                draw_wire(w, family, side, &classes)
+            })
+    };
+    rsx! {
+        svg {
+            width: "2",
+            height: "2",
+            style: "position: absolute; left: 0; top: 0; overflow: visible;",
+            for tie in ties.iter() {
+                {lit(tie, "data-wire data-ref", -1.0)}
+            }
+            for hold in holds.iter() {
+                {lit(hold, "data-wire data-hold", 1.0)}
             }
         }
     }
@@ -1684,7 +1740,11 @@ pub(super) fn DataChart(
 
     let nodes: Signal<Vec<FlowNode<DataNodeData>>> = use_signal(Vec::new);
     let framed = use_signal(|| false);
+    // What the pointer is over, and what the chart answers it with. The
+    // second is the first once it has been held long enough to be a
+    // question — see `use_settled`.
     let hot: Signal<Option<Anchor>> = use_signal(|| None);
+    let settled = use_settled(hot);
     let core_live: Signal<bool> = use_signal(|| false);
     // The chart is far below FAR_IN and near again above FAR_OUT.
     let far: Signal<bool> = use_signal(|| false);
@@ -1938,9 +1998,15 @@ pub(super) fn DataChart(
                     WireLayer {
                         holds: wires.read().0.clone(),
                         ties: wires.read().1.clone(),
-                        dir: *data.ref_dir.read(),
-                        hot,
                         kin: kin(),
+                    }
+                }
+                WorldLayer { class: "data-wires data-wires-hot",
+                    HotWireLayer {
+                        holds: wires.read().0.clone(),
+                        ties: wires.read().1.clone(),
+                        dir: *data.ref_dir.read(),
+                        hot: settled,
                     }
                 }
                 WorldLayer { class: "data-names",
