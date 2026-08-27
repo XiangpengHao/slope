@@ -1,11 +1,14 @@
 //! The function chart's furniture: the cartouche, the search plate, and the
 //! sheet one selected declaration opens.
 //!
-//! Three readings ride the cartouche, because each acts on the whole sheet:
-//! how the marks are **grouped** inside their module, which direction the
-//! **calls** are read in, and how narrow a declaration may be and still be
-//! drawn. Nothing here paraphrases the survey — the limits fold quotes it, and
-//! every count is a count of something a reviewer can go and read.
+//! Three readings ride the cartouche, because each acts on the whole sheet: in
+//! what **order** the callees on a shelf are seated, which way round the
+//! **wires** are read — calls, callers or both, against whatever is in focus —
+//! and how narrow a declaration may be and still be drawn. Nothing here
+//! paraphrases the survey — the limits fold quotes it, and every count is a
+//! count of something a reviewer can go and read.
+
+use std::collections::HashMap;
 
 use dioxus::prelude::*;
 
@@ -15,7 +18,8 @@ use crate::views::chrome::{Altitude, AltitudeSwitch, plural};
 use crate::views::data::VisFloor;
 use crate::views::func::model::{FnFacts, FnModel, Touch};
 use crate::views::func::{
-    CallDir, Group, Sel, band_route, mark_route, peek_at, peek_key, peek_route, use_fns,
+    FnOrder, FnWires, Sel, band_route, mark_route, mod_route, peek_at, peek_key, peek_route,
+    use_fns,
 };
 
 /// The chart's title block: the census of what the workspace runs, the ladder,
@@ -87,42 +91,42 @@ pub(super) fn FnCartouche(
                     }
                 }
             }
-            GroupSwitch {}
-            CallToggle {}
+            OrderSwitch {}
+            WiresSwitch {}
             FnVisSlider { off_paper: facts.off_paper }
+            FnKeys {}
             SurveyLimits { notes }
         }
     }
 }
 
-/// What a frame is: the module alone, or a frame per type or per file inside
-/// it. Two thirds of what runs is a method, and whose it is is a method's first
-/// fact — so the paper can say it (2026-08-25, user).
+/// In what order the callees on a shelf are seated. The ground is the call tree
+/// now, so what is left to read is the order the shelves read in.
 #[component]
-fn GroupSwitch() -> Element {
+fn OrderSwitch() -> Element {
     let fns = use_fns();
-    let current = *fns.group.read();
+    let current = *fns.order.read();
     rsx! {
         div {
             class: "border-t border-ink-line px-4 py-1.5",
             role: "group",
-            "aria-label": "how the marks are grouped inside their module",
+            "aria-label": "in what order the callees on a shelf are seated",
             span { class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
-                "group"
+                "order"
             }
             div { class: "mt-1 flex items-stretch gap-0.5",
-                for group in Group::ALL {
+                for order in FnOrder::ALL {
                     button {
-                        key: "{group.label()}",
+                        key: "{order.label()}",
                         class: "flex-1 whitespace-nowrap border px-1 py-0.5 font-data text-[9px] tracking-[0.08em] uppercase",
-                        class: if current == group { "border-ink text-ink" } else { "border-transparent text-ink-soft hover:text-ink" },
-                        "aria-pressed": if current == group { "true" } else { "false" },
-                        title: "{group.hint()}",
+                        class: if current == order { "border-ink text-ink" } else { "border-transparent text-ink-soft hover:text-ink" },
+                        "aria-pressed": if current == order { "true" } else { "false" },
+                        title: "{order.hint()}",
                         onclick: move |_| {
-                            let mut at = fns.group;
-                            at.set(group);
+                            let mut at = fns.order;
+                            at.set(order);
                         },
-                        "{group.label()}"
+                        "{order.label()}"
                     }
                 }
             }
@@ -130,37 +134,88 @@ fn GroupSwitch() -> Element {
     }
 }
 
-/// Which direction the chart's calls are read in, against whatever the reader
-/// has in hand: the selected mark, the block under the cursor, or — with the
-/// paper at rest — the declarations the epoch touched.
+/// Which way round the paper reads what the shelving cannot say. A call that
+/// seats its callee is drawn as containment and never as a line, so what this
+/// reading takes a direction on is every other resolved call — read against
+/// whatever is in focus: the selection, or the diff on the resting plate.
 #[component]
-fn CallToggle() -> Element {
+fn WiresSwitch() -> Element {
     let fns = use_fns();
-    let current = *fns.calls.read();
+    let current = *fns.wires.read();
     rsx! {
         div {
             class: "border-t border-ink-line px-4 py-1.5",
             role: "group",
-            "aria-label": "which direction the chart's calls are read in",
-            span { class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
-                "calls"
+            "aria-label": "which way round the chart reads its calls",
+            span {
+                class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
+                title: "read against whatever is in focus — the selection, or the diff's own declarations · a call that seats its callee is drawn as containment, never as a line",
+                "wires"
             }
             div { class: "mt-1 flex items-stretch gap-0.5",
-                for dir in [CallDir::Calls, CallDir::Callers, CallDir::Both] {
+                for stop in FnWires::ALL_STOPS {
                     button {
-                        key: "{dir.label()}",
+                        key: "{stop.label()}",
                         class: "flex-1 whitespace-nowrap border px-1 py-0.5 font-data text-[9px] tracking-[0.08em] uppercase",
-                        class: if current == dir { "border-ink text-ink" } else { "border-transparent text-ink-soft hover:text-ink" },
-                        "aria-pressed": if current == dir { "true" } else { "false" },
-                        title: "{dir.hint()}",
+                        class: if current == stop { "border-ink text-ink" } else { "border-transparent text-ink-soft hover:text-ink" },
+                        "aria-pressed": if current == stop { "true" } else { "false" },
+                        title: "{stop.hint()}",
                         onclick: move |_| {
-                            let mut at = fns.calls;
-                            at.set(dir);
+                            let mut at = fns.wires;
+                            at.set(stop);
                         },
-                        "{dir.label()}"
+                        "{stop.label()}"
                     }
                 }
             }
+        }
+    }
+}
+
+/// The keys, taught where they act: `↓` and `↑` walk the seating, and `←`/`→`
+/// are the trail, as everywhere.
+#[component]
+fn FnKeys() -> Element {
+    rsx! {
+        div { class: "border-t border-ink-line px-4 py-1.5 font-data text-[9.5px] leading-relaxed text-ink-soft",
+            span { class: "text-ink", "↓" }
+            " into the first callee on the shelf · "
+            span { class: "text-ink", "↑" }
+            " to the caller it sits in · "
+            span {
+                class: "text-ink",
+                title: "back and forward along the review trail — the browser's own keys, as at every altitude",
+                "← →"
+            }
+            " step back and forward · "
+            span {
+                class: "text-ink",
+                title: "fold the picked frame to its own box, or open it again — the same mark the head row carries",
+                "z"
+            }
+            " folds it · "
+            span {
+                class: "text-ink",
+                title: "quote the picked declaration's own source on the plate beside the sheet",
+                "enter"
+            }
+            " reads its source · "
+            span { class: "text-ink", "double-click" }
+            " fits a frame · "
+            span { class: "text-ink", "f" }
+            " fits the sheet · "
+            span {
+                class: "text-ink",
+                title: "a frame's own border selects everything the frame calls, down the chain",
+                "click a frame's border"
+            }
+            " takes the whole box · "
+            span {
+                class: "text-ink",
+                title: "the fold mark beside a head row: shift-click folds every frame inside it too",
+                "shift-click a fold mark"
+            }
+            " folds all the way down"
         }
     }
 }
@@ -381,6 +436,59 @@ fn Section(
     }
 }
 
+/// The impl block a method is written in, quoted as the header writes it, with
+/// the owner's own name as the way to it. The header is the source's text and
+/// nothing here rebuilds it: the owner's name is found *in* it and drawn as a
+/// link, which is the same one-rung-down grammar the `Data touched` rows keep —
+/// a type the data chart draws opens as its block there, and a trait, which that
+/// chart draws no block for, opens as a quotation here.
+#[component]
+fn OwnerLine(
+    section: String,
+    owner: Option<crate::views::func::model::Owner>,
+    sel: Sel,
+    open: Option<String>,
+) -> Element {
+    let plain = rsx! {
+        p { class: "mt-0.5 truncate font-data text-[10px] text-ink-soft", title: "{section}", "{section}" }
+    };
+    let Some(owner) = owner else {
+        return plain;
+    };
+    let Some(cut) = section.rfind(&owner.name) else {
+        return plain;
+    };
+    let (head, rest) = section.split_at(cut);
+    let (name, tail) = rest.split_at(owner.name.len());
+    let here = open.as_deref() == Some(peek_key(&owner.path, &owner.label).as_str());
+    let to = match owner.on_data {
+        true => crate::views::data::mark_route(&owner.path, &owner.label),
+        false => peek_route(&sel, &owner.path, &owner.label),
+    };
+    let words = match owner.on_data {
+        true => format!(
+            "{} {} — down to its block on the data chart",
+            owner.decl, owner.name
+        ),
+        false => format!("{} {} — quote its source", owner.decl, owner.name),
+    };
+    rsx! {
+        p { class: "mt-0.5 truncate font-data text-[10px] text-ink-soft", title: "{section}",
+            "{head}"
+            Link {
+                class: match here {
+                    true => "text-ink underline-offset-4 hover:underline",
+                    false => "underline-offset-4 hover:text-ink hover:underline",
+                },
+                to,
+                title: "{words}",
+                "{name}"
+            }
+            "{tail}"
+        }
+    }
+}
+
 /// One selected declaration's sheet: where it stands, what calls it, what it
 /// calls, and every type it touches — each of those a link down to the rung
 /// that draws types.
@@ -528,6 +636,15 @@ pub(super) fn FnSheet(
         .collect();
     upstream.sort_by(|a, b| a.name.cmp(&b.name));
     let stands = mark.stands();
+    // The declaration's own source is one row of this sheet like any other: the
+    // same `peek=` grammar, so back closes it and Escape steps out of the
+    // quotation before it steps out of the selection.
+    let own_key = peek_key(&mark.head.path, &mark.head.label);
+    let reading_here = peek.as_deref() == Some(own_key.as_str());
+    let read_it = match reading_here {
+        true => mark_route(&mark.head.path, &mark.head.label),
+        false => peek_route(&sel, &mark.head.path, &mark.head.label),
+    };
     rsx! {
         section { class: "plate pointer-events-auto flex max-h-[60dvh] w-full flex-col overflow-y-auto sm:max-h-[calc(100dvh-4.25rem)] sm:w-72",
             div { class: "px-3 pt-3 pb-2",
@@ -540,13 +657,77 @@ pub(super) fn FnSheet(
                         span { class: "shrink-0 text-[11px] font-bold text-flare", "{letter}" }
                     }
                 }
+                // Whose method it is, quoted as the impl header writes it, with
+                // the owner's own name the way to it: down to the block the
+                // data chart draws for it, or its source quoted here where that
+                // chart draws none.
                 if !mark.head.section.is_empty() {
-                    p { class: "mt-0.5 truncate font-data text-[10px] text-ink-soft",
-                        title: "{mark.head.section}",
-                        "{mark.head.section}"
+                    OwnerLine {
+                        section: mark.head.section.clone(),
+                        owner: mark.owner.clone(),
+                        sel: sel.clone(),
+                        open: peek.clone(),
                     }
                 }
-                p { class: "mt-0.5 font-data text-[9.5px] text-ink-soft", "{mark.head.locator()}" }
+                // Where it is written, and the way to everything else written
+                // there: the call tree seats a module's declarations all over
+                // the sheet, so the module is a reading rather than a place.
+                Link {
+                    class: "mt-0.5 block truncate font-data text-[10px] text-ink-soft underline-offset-4 hover:text-ink hover:underline",
+                    to: mod_route(mark.mod_key()),
+                    title: "light every declaration written in {mark.written()}",
+                    "{mark.written()}"
+                }
+                // Where it is written, and the one step to the whole of it: the
+                // declaration's own source, on the same quotation plate every
+                // other row of this sheet opens.
+                div { class: "mt-0.5 flex items-baseline justify-between gap-2",
+                    p { class: "min-w-0 truncate font-data text-[9.5px] text-ink-soft",
+                        "{mark.head.locator()}"
+                    }
+                    Link {
+                        class: match reading_here {
+                            true => "shrink-0 font-data text-[9.5px] tracking-[0.12em] uppercase text-ink underline underline-offset-4",
+                            false => "shrink-0 font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline-offset-4 hover:text-ink hover:underline",
+                        },
+                        to: read_it.clone(),
+                        title: "quote the whole declaration beside this sheet — enter does it too",
+                        if reading_here { "reading it" } else { "read it" }
+                    }
+                }
+                // The signature, quoted as rust writes it. The paper's blocks
+                // quote it too; this is where there is room for the whole of
+                // it, and clicking it opens the body under it.
+                if !mark.rows.is_empty() {
+                    Link {
+                        class: "mt-1.5 block border-t border-ink-line pt-1.5 font-data text-[10px] leading-snug hover:bg-ink/5",
+                        to: read_it,
+                        title: "the signature as rust writes it — click to read the whole declaration",
+                        p {
+                            span { class: "text-tok-kw", "{mark.head.decl()} " }
+                            span { class: "font-medium text-tok-fn", "{mark.head.name}" }
+                            span { class: "text-tok-punct", "(" }
+                        }
+                        for (i , row) in mark.rows.iter().filter(|r| !r.returns).enumerate() {
+                            p { key: "{i}", class: "pl-3",
+                                class: if row.added { "text-flare" },
+                                if row.ty.is_empty() {
+                                    span { class: "text-tok-kw", "{row.name}" }
+                                } else {
+                                    span { class: "text-ink", "{row.name}: " }
+                                    span { class: "text-tok-type", "{row.ty}" }
+                                }
+                            }
+                        }
+                        p {
+                            span { class: "text-tok-punct", ")" }
+                            if let Some(ret) = mark.rows.iter().find(|r| r.returns) {
+                                span { class: "text-tok-punct", " -> " }
+                                span { class: "text-tok-type", "{ret.ty}" }
+                            }
+                        }
+                    }
+                }
                 p { class: "mt-1.5 border-t border-ink-line pt-1.5 font-data text-[10.5px] leading-relaxed text-ink",
                     "{stands}"
                 }
@@ -594,6 +775,121 @@ pub(super) fn FnSheet(
                     sel,
                     open: peek,
                 }
+            }
+        }
+    }
+}
+
+/// One selected boundary's sheet: which frame it is, how much runs under it,
+/// and what crosses the line in each direction — by name, never by a count
+/// alone. Containment is the call, so the box is a subtree, and the two
+/// questions a reader brings to a subtree are what starts it from outside and
+/// what it reaches out to.
+#[component]
+pub(super) fn FnTreeSheet(graph: CodeGraph, path: String, item: String) -> Element {
+    let fns = use_fns();
+    let sel: Sel = (path.clone(), item.clone());
+    let model = use_memo(use_reactive((&graph,), move |(graph,)| {
+        FnModel::build(&graph, &fns.reading())
+    }));
+    let model = model.read();
+    let Some(mark) = model.find(&path, &item) else {
+        return rsx! {
+            section { class: "plate pointer-events-auto w-full px-4 py-3 sm:w-72",
+                p { class: "font-data text-[11px] text-ink",
+                    "Nothing named “{item}” is drawn in {path} on this survey."
+                }
+                Link {
+                    class: "mt-2 block font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4",
+                    to: Route::FnOverview {},
+                    "← whole chart"
+                }
+            }
+        };
+    };
+    let by_id = model.by_id();
+    let inside = model.subtree(mark.id);
+    // Every call with exactly one end inside the boundary, gathered on the far
+    // end: what runs the box from outside, and what the box reaches out to. One
+    // row per end however many ways that end crosses — the same rule the data
+    // sheet keeps, because a name engraved twice reads as two neighbours.
+    let mut into: HashMap<u32, (u32, bool)> = HashMap::new();
+    let mut out: HashMap<u32, (u32, bool)> = HashMap::new();
+    for call in &model.calls {
+        let answers = call.kind == crate::views::func::model::CallKind::Answers;
+        let (far, side) = match (inside.contains(&call.def), inside.contains(&call.user)) {
+            (true, false) => (call.user, &mut into),
+            (false, true) => (call.def, &mut out),
+            _ => continue,
+        };
+        let at = side.entry(far).or_insert((0, false));
+        at.0 += call.count;
+        at.1 |= answers;
+    }
+    let rows_of = |ends: HashMap<u32, (u32, bool)>| -> Vec<FnRow> {
+        let mut rows: Vec<(u32, FnRow)> = ends
+            .into_iter()
+            .filter_map(|(id, (count, answers))| {
+                let far = by_id.get(&id)?;
+                Some((
+                    count,
+                    FnRow {
+                        to: Some(mark_route(&far.head.path, &far.head.label)),
+                        decl: far.head.decl(),
+                        name: far.head.label.clone(),
+                        letter: far.letter(),
+                        word: match (answers, count) {
+                            (true, 0) => "answers".to_string(),
+                            (true, n) => format!("answers · {n}"),
+                            (false, 1) => "1 call".to_string(),
+                            (false, n) => format!("{n} calls"),
+                        },
+                        hint: Some(far.head.locator()),
+                        peek: None,
+                    },
+                ))
+            })
+            .collect();
+        rows.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.name.cmp(&b.1.name)));
+        rows.into_iter().map(|(_, row)| row).collect()
+    };
+    let (into, out) = (rows_of(into), rows_of(out));
+    let held = mark.runs as usize;
+    rsx! {
+        section { class: "plate pointer-events-auto flex max-h-[60dvh] w-full flex-col overflow-y-auto sm:max-h-[calc(100dvh-4.25rem)] sm:w-72",
+            div { class: "px-3 pt-3 pb-2",
+                h2 { class: "flex items-baseline gap-1.5 font-data text-[13px] font-semibold",
+                    span { class: "shrink-0 text-[10px] font-normal text-ink-soft",
+                        "{mark.head.decl()}"
+                    }
+                    span { class: "min-w-0 truncate text-ink", "{mark.head.label}" }
+                }
+                p { class: "mt-1.5 border-t border-ink-line pt-1.5 font-data text-[10.5px] leading-relaxed text-ink",
+                    "{plural(held, \"declaration\")} run under it by the way in."
+                }
+                Link {
+                    class: "mt-1 block font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
+                    to: mark_route(&mark.head.path, &mark.head.label),
+                    title: "read the declaration this boundary belongs to",
+                    "the declaration itself"
+                }
+            }
+            Section {
+                title: "Called from outside".to_string(),
+                hint: "whose code, from outside this boundary, runs something inside it — the way in included"
+                    .to_string(),
+                rows: into,
+                empty: "nothing outside the boundary calls into it.".to_string(),
+                sel: sel.clone(),
+                open: None,
+            }
+            Section {
+                title: "Calls out".to_string(),
+                hint: "what the code inside this boundary runs beyond it".to_string(),
+                rows: out,
+                empty: "nothing inside it calls out.".to_string(),
+                sel,
+                open: None,
             }
         }
     }
@@ -733,8 +1029,32 @@ pub(super) fn FnSearch(graph: CodeGraph) -> Element {
                 .unwrap_or(crate::graph::data::Vis::Private)
         }
     };
+    // The popover stands whenever the reader has typed enough for the search to
+    // have looked: with hits it lists them, and with none it says so. A search
+    // that answers an empty sheet with an empty sheet has not answered.
+    let asked = query().trim().chars().count() >= 2;
+    // Escape inside the field is the field's own key — the chart's handler
+    // stands down over an input — and it steps all the way out: the query goes,
+    // the popover closes, and the focus leaves, so the next Escape is the
+    // chart's own step back out of the selection.
+    let mut clear = move || {
+        query.set(String::new());
+        open.set(false);
+        document::eval(
+            "const s = [...document.querySelectorAll('#fn-search')]
+                 .find((el) => el.offsetParent !== null);
+             if (s) s.blur();",
+        );
+    };
     rsx! {
-        div { class: "pointer-events-auto relative",
+        div {
+            class: "pointer-events-auto relative",
+            // The popover closes when the focus leaves the plate. A press on a
+            // result would otherwise move the focus before the click landed and
+            // close the list out from under it, so the list declines the focus
+            // shift instead of racing it: `pointerdown` is prevented, the field
+            // keeps the focus, no `focusout` fires, and the click arrives.
+            onfocusout: move |_| open.set(false),
             input {
                 id: "fn-search",
                 class: "plate w-full px-3 py-1.5 font-data text-[11px] text-ink placeholder:text-ink-soft",
@@ -748,9 +1068,22 @@ pub(super) fn FnSearch(graph: CodeGraph) -> Element {
                     open.set(true);
                 },
                 onfocusin: move |_| open.set(true),
+                onkeydown: move |e: Event<KeyboardData>| {
+                    if e.key() == Key::Escape {
+                        e.stop_propagation();
+                        clear();
+                    }
+                },
             }
-            if open() && !hits.read().is_empty() {
-                ul { class: "plate absolute right-0 top-[calc(100%+4px)] z-20 max-h-[60dvh] w-full overflow-y-auto py-1",
+            if open() && asked {
+                ul {
+                    class: "plate absolute right-0 top-[calc(100%+4px)] z-20 max-h-[60dvh] w-full overflow-y-auto py-1",
+                    onpointerdown: move |e: Event<PointerData>| e.prevent_default(),
+                    if hits.read().is_empty() {
+                        li { class: "px-3 py-1 font-data text-[10.5px] text-ink-soft",
+                            "nothing runs by that name"
+                        }
+                    }
                     for (i , (_ , _ , decl , label , path , locator)) in hits.read().iter().enumerate() {
                         li { key: "{i}",
                             button {

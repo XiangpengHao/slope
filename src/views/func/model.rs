@@ -1,15 +1,16 @@
-//! What the function chart reads out of the survey: the code that runs, tiered
-//! by how far it is from something that starts.
+//! What the function chart reads out of the survey: the code that runs, seated
+//! inside whatever calls it.
 //!
 //! The rung above asks what the workspace *keeps*; this one asks what it
 //! *does*. Its marks are the declarations that run — every function, every
 //! method, every trait clause a method answers, every `macro_rules!` — and its
-//! one organizing move is the **call depth**. An **entry point** is a
-//! declaration nothing in the workspace calls: `main`, a server function the
-//! client reaches through generated code, a component the router mounts, a
-//! method answering a foreign trait's contract. Everything else is some number
-//! of calls away from the nearest one, and that number is where it sits on the
-//! paper.
+//! one organizing move is the **way in**: the call that is the shortest way
+//! something that starts reaches a declaration. That is a tree, and the chart
+//! draws it as containment. An **entry point** is a declaration nothing in the
+//! workspace calls: `main`, a server function the client reaches through
+//! generated code, a component the router mounts, a method answering a foreign
+//! trait's contract. It is a top-level frame, and everything it reaches shelves
+//! inside it.
 //!
 //! Two families of ink run between the marks, and only two.
 //!
@@ -34,7 +35,7 @@ use crate::graph::data::{
 };
 use crate::views::chrome::plural;
 use crate::views::data::model::module_path;
-use crate::views::func::{CallDir, FnReading, Group};
+use crate::views::func::{FnOrder, FnReading, fold_key};
 
 /// Where a mark stands in the running order — this chart's one verdict.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -106,20 +107,12 @@ pub(super) struct Call {
     /// References the survey resolved for this pair. A contract has none: it
     /// is one promise, not a count of them.
     pub(super) count: u32,
-    /// Whether the resting plate draws it.
-    ///
-    /// The resting reading is the **way in**: for every mark, the one call
-    /// that put it at its depth — the shortest way something that starts
-    /// reaches it. That is a tree, one wire per mark, and it is the whole of
-    /// "what runs from where"; drawing all fifteen hundred resolved calls at
-    /// rest would be the hairball this system forbids one rung up. Every
-    /// other call stays in the set folded, and inks back in on hover or
-    /// selection of either end. A contract wire never folds: it is what makes
-    /// the tree honest about a `dyn` call. Nothing else earns a place at rest
-    /// — the diff cannot mark a call (it reads declarations, not bodies), and
-    /// un-folding every wire that merely touched a changed declaration washed
-    /// a large change's whole sheet.
-    pub(super) rest: bool,
+    /// The shelving already says this one: the callee seats **inside** this
+    /// caller's frame, because this call is its way in. Containment is the
+    /// call, so a wire here would engrave a second time what the paper's own
+    /// nesting states — and drawing all fifteen hundred resolved calls would
+    /// be the hairball this system forbids one rung up.
+    pub(super) seats: bool,
 }
 
 /// One row of a function's quoted signature: a receiver, a parameter, or the
@@ -139,13 +132,13 @@ pub(super) struct SigRow {
 }
 
 impl SigRow {
-    /// The row as the block draws it. One string, so measuring a row and
-    /// drawing it can never disagree.
+    /// The row as a block draws it: `graph: &CodeGraph`, or a receiver alone
+    /// (`&mut self`), which declares no type of its own. One string, so
+    /// measuring a row and drawing it can never disagree.
     pub(super) fn written(&self) -> String {
-        match (self.returns, self.ty.is_empty()) {
-            (true, _) => format!("-> {}", self.ty),
-            (false, true) => self.name.clone(),
-            (false, false) => format!("{}: {}", self.name, self.ty),
+        match self.ty.is_empty() {
+            true => self.name.clone(),
+            false => format!("{}: {}", self.name, self.ty),
         }
     }
 
@@ -255,19 +248,38 @@ pub(super) struct Touch {
     pub(super) count: u32,
 }
 
+/// The type or trait whose impl block a method is written in — whose method
+/// this is, which the name alone never says. A free declaration has none.
+#[derive(Clone, PartialEq, Debug)]
+pub(super) struct Owner {
+    /// The owner's own mark, for the descent link.
+    pub(super) ty: u32,
+    pub(super) decl: String,
+    pub(super) name: String,
+    pub(super) path: String,
+    pub(super) label: String,
+    /// Whether the data chart draws a block for it: a struct, an enum, a union
+    /// or a static stands there; a trait does not, and its row opens as a
+    /// quotation instead — the same rule the `Data touched` rows keep.
+    pub(super) on_data: bool,
+}
+
 /// One mark on the paper: a declaration that runs.
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct FnMark {
     pub(super) id: u32,
-    /// The frame it is written in — its module, or the group inside it the
-    /// reading asked for.
-    pub(super) frame: u32,
     pub(super) tier: Tier,
-    /// The entry point whose road reached it first, for the strips plate.
-    /// `None` for an entry point itself and for a mark in a call ring.
-    pub(super) road: Option<u32>,
+    /// The crate the declaration is written in, by its cargo package name, and
+    /// the module path rust reads it at. Not a box on the paper — the ground
+    /// is the call tree — but the key `/fn/mod/:..module` selects by, and the
+    /// word a head wears where its module is not its caller's.
+    pub(super) krate: String,
+    pub(super) module: Vec<String>,
     pub(super) head: FnHead,
     pub(super) rows: Vec<SigRow>,
+    /// Whose method this is, where it is one: the type or trait the impl block
+    /// names. The head quotes its name, the sheet descends to its block.
+    pub(super) owner: Option<Owner>,
     /// How this declaration differs from the diff base.
     pub(super) delta: Delta,
     /// Callers, callees, and the types it touches — the counts its hover words
@@ -276,9 +288,21 @@ pub(super) struct FnMark {
     pub(super) callers: u32,
     pub(super) calls: u32,
     pub(super) touches: usize,
+    /// How many declarations shelve inside this one's frame, however deep —
+    /// what it runs by the way in. It is the weight a shelf orders by.
+    pub(super) runs: u32,
+    /// Its module is not the module of the caller it seats inside. A
+    /// same-module call is quiet; a frame reaching across a module boundary is
+    /// signal, and that is the one place a head writes a module word.
+    pub(super) crosses: bool,
     /// It calls itself. Recursion is a fact about one mark, so it is a word on
     /// that mark rather than a wire that leaves and comes back.
     pub(super) recurses: bool,
+    /// The reviewer folded this frame by hand: its head, its signature and its
+    /// counted words are on the paper, and what shelves inside it is not.
+    /// Never true where `runs` is 0 — a frame that shelves nothing has nothing
+    /// to fold and draws no mark.
+    pub(super) folded: bool,
 }
 
 impl FnMark {
@@ -296,10 +320,45 @@ impl FnMark {
     /// itself. What the sheet says under the locator.
     pub(super) fn stands(&self) -> String {
         let mut words = self.tier.words();
+        if self.runs > 0 {
+            words.push_str(&format!(" · runs {} by the way in", self.runs));
+        }
         if self.recurses {
             words.push_str(" · it calls itself");
         }
         words
+    }
+
+    /// The owner's name as the survey's own label writes it: `FnModel` in
+    /// front of `build`, empty for a free declaration. The label is the
+    /// survey's text and this reads it rather than rebuilding it — the head
+    /// draws it with rust's own `::` after it, and a shelf ordered by owner
+    /// clusters on it.
+    pub(super) fn qualifier(&self) -> &str {
+        match self.head.label.rsplit_once("::") {
+            Some((ty, _)) => ty,
+            None => "",
+        }
+    }
+
+    /// The module as rust writes it — `views::func`, or the crate's own name
+    /// at its root. What a head wears where it crosses one, and what prose
+    /// away from the paper spells out.
+    pub(super) fn written(&self) -> String {
+        match self.module.is_empty() {
+            true => self.krate.clone(),
+            false => self.module.join("::"),
+        }
+    }
+
+    /// The key `/fn/mod/:..module` selects this mark's module by: the crate,
+    /// then the module path as rust nests it. The same key the data altitude's
+    /// frames carry, so a reviewer reading one module at two altitudes says
+    /// one word for it.
+    pub(super) fn mod_key(&self) -> Vec<String> {
+        let mut key = vec![self.krate.clone()];
+        key.extend(self.module.iter().cloned());
+        key
     }
 
     /// Everything the mark's hover words say: what it is, where it is written,
@@ -307,18 +366,19 @@ impl FnMark {
     pub(super) fn title(&self) -> String {
         let mut parts = vec![
             format!("{} {}", self.head.decl(), self.head.name),
+            self.written(),
             self.head.locator(),
             self.tier.words(),
         ];
         if !self.head.section.is_empty() {
             parts.insert(1, self.head.section.clone());
         }
-        parts.push(match self.callers {
-            0 => "called by nothing in the workspace".to_string(),
-            n => plural(n as usize, "caller"),
-        });
-        if self.calls > 0 {
-            parts.push(format!("calls {}", self.calls));
+        parts.push(format!("calls {} · called by {}", self.calls, self.callers));
+        if self.runs > 0 {
+            parts.push(format!("runs {} by the way in", self.runs));
+        }
+        if self.folded {
+            parts.push("folded — click the + to open it".to_string());
         }
         if self.recurses {
             parts.push("calls itself".to_string());
@@ -331,122 +391,13 @@ impl FnMark {
     }
 }
 
-/// One frame on the paper: a workspace crate, one module inside a crate, or —
-/// where the reading groups inside a module — one type or one file inside that.
-/// Module frames nest the way rust's modules do, so the ground reads as the
-/// tree the code is written in.
-#[derive(Clone, PartialEq, Debug)]
-pub(super) struct Frame {
-    pub(super) id: u32,
-    pub(super) krate: String,
-    pub(super) module: Vec<String>,
-    /// The group this frame draws inside its module, where the reading groups
-    /// inside one: a type's name, or a file's. Empty on a crate or module
-    /// frame, which is what makes this frame one of those.
-    pub(super) group: String,
-    pub(super) parent: Option<u32>,
-    /// The marks written in this frame, in reading order — deepest band last,
-    /// so the mechanism plate's rows come out in running order.
-    pub(super) marks: Vec<u32>,
-}
-
-/// One frame's identity: its crate, the module path rust reads it at, and the
-/// group it draws inside that module (empty on a crate or module frame).
-type FrameKey = (String, Vec<String>, String);
-
-impl Frame {
-    /// The frame's own name on its border: the group it draws, else the
-    /// module's last segment, else the crate's name at the top.
-    pub(super) fn label(&self) -> String {
-        if !self.group.is_empty() {
-            return self.group.clone();
-        }
-        match self.module.last() {
-            Some(last) => last.clone(),
-            None => self.krate.clone(),
-        }
-    }
-
-    /// The key this frame selects by in a URL: the crate, then the module path
-    /// as rust nests it, then the group where it draws one. The first two are
-    /// the same key the data altitude's frames carry, so a reviewer reading one
-    /// module at two altitudes says one word for it.
-    pub(super) fn key(&self) -> Vec<String> {
-        let mut key = vec![self.krate.clone()];
-        key.extend(self.module.iter().cloned());
-        if !self.group.is_empty() {
-            key.push(self.group.clone());
-        }
-        key
-    }
-
-    /// The whole path as rust writes it, for hover words and engraved names.
-    pub(super) fn written(&self) -> String {
-        let mut parts: Vec<&str> = self.module.iter().map(String::as_str).collect();
-        if !self.group.is_empty() {
-            parts.push(&self.group);
-        }
-        match parts.is_empty() {
-            true => self.krate.clone(),
-            false => parts.join("::"),
-        }
-    }
-
-    /// Which module a file's declarations are framed in: its crate, and the
-    /// module path rust reads the file at.
-    fn module_of(krate: &str, path: &str) -> (String, Vec<String>) {
-        (
-            krate.to_string(),
-            module_path(path).into_iter().map(str::to_string).collect(),
-        )
-    }
-}
-
-impl Group {
-    /// Which group inside its module one declaration belongs to, under this
-    /// reading. Empty means the module's own shelf — which is where a free
-    /// declaration always sits, because nothing owns it.
-    fn of(self, item: &ItemMark, module: &[String], path: &str) -> String {
-        match self {
-            Group::Module => String::new(),
-            // The label the survey wrote is the authority: `Vis::keyword` is
-            // `keyword` of `Vis`, and the type is whatever the impl's own
-            // header named — a trait's clause included, which files under the
-            // trait.
-            Group::Owner => item
-                .head
-                .label
-                .rsplit_once("::")
-                .map(|(owner, _)| owner.to_string())
-                .unwrap_or_default(),
-            Group::File => {
-                let file = path.rsplit('/').next().unwrap_or(path);
-                let stem = file.strip_suffix(".rs").unwrap_or(file);
-                // A file that already gave its module its name would draw a
-                // frame around a frame saying the same word: `src/load.rs` is
-                // `mod load`.
-                match module.last().map(String::as_str) == Some(stem) {
-                    true => String::new(),
-                    false => file.to_string(),
-                }
-            }
-        }
-    }
-}
-
-/// One column of the section: one frame's marks, crossing every band. The
-/// frame's own words ride along, because a column is a boundary a reader can
-/// select and the layout must not go back to the model to name it.
-#[derive(Clone, PartialEq, Debug)]
-pub(super) struct Column {
-    pub(super) frame: u32,
-    /// The frame's whole path — what the prism engraves along its top, and
-    /// what its hover words say.
-    pub(super) written: String,
-    /// The key selecting this boundary pushes.
-    pub(super) key: Vec<String>,
-    /// The marks in this frame, by band.
-    pub(super) cells: Vec<(u32, Vec<u32>)>,
+/// Which module a file's declarations are written in: its crate, and the
+/// module path rust reads the file at.
+fn module_of(krate: &str, path: &str) -> (String, Vec<String>) {
+    (
+        krate.to_string(),
+        module_path(path).into_iter().map(str::to_string).collect(),
+    )
 }
 
 /// What the cartouche states about the survey at this altitude.
@@ -470,8 +421,31 @@ pub(super) struct FnFacts {
 pub(super) struct FnModel {
     pub(super) marks: Vec<FnMark>,
     pub(super) calls: Vec<Call>,
-    pub(super) frames: Vec<Frame>,
-    pub(super) columns: Vec<Column>,
+    /// The seating tree, by mark id: which caller each declaration shelves
+    /// inside. A mark with no entry here is a frame on the ground.
+    pub(super) via: HashMap<u32, u32>,
+    /// The same tree read downward — what shelves inside each frame, in the
+    /// order the reading seats them.
+    pub(super) kids: HashMap<u32, Vec<u32>>,
+    /// The frames on the ground, in seating order: an entry point, or a mark
+    /// whose way in this reading does not draw.
+    pub(super) seats: Vec<u32>,
+    /// The frames in the ring strip: what no entry point reaches, in seating
+    /// order. Each carries whatever shelves inside it.
+    pub(super) ring: Vec<u32>,
+    /// The frames the reviewer folded by hand. Their heads, signatures and
+    /// counted words are on the paper; what shelves inside them is not.
+    pub(super) folded: HashSet<u32>,
+    /// Which of those folds the **packer** was allowed to skip. A folded frame
+    /// outside this set keeps its whole footprint, so folding it moved nothing
+    /// else on the sheet; one inside it was packed as its own box. See
+    /// [`crate::views::func::FnReading::packed`] for when the sets diverge.
+    pub(super) packed: HashSet<u32>,
+    /// Every mark a fold hides, and the folded frame that stands for it on the
+    /// paper — the head its wires re-anchor to, and the head that carries a lit
+    /// chain's ink where the chain runs through the fold. The outermost fold
+    /// wins: a fold inside a fold is spoken for by the one the reader can see.
+    pub(super) packs: HashMap<u32, u32>,
     /// Every band the paper has, in order, with its caption.
     pub(super) bands: Vec<(u32, String)>,
     pub(super) facts: FnFacts,
@@ -487,6 +461,34 @@ impl FnModel {
         self.marks.iter().map(|m| (m.id, m)).collect()
     }
 
+    /// Every frame this mark stands inside, outward: the way in, read as the
+    /// paper reads it.
+    pub(super) fn ancestors(&self, of: u32) -> HashSet<u32> {
+        let mut out = HashSet::new();
+        let mut at = of;
+        while let Some(&up) = self.via.get(&at) {
+            if !out.insert(up) {
+                break;
+            }
+            at = up;
+        }
+        out
+    }
+
+    /// The mark and everything shelved inside it, however deep.
+    pub(super) fn subtree(&self, of: u32) -> HashSet<u32> {
+        let mut out = HashSet::from([of]);
+        let mut stack = vec![of];
+        while let Some(at) = stack.pop() {
+            for &kid in self.kids.get(&at).into_iter().flatten() {
+                if out.insert(kid) {
+                    stack.push(kid);
+                }
+            }
+        }
+        out
+    }
+
     /// One mark by the (file, label) a URL names.
     pub(super) fn find(&self, path: &str, label: &str) -> Option<&FnMark> {
         self.marks
@@ -494,14 +496,43 @@ impl FnModel {
             .find(|m| m.head.path == path && m.head.label == label)
     }
 
-    /// One band's caption, from the model's own list — never rebuilt, so a
-    /// lane and a sheet say the same words about the same band.
-    pub(super) fn caption_of(&self, band: u32) -> String {
-        self.bands
-            .iter()
-            .find(|(at, _)| *at == band)
-            .map(|(_, caption)| caption.clone())
-            .unwrap_or_default()
+    /// Whether a fold has this mark off the paper.
+    pub(super) fn hidden(&self, id: u32) -> bool {
+        self.packs.contains_key(&id)
+    }
+
+    /// The head that stands for a mark on the paper: itself where it is drawn,
+    /// and the outermost fold hiding it where it is not. Every wire and every
+    /// lit chain reads through this, so a fold re-anchors ink instead of
+    /// cutting it.
+    pub(super) fn shown(&self, id: u32) -> u32 {
+        self.packs.get(&id).copied().unwrap_or(id)
+    }
+
+    /// The folds standing between the paper and one mark, outermost first —
+    /// what a reveal has to open before the mark can be seen. A selection the
+    /// reader cannot see is not a focus, so every way to a mark (a URL, the
+    /// search, a sheet row, the arrow walk) opens the frames it hides behind
+    /// first.
+    pub(super) fn reveal(&self, of: u32) -> Vec<(String, String)> {
+        if self.folded.is_empty() {
+            return Vec::new();
+        }
+        let by_id = self.by_id();
+        let mut out: Vec<(String, String)> = Vec::new();
+        let mut at = of;
+        let mut seen: HashSet<u32> = HashSet::from([of]);
+        while let Some(&up) = self.via.get(&at) {
+            if !seen.insert(up) {
+                break;
+            }
+            if let Some(mark) = by_id.get(&up).filter(|_| self.folded.contains(&up)) {
+                out.push(fold_key(&mark.head.path, &mark.head.label));
+            }
+            at = up;
+        }
+        out.reverse();
+        out
     }
 
     /// Every mark a rewrite of `from` could reach, walking callers outward: the
@@ -624,9 +655,10 @@ impl FnModel {
             list.dedup();
         }
 
-        // A multi-source walk, so depth and road come out of one pass: the
-        // entry points are seeded in id order and each mark keeps the road that
-        // reached it first.
+        // A multi-source walk over the whole workspace: the entry points are
+        // seeded in id order, and every other mark keeps the depth of the
+        // shortest way in. The tier is a fact about the workspace, never about
+        // the reading — what the visibility slider hides still called it.
         let mut entries: Vec<u32> = runs
             .iter()
             .map(|m| m.id)
@@ -634,10 +666,6 @@ impl FnModel {
             .collect();
         entries.sort_unstable();
         let mut depth: HashMap<u32, u32> = HashMap::new();
-        let mut road: HashMap<u32, u32> = HashMap::new();
-        // The way in: which caller reached this mark first. One wire per mark,
-        // and the whole of the resting plate.
-        let mut via: HashMap<u32, u32> = HashMap::new();
         let mut queue: VecDeque<u32> = VecDeque::new();
         for &entry in &entries {
             depth.insert(entry, 0);
@@ -645,14 +673,11 @@ impl FnModel {
         }
         while let Some(at) = queue.pop_front() {
             let next = depth[&at] + 1;
-            let from = road.get(&at).copied().unwrap_or(at);
             for &callee in callees_of.get(&at).into_iter().flatten() {
                 if depth.contains_key(&callee) {
                     continue;
                 }
                 depth.insert(callee, next);
-                road.insert(callee, from);
-                via.insert(callee, at);
                 queue.push_back(callee);
             }
         }
@@ -663,78 +688,37 @@ impl FnModel {
         };
         let deepest = depth.values().copied().max().unwrap_or(0);
 
-        // ---- The frames. ---------------------------------------------------
-        let mut frame_of: HashMap<FrameKey, u32> = HashMap::new();
-        let mut frames: Vec<Frame> = Vec::new();
-        // One frame per (crate, module path, group), each standing inside the
-        // one above it all the way up to the crate — whether or not that level
-        // declares a mark of its own, because a module the code nests inside
-        // another is a module drawn inside another.
-        let mut frame_for =
-            |krate: &str, module: &[String], group: &str, frames: &mut Vec<Frame>| -> u32 {
-                let key = (krate.to_string(), module.to_vec(), group.to_string());
-                if let Some(&id) = frame_of.get(&key) {
-                    return id;
-                }
-                let up: Option<(Vec<String>, String)> = match group.is_empty() {
-                    // A group frame's parent is its module.
-                    false => Some((module.to_vec(), String::new())),
-                    // A module frame's parent is the module above it; the
-                    // crate's frame has none.
-                    true => module
-                        .split_last()
-                        .map(|(_, up)| (up.to_vec(), String::new())),
-                };
-                let parent = up.map(|(module, group)| {
-                    let up_key = (krate.to_string(), module.clone(), group.clone());
-                    match frame_of.get(&up_key) {
-                        Some(&id) => id,
-                        None => {
-                            let id = frames.len() as u32;
-                            frames.push(Frame {
-                                id,
-                                krate: krate.to_string(),
-                                module,
-                                group,
-                                parent: None,
-                                marks: Vec::new(),
-                            });
-                            frame_of.insert(up_key, id);
-                            id
-                        }
-                    }
-                });
-                let id = frames.len() as u32;
-                frames.push(Frame {
-                    id,
-                    krate: krate.to_string(),
-                    module: module.to_vec(),
-                    group: group.to_string(),
-                    parent,
-                    marks: Vec::new(),
-                });
-                frame_of.insert(key, id);
-                id
-            };
-
         // ---- The marks. ----------------------------------------------------
         let method_row = |mark: &ItemMark| -> Option<&MethodRow> {
             let parent = graph.item(mark.parent?)?;
             parent.body.method_rows.iter().find(|r| r.mark == mark.id)
+        };
+        // Whose method a declaration is: the survey resolved the impl block's
+        // own type, so the owner is read off it rather than parsed back out of
+        // a header. A free declaration has no parent and no owner.
+        let owner_of = |ty: u32| -> Option<Owner> {
+            let item = graph.item(ty)?;
+            let file = graph.file(item.file)?;
+            Some(Owner {
+                ty,
+                decl: item.head.kind.decl_words(&item.head.vis),
+                name: item.head.name.clone(),
+                path: file.path.clone(),
+                label: item.head.label.clone(),
+                on_data: item.head.kind.is_data() && item.parent.is_none(),
+            })
         };
         let mut marks: Vec<FnMark> = Vec::new();
         for item in runs.iter().filter(|m| drawn.contains(&m.id)) {
             let Some(file) = graph.file(item.file) else {
                 continue;
             };
-            let (krate, module) = Frame::module_of(&file.krate, &file.path);
-            let group = reading.group.of(item, &module, &file.path);
-            let frame = frame_for(&krate, &module, &group, &mut frames);
+            let (krate, module) = module_of(&file.krate, &file.path);
             marks.push(FnMark {
                 id: item.id,
-                frame,
                 tier: tier_of(item.id),
-                road: road.get(&item.id).copied(),
+                krate,
+                module,
                 head: FnHead {
                     kind: item.head.kind,
                     vis: item.head.vis.clone(),
@@ -747,11 +731,15 @@ impl FnModel {
                         .unwrap_or_default(),
                 },
                 rows: SigRow::quote(item),
+                owner: item.parent.and_then(owner_of),
                 delta: item.diff.delta,
                 callers: callers_of.get(&item.id).map_or(0, |l| l.len() as u32),
                 calls: callees_of.get(&item.id).map_or(0, |l| l.len() as u32),
                 touches: 0,
+                runs: 0,
+                crosses: false,
                 recurses: recurses.contains(&item.id),
+                folded: false,
             });
         }
         marks.sort_by(|a, b| {
@@ -777,7 +765,7 @@ impl FnModel {
                 user,
                 kind: CallKind::Call,
                 count,
-                rest: via.get(&def) == Some(&user),
+                seats: false,
             })
             .collect();
         calls.extend(
@@ -789,12 +777,88 @@ impl FnModel {
                     user: answer,
                     kind: CallKind::Answers,
                     count: 0,
-                    rest: true,
+                    seats: false,
                 }),
         );
         calls.sort_by_key(|c| (c.def, c.user, c.kind == CallKind::Answers));
 
-        // ---- The three seatings. -------------------------------------------
+        // ---- The seating: the way in, over what this reading draws. --------
+        //
+        // The tier above is the workspace's own fact; this walk is the paper's.
+        // A mark whose only caller the visibility slider left off would have no
+        // way in at all, so the seeds are the marks nothing *drawn* calls, and
+        // the tree that grows from them covers every block on the sheet.
+        let written: HashMap<u32, String> = marks.iter().map(|m| (m.id, m.written())).collect();
+        // What an owner-ordered shelf clusters on. A free declaration's key is
+        // empty, so the free declarations cluster together and read first.
+        let owned: HashMap<u32, String> = marks
+            .iter()
+            .map(|m| (m.id, m.qualifier().to_string()))
+            .collect();
+        let seating = Seating::read(&marks, &calls, reading.order, &written, &owned);
+        for mark in marks.iter_mut() {
+            mark.runs = seating.reach.get(&mark.id).copied().unwrap_or(0);
+            mark.crosses = seating
+                .via
+                .get(&mark.id)
+                .is_some_and(|up| written.get(up) != written.get(&mark.id));
+        }
+
+        // ---- The folds: what the reviewer took off the paper by hand. -------
+        //
+        // Nothing here folds by a count, a depth or a budget — a fold is the
+        // reviewer's own gesture. A frame that shelves nothing has nothing to
+        // fold, so it draws no mark at all, and a fold names its frame by the
+        // same (file, label) pair the URL does, so it survives the next build of
+        // the chart.
+        let resolve = |set: &crate::views::func::FnFolds| -> HashSet<u32> {
+            marks
+                .iter()
+                .filter(|m| m.runs > 0)
+                .filter(|m| set.contains(&fold_key(&m.head.path, &m.head.label)))
+                .map(|m| m.id)
+                .collect()
+        };
+        let folded = resolve(&reading.folds);
+        // Only a fold the packer was allowed to skip changes where anything
+        // sits. The rest are elisions in place, and the layout still reserves
+        // every footprint they hide.
+        let packed_folds: HashSet<u32> = resolve(&reading.packed)
+            .into_iter()
+            .filter(|id| folded.contains(id))
+            .collect();
+        let mut packs: HashMap<u32, u32> = HashMap::new();
+        if !folded.is_empty() {
+            // Down the seating from the ground, carrying the outermost fold met
+            // on the way: what a reader can see is what stands for everything
+            // under it.
+            let mut stack: Vec<(u32, Option<u32>)> = seating
+                .seats
+                .iter()
+                .chain(seating.ring.iter())
+                .map(|&id| (id, None))
+                .collect();
+            while let Some((at, under)) = stack.pop() {
+                let rep = under.or_else(|| folded.contains(&at).then_some(at));
+                for &kid in seating.kids.get(&at).into_iter().flatten() {
+                    if kid == at {
+                        continue;
+                    }
+                    if let Some(rep) = rep {
+                        packs.insert(kid, rep);
+                    }
+                    stack.push((kid, rep));
+                }
+            }
+        }
+        for mark in marks.iter_mut() {
+            mark.folded = folded.contains(&mark.id);
+        }
+        for call in calls.iter_mut() {
+            call.seats =
+                call.kind == CallKind::Call && seating.via.get(&call.def) == Some(&call.user);
+        }
+
         let bands = {
             let mut seen: Vec<u32> = marks.iter().map(|m| m.tier.band(deepest)).collect();
             seen.sort_unstable();
@@ -810,15 +874,6 @@ impl FnModel {
                 })
                 .collect::<Vec<_>>()
         };
-        for frame in frames.iter_mut() {
-            frame.marks = marks
-                .iter()
-                .filter(|m| m.frame == frame.id)
-                .map(|m| m.id)
-                .collect();
-        }
-        let columns = Column::read(&frames, &marks, deepest);
-
         let facts = FnFacts {
             fns: marks
                 .iter()
@@ -846,12 +901,142 @@ impl FnModel {
         FnModel {
             marks,
             calls,
-            frames,
-            columns,
+            via: seating.via,
+            kids: seating.kids,
+            seats: seating.seats,
+            ring: seating.ring,
+            folded,
+            packed: packed_folds,
+            packs,
             bands,
             facts,
             touches,
             dirty,
+        }
+    }
+}
+
+/// The way-in tree, read over what one reading draws: which caller every
+/// declaration shelves inside, what shelves inside each of them, how much each
+/// frame carries, and the frames that stand on the ground.
+struct Seating {
+    via: HashMap<u32, u32>,
+    kids: HashMap<u32, Vec<u32>>,
+    reach: HashMap<u32, u32>,
+    seats: Vec<u32>,
+    ring: Vec<u32>,
+}
+
+impl Seating {
+    fn read(
+        marks: &[FnMark],
+        calls: &[Call],
+        order: FnOrder,
+        written: &HashMap<u32, String>,
+        owned: &HashMap<u32, String>,
+    ) -> Self {
+        let on: HashSet<u32> = marks.iter().map(|m| m.id).collect();
+        let mut callees: HashMap<u32, Vec<u32>> = HashMap::new();
+        let mut callers: HashMap<u32, Vec<u32>> = HashMap::new();
+        for call in calls {
+            callees.entry(call.user).or_default().push(call.def);
+            callers.entry(call.def).or_default().push(call.user);
+        }
+        for list in callees.values_mut().chain(callers.values_mut()) {
+            list.sort_unstable();
+            list.dedup();
+        }
+
+        // A breadth-first walk from what nothing drawn calls, in id order:
+        // the first caller to reach a mark is its way in, and the tree is the
+        // same for one survey however the shelves are later ordered.
+        let mut ids: Vec<u32> = marks.iter().map(|m| m.id).collect();
+        ids.sort_unstable();
+        let mut via: HashMap<u32, u32> = HashMap::new();
+        let mut kids: HashMap<u32, Vec<u32>> = HashMap::new();
+        let mut order_seen: Vec<u32> = Vec::with_capacity(ids.len());
+        let mut seen: HashSet<u32> = HashSet::new();
+        let grow = |from: Vec<u32>,
+                    via: &mut HashMap<u32, u32>,
+                    kids: &mut HashMap<u32, Vec<u32>>,
+                    seen: &mut HashSet<u32>,
+                    order_seen: &mut Vec<u32>| {
+            let mut queue: VecDeque<u32> = VecDeque::new();
+            for id in from {
+                if seen.insert(id) {
+                    order_seen.push(id);
+                    queue.push_back(id);
+                }
+            }
+            while let Some(at) = queue.pop_front() {
+                for &callee in callees.get(&at).into_iter().flatten() {
+                    if !on.contains(&callee) || !seen.insert(callee) {
+                        continue;
+                    }
+                    via.insert(callee, at);
+                    kids.entry(at).or_default().push(callee);
+                    order_seen.push(callee);
+                    queue.push_back(callee);
+                }
+            }
+        };
+        let ground: Vec<u32> = ids
+            .iter()
+            .copied()
+            .filter(|id| callers.get(id).is_none_or(|list| list.is_empty()))
+            .collect();
+        let mut seats = ground.clone();
+        grow(ground, &mut via, &mut kids, &mut seen, &mut order_seen);
+        // What is left is in a call ring: nothing reaches it from the ground.
+        // Each ring is grown from its lowest id, so the ring strip holds one
+        // frame per ring rather than one block per mark caught in one.
+        let mut ring: Vec<u32> = Vec::new();
+        for &id in &ids {
+            if seen.contains(&id) {
+                continue;
+            }
+            ring.push(id);
+            grow(vec![id], &mut via, &mut kids, &mut seen, &mut order_seen);
+        }
+
+        // What each frame carries, deepest first: a mark's own weight is every
+        // block shelved inside it, however deep.
+        let mut reach: HashMap<u32, u32> = HashMap::new();
+        for &id in order_seen.iter().rev() {
+            let carried = kids
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .map(|kid| 1 + reach.get(kid).copied().unwrap_or(0))
+                .sum();
+            reach.insert(id, carried);
+        }
+
+        // Only now does the reading decide what reads first on a shelf. The
+        // cluster is the reading's; the weight breaks ties inside it, so every
+        // stop moves the shelves and none of them moves the tree.
+        let key = |id: u32| -> (Option<&String>, std::cmp::Reverse<u32>, u32) {
+            (
+                match order {
+                    FnOrder::Weight => None,
+                    FnOrder::Module => written.get(&id),
+                    FnOrder::Owner => owned.get(&id),
+                },
+                std::cmp::Reverse(reach.get(&id).copied().unwrap_or(0)),
+                id,
+            )
+        };
+        for shelf in kids.values_mut() {
+            shelf.sort_by_key(|&id| key(id));
+        }
+        seats.sort_by_key(|&id| key(id));
+        ring.sort_by_key(|&id| key(id));
+        Seating {
+            via,
+            kids,
+            reach,
+            seats,
+            ring,
         }
     }
 }
@@ -944,49 +1129,6 @@ impl Touch {
     }
 }
 
-/// The strata plate's columns: one per leaf module that declares a mark, in
-/// the order the modules read, each carrying its marks by band.
-impl Column {
-    /// The strata plate's columns: one per frame that holds a mark, in the
-    /// order the frames read, each carrying its marks by band.
-    fn read(frames: &[Frame], marks: &[FnMark], deepest: u32) -> Vec<Column> {
-        let mut out: Vec<Column> = Vec::new();
-        for frame in frames.iter().filter(|f| !f.marks.is_empty()) {
-            let mut cells: Vec<(u32, Vec<u32>)> = Vec::new();
-            for mark in marks.iter().filter(|m| m.frame == frame.id) {
-                let band = mark.tier.band(deepest);
-                match cells.iter_mut().find(|(at, _)| *at == band) {
-                    Some((_, ids)) => ids.push(mark.id),
-                    None => cells.push((band, vec![mark.id])),
-                }
-            }
-            cells.sort_by_key(|(band, _)| *band);
-            out.push(Column {
-                frame: frame.id,
-                written: frame.written(),
-                key: frame.key(),
-                cells,
-            });
-        }
-        out.sort_by(|a, b| a.written.cmp(&b.written));
-        out
-    }
-}
-
-/// Which reading of the calls a wire is drawn in, anchored on what the reader
-/// has in hand. The same rule the data altitude reads its references by: a
-/// direction means nothing without an anchor, because one line is this
-/// function's call and that function's caller.
-impl CallDir {
-    pub(super) fn draws(self, at: u32, def: u32, user: u32) -> bool {
-        match self {
-            CallDir::Calls => user == at,
-            CallDir::Callers => def == at,
-            CallDir::Both => user == at || def == at,
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1050,9 +1192,24 @@ mod tests {
 
     fn reading(vis_floor: VisFloor) -> FnReading {
         FnReading {
-            calls: CallDir::default(),
             vis_floor,
-            group: Group::default(),
+            order: FnOrder::default(),
+            folds: Default::default(),
+            packed: Default::default(),
+        }
+    }
+
+    /// The same reading with some frames folded by hand — elided in place, which
+    /// is what a fold does: nothing is packed away.
+    fn folding(folds: &[(&str, &str)]) -> FnReading {
+        FnReading {
+            vis_floor: VisFloor::All,
+            order: FnOrder::default(),
+            folds: folds
+                .iter()
+                .map(|(path, label)| fold_key(path, label))
+                .collect(),
+            packed: Default::default(),
         }
     }
 
@@ -1144,6 +1301,275 @@ mod tests {
         // And the ring is the last band on the paper, under every depth.
         let last = model.bands.last().expect("a band");
         assert_eq!(last.1, "in a call ring");
+        // On the paper the ring is one frame in the strip, not two loose
+        // blocks: the lowest id stands, and what it calls shelves inside it.
+        assert_eq!(model.ring, vec![4]);
+        assert_eq!(model.kids.get(&4), Some(&vec![5]));
+        assert_eq!(model.via.get(&5), Some(&4));
+    }
+
+    /// Containment is the call: what a mark reaches first shelves inside its
+    /// frame, and that call takes no ink, because the paper already says it.
+    #[test]
+    fn the_way_in_seats_a_declaration_inside_its_caller() {
+        let model = FnModel::build(&chain(), &reading(VisFloor::All));
+        // `main` is the only frame on the ground; `walk` shelves in it and
+        // `note` in `walk`.
+        assert_eq!(model.seats, vec![0]);
+        assert!(model.ring.is_empty());
+        assert_eq!(model.kids.get(&0), Some(&vec![1]));
+        assert_eq!(model.kids.get(&1), Some(&vec![2]));
+        assert_eq!(model.ancestors(2), HashSet::from([0, 1]));
+        assert_eq!(model.subtree(0), HashSet::from([0, 1, 2]));
+        // What each frame carries, however deep — the weight a shelf orders by.
+        let runs = |id: u32| model.marks.iter().find(|m| m.id == id).unwrap().runs;
+        assert_eq!((runs(0), runs(1), runs(2)), (2, 1, 0));
+        // Both calls are the way in, so neither is drawn.
+        assert!(model.calls.iter().all(|c| c.seats));
+    }
+
+    /// A call the shelving cannot say is the ink this chart spends, and the
+    /// model hands every one of them over with its two ends named. *Which* of
+    /// them the paper draws is the `wires` reading's answer, not the model's —
+    /// the direction is read against whatever is in focus, and the model cannot
+    /// know what that is.
+    #[test]
+    fn a_call_the_shelving_cannot_say_is_drawn_and_the_model_names_both_ends() {
+        // `main` reaches four helpers first, so all four seat inside it — and
+        // every call between two helpers is a call the shelving cannot say.
+        let mut graph = chain();
+        graph.items.truncate(1);
+        for (id, name) in [(1u32, "a"), (2, "b"), (3, "c"), (4, "d")] {
+            graph
+                .items
+                .push(item(id, name, ItemKind::Fn, Vis::Pub, None));
+        }
+        graph.refs.clear();
+        for (from, to, count) in [
+            (0, 1, 1),
+            (0, 2, 1),
+            (0, 3, 1),
+            (0, 4, 1),
+            (1, 3, 10),
+            (1, 4, 1),
+            (2, 3, 5),
+            (2, 4, 7),
+        ] {
+            graph.refs.push(MarkRef { from, to, count });
+        }
+        let model = FnModel::build(&graph, &reading(VisFloor::All));
+        assert_eq!(model.seats, vec![0]);
+        assert_eq!(model.kids.get(&0), Some(&vec![1, 2, 3, 4]));
+
+        let drawn: Vec<(u32, u32, u32)> = model
+            .calls
+            .iter()
+            .filter(|c| !c.seats)
+            .map(|c| (c.user, c.def, c.count))
+            .collect();
+        // The four ways in take no ink; the four calls between helpers do, each
+        // with the count the survey resolved for the pair — the weight the wire
+        // is engraved at, and the only thinning left on this chart.
+        assert_eq!(model.calls.iter().filter(|c| c.seats).count(), 4);
+        assert_eq!(
+            drawn,
+            vec![(1, 3, 10), (2, 3, 5), (1, 4, 1), (2, 4, 7)],
+            "every call the shelving cannot say is handed over, both ends named"
+        );
+    }
+
+    /// Its module is a word on the head only where the seating crosses one:
+    /// a same-module call is quiet, and a frame reaching into another module
+    /// says so.
+    #[test]
+    fn a_head_says_its_module_only_where_the_seating_crosses_one() {
+        let mut graph = chain();
+        graph.files.push(crate::graph::data::FileInfo {
+            path: "src/load.rs".to_string(),
+            krate: "slope".to_string(),
+        });
+        let mut loaded = item(4, "load", ItemKind::Fn, Vis::Pub, None);
+        loaded.file = 1;
+        graph.items.push(loaded);
+        // `walk` calls `load`, which is written in another module.
+        graph.refs.push(MarkRef {
+            from: 1,
+            to: 4,
+            count: 1,
+        });
+        let model = FnModel::build(&graph, &reading(VisFloor::All));
+        let mark = |name: &str| model.marks.iter().find(|m| m.head.name == name).unwrap();
+        assert_eq!(mark("load").written(), "load");
+        assert_eq!(mark("load").mod_key(), vec!["slope", "load"]);
+        assert!(mark("load").crosses, "seated under a caller in `slope`");
+        assert_eq!(mark("main").written(), "slope", "the crate at its root");
+        assert!(!mark("walk").crosses, "`main` calls it from its own module");
+        // A frame on the ground has no caller to cross.
+        assert!(!mark("main").crosses);
+    }
+
+    /// The order is a reading of the shelves, never of the tree: `weight` seats
+    /// the heaviest chain first, `module` clusters siblings by where they are
+    /// written, and both hold the same seating.
+    #[test]
+    fn the_order_reads_a_shelf_without_moving_the_tree() {
+        let mut graph = chain();
+        graph.files.push(crate::graph::data::FileInfo {
+            path: "src/load.rs".to_string(),
+            krate: "slope".to_string(),
+        });
+        // `main` also calls `load`, written in another module and carrying
+        // nothing — so it reads last by weight and first by module.
+        let mut loaded = item(4, "load", ItemKind::Fn, Vis::Pub, None);
+        loaded.file = 1;
+        graph.items.push(loaded);
+        graph.refs.push(MarkRef {
+            from: 0,
+            to: 4,
+            count: 1,
+        });
+        let shelf = |order: FnOrder| {
+            let model = FnModel::build(
+                &graph,
+                &FnReading {
+                    vis_floor: VisFloor::All,
+                    order,
+                    folds: Default::default(),
+                    packed: Default::default(),
+                },
+            );
+            model.kids.get(&0).cloned().unwrap_or_default()
+        };
+        // By weight, `walk` (which carries `note`) reads before `load`.
+        assert_eq!(shelf(FnOrder::Weight), vec![1, 4]);
+        // By module, `load` — written in `load` — reads before `slope`'s own.
+        assert_eq!(shelf(FnOrder::Module), vec![4, 1]);
+    }
+
+    /// `owner` clusters a shelf by the type whose impl each sibling is written
+    /// in, free declarations first, with the weight still breaking ties inside
+    /// a cluster — and it moves the shelf that `weight` and `module` do not.
+    #[test]
+    fn the_owner_order_clusters_a_shelf_by_whose_method_it_is() {
+        let mut graph = chain();
+        graph.items.truncate(1);
+        // `main` calls a free function and two methods of two types, all in one
+        // module, so only the owner reading can tell them apart.
+        graph
+            .items
+            .push(item(1, "Plate", ItemKind::Struct, Vis::Pub, None));
+        graph
+            .items
+            .push(item(2, "Wire", ItemKind::Struct, Vis::Pub, None));
+        for (id, name, parent) in [
+            (3u32, "Wire::draw", Some(2)),
+            (4, "Plate::rule", Some(1)),
+            (5, "note", None),
+        ] {
+            let mut mark = item(id, name, ItemKind::Fn, Vis::Pub, parent);
+            mark.head.name = name.rsplit("::").next().unwrap_or(name).to_string();
+            graph.items.push(mark);
+        }
+        graph.refs.clear();
+        for (from, to, count) in [(0, 3, 1), (0, 4, 1), (0, 5, 1)] {
+            graph.refs.push(MarkRef { from, to, count });
+        }
+        let shelf = |order: FnOrder| {
+            let model = FnModel::build(
+                &graph,
+                &FnReading {
+                    vis_floor: VisFloor::All,
+                    order,
+                    folds: Default::default(),
+                    packed: Default::default(),
+                },
+            );
+            model.kids.get(&0).cloned().unwrap_or_default()
+        };
+        // Nothing to cluster on: the ids break the tie, in seating order.
+        assert_eq!(shelf(FnOrder::Weight), vec![3, 4, 5]);
+        // By owner: the free `note` first, then `Plate::rule`, then `Wire::draw`.
+        assert_eq!(shelf(FnOrder::Owner), vec![5, 4, 3]);
+        // And the owner is read off the survey's own label and mark.
+        let model = FnModel::build(&graph, &reading(VisFloor::All));
+        let draw = model.marks.iter().find(|m| m.id == 3).unwrap();
+        assert_eq!(draw.qualifier(), "Wire");
+        let owner = draw.owner.as_ref().expect("a method has an owner");
+        assert_eq!((owner.ty, owner.name.as_str()), (2, "Wire"));
+        assert!(owner.on_data, "a struct has a block one rung down");
+        let free = model.marks.iter().find(|m| m.id == 5).unwrap();
+        assert_eq!(free.qualifier(), "");
+        assert!(free.owner.is_none());
+    }
+
+    /// A fold is the reviewer's own gesture: it takes what shelves inside one
+    /// frame off the paper, leaves the frame's own head standing for it, and
+    /// says how many in words.
+    #[test]
+    fn a_folded_frame_stands_for_everything_it_hides() {
+        let model = FnModel::build(&chain(), &folding(&[("src/main.rs", "walk")]));
+        let walk = model.marks.iter().find(|m| m.head.name == "walk").unwrap();
+        assert!(walk.folded);
+        assert_eq!(walk.runs, 1, "the count it states in words");
+        // `note` is off the paper, and `walk`'s head stands for it.
+        assert!(model.hidden(2));
+        assert_eq!(model.shown(2), 1);
+        // The fold hides nothing above itself, and nothing outside it.
+        assert!(!model.hidden(1));
+        assert_eq!(model.shown(0), 0);
+        // The seating is untouched: a fold is a re-layout, not a re-reading.
+        assert_eq!(model.kids.get(&1), Some(&vec![2]));
+        assert_eq!(model.folded, HashSet::from([1]));
+    }
+
+    /// Nothing folds itself. A frame nobody folded hides nothing, whatever it
+    /// carries, and a fold naming a frame that shelves nothing draws no mark.
+    #[test]
+    fn nothing_folds_by_itself_or_by_a_count() {
+        let open = FnModel::build(&chain(), &reading(VisFloor::All));
+        assert!(open.folded.is_empty());
+        assert!(open.packs.is_empty());
+        // `note` shelves nothing, so folding it is not a thing the chart draws.
+        let leaf = FnModel::build(&chain(), &folding(&[("src/main.rs", "note")]));
+        assert!(leaf.folded.is_empty(), "a leaf has nothing to fold");
+        assert!(leaf.packs.is_empty());
+    }
+
+    /// The outermost fold is what stands on the paper: a fold inside a fold is
+    /// spoken for by the one the reader can actually see.
+    #[test]
+    fn the_outermost_fold_stands_for_the_folds_inside_it() {
+        let model = FnModel::build(
+            &chain(),
+            &folding(&[("src/main.rs", "main"), ("src/main.rs", "walk")]),
+        );
+        assert_eq!(model.folded, HashSet::from([0, 1]));
+        // Both `walk` and `note` are hidden, and `main` stands for both.
+        assert_eq!(model.shown(1), 0);
+        assert_eq!(model.shown(2), 0);
+    }
+
+    /// A selection the reader cannot see is not a focus, so the way to a mark
+    /// names every fold it is hiding behind, outermost first.
+    #[test]
+    fn a_reveal_names_every_fold_on_the_way_in() {
+        let model = FnModel::build(
+            &chain(),
+            &folding(&[("src/main.rs", "main"), ("src/main.rs", "walk")]),
+        );
+        assert_eq!(
+            model.reveal(2),
+            vec![
+                fold_key("src/main.rs", "main"),
+                fold_key("src/main.rs", "walk"),
+            ]
+        );
+        // A mark standing on open paper needs nothing unfolded, and a folded
+        // frame's own head is drawn — so nothing unfolds to reach it either.
+        assert!(model.reveal(0).is_empty());
+        let one = FnModel::build(&chain(), &folding(&[("src/main.rs", "walk")]));
+        assert!(one.reveal(1).is_empty(), "a folded frame is on the paper");
+        assert_eq!(one.reveal(2), vec![fold_key("src/main.rs", "walk")]);
     }
 
     /// Recursion is a word on the mark, never a wire that leaves and comes
@@ -1220,79 +1646,20 @@ mod tests {
         assert_eq!((answer.def, answer.user), (5, 7));
     }
 
-    /// Grouping nests inside the module frames; it never replaces them. A
-    /// method sits with the type its impl names, a free declaration stays on
-    /// the module's own shelf, and a file that already named its module draws
-    /// no second frame saying the same word.
+    /// A mark whose only caller the reading leaves off the paper still has a
+    /// seat: it stands on the ground, and its tier still says how far in it is.
     #[test]
-    fn a_grouping_nests_inside_the_module_it_is_written_in() {
+    fn a_mark_whose_way_in_is_off_the_paper_stands_on_the_ground() {
         let mut graph = chain();
-        // `impl Held { fn say() }`, written in the same file. Its own name is
-        // not `note`, which the chain already has free: two marks of one name
-        // would make this test read whichever the map kept.
-        graph
-            .items
-            .push(item(4, "say", ItemKind::Fn, Vis::Pub, Some(3)));
-        graph.items[4].head.label = "Held::say".to_string();
-        // And one declaration in `src/load.rs`, which is `mod load` itself.
-        graph.files.push(crate::graph::data::FileInfo {
-            path: "src/load.rs".to_string(),
-            krate: "slope".to_string(),
-        });
-        let mut loaded = item(5, "load", ItemKind::Fn, Vis::Pub, None);
-        loaded.file = 1;
-        graph.items.push(loaded);
-
-        // The frame each named declaration lands in, under one grouping.
-        let framed = |group: Group| -> HashMap<String, Frame> {
-            let model = FnModel::build(
-                &graph,
-                &FnReading {
-                    calls: CallDir::default(),
-                    vis_floor: VisFloor::All,
-                    group,
-                },
-            );
-            model
-                .marks
-                .iter()
-                .filter_map(|mark| {
-                    let frame = model.frames.iter().find(|f| f.id == mark.frame)?;
-                    Some((mark.head.name.clone(), frame.clone()))
-                })
-                .collect()
-        };
-
-        // By module: `src/main.rs` is the crate root and names no module, so
-        // both sit on the crate's own shelf.
-        let at = framed(Group::Module);
-        assert_eq!(at["main"].id, at["say"].id);
-        assert_eq!(at["main"].label(), "slope");
-        assert!(at["main"].group.is_empty());
-        assert_eq!(at["load"].label(), "load", "src/load.rs is mod load");
-
-        // By type: the method moves into a frame named for the type its impl
-        // names, inside the frame it was already in. The free function does
-        // not move at all.
-        let at = framed(Group::Owner);
-        assert_eq!(at["main"].label(), "slope");
-        assert_eq!(at["say"].label(), "Held");
-        assert_eq!(
-            at["say"].parent,
-            Some(at["main"].id),
-            "a type frame stands inside the module that writes it"
-        );
-        assert_eq!(at["say"].key(), vec!["slope", "Held"]);
-        assert_eq!(at["say"].written(), "Held");
-
-        // By file: `main.rs` earns a frame inside the crate, and `load.rs`
-        // does not — it already gave `mod load` its name, and a frame around
-        // a frame saying the same word says nothing.
-        let at = framed(Group::File);
-        assert_eq!(at["main"].id, at["say"].id);
-        assert_eq!(at["main"].label(), "main.rs");
-        assert_eq!(at["load"].label(), "load");
-        assert!(at["load"].group.is_empty());
+        // `walk` goes private and `note` widens, so nothing this reading draws
+        // calls `note` any more.
+        graph.items[1].head.vis = Vis::Private;
+        graph.items[2].head.vis = Vis::Crate;
+        let model = FnModel::build(&graph, &reading(VisFloor::Crate));
+        let mark = |name: &str| model.marks.iter().find(|m| m.head.name == name).unwrap();
+        assert_eq!(mark("note").tier, Tier::Deep(2), "the workspace's own fact");
+        assert_eq!(model.seats, vec![0, 2], "both stand on the ground");
+        assert!(!model.via.contains_key(&2));
     }
 
     /// The header the survey wrote is what says which contract a method

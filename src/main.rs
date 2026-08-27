@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 
 use views::{
     AppShell, DataFocus, DataModFocus, DataOverview, DepFocus, DepOverview, DepRing, FnBandFocus,
-    FnFocus, FnModFocus, FnOverview,
+    FnFocus, FnModFocus, FnOverview, FnTreeFocus,
 };
 
 /// Server-side analysis: cargo metadata, VCS diff, manifest events.
@@ -29,9 +29,11 @@ mod views;
 /// quotation of its own source, for the ends this chart draws no block for —
 /// a function, a trait, a method. `/fn` is the rung below: every declaration
 /// that runs, tiered by how far it is from an entry point, with the same
-/// selection grammar (`/fn/mark/:..path?item=`, `/fn/mod/:..module`) plus one
-/// of its own — `/fn/depth/:band`, a whole band of the running order. `/` is
-/// the dependency chart, the rung a review starts on.
+/// selection grammar (`/fn/mark/:..path?item=`, `/fn/mod/:..module`) plus two
+/// of its own — `/fn/depth/:band`, a whole band of the running order, and
+/// `/fn/tree/:..path?item=`, one frame's whole boundary: the declaration and
+/// everything shelved inside it. `/` is the dependency chart, the rung a review
+/// starts on.
 #[derive(Debug, Clone, Routable, PartialEq)]
 #[rustfmt::skip]
 enum Route {
@@ -56,6 +58,8 @@ enum Route {
         FnOverview {},
         #[route("/fn/mark/:..path?:peek&:item")]
         FnFocus { path: Vec<String>, peek: Option<String>, item: String },
+        #[route("/fn/tree/:..path?:item")]
+        FnTreeFocus { path: Vec<String>, item: String },
         #[route("/fn/mod/:..module")]
         FnModFocus { module: Vec<String> },
         #[route("/fn/depth/:band")]

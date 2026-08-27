@@ -1,29 +1,26 @@
-//! The third altitude: the code that runs, tiered by how far it is from
-//! something that starts.
+//! The third altitude: the code that runs, seated inside whatever calls it.
 //!
 //! The crates, then the state, then the **functions**: every function, method,
-//! trait clause and `macro_rules!` the workspace declares, seated by module and
-//! tiered by call depth. It answers one question — *what runs from where?* — by
-//! putting the declarations nothing calls at the top of the paper and drawing,
-//! for every other mark, the one call that is the shortest way something
-//! reaches it. Reading the way in is reading the paper.
+//! trait clause and `macro_rules!` the workspace declares. It answers one
+//! question — *what runs from where?* — and it answers it the way the rung
+//! above answers *what holds this?*: by **containment**. One rung down the
+//! commonest edge is the way-in call, so here **containment is the call**.
+//! Every declaration seats inside the frame of the caller that reaches it
+//! first, its own callees shelve in wrapped rows inside its frame, and ink is
+//! spent only on what the shelving cannot say — the calls that are not the way
+//! in. Reading the nesting is reading the way in.
 //!
 //! It is the data chart's dual, and deliberately so. A block there quotes a
-//! struct's fields; a block here quotes a function's signature — the receiver,
-//! the parameters, the return — because a function's parameters are its
-//! fields, of the other half of the language. Selecting a datum there lists
-//! what holds it; selecting a function here lists what calls it, what it
-//! calls, and every type it touches, each of those a link down to the rung
-//! that draws types.
+//! struct's fields; a block here is one head row — the keyword, the name, the
+//! diff letter — and the signature is quoted on the sheet, where it has the
+//! room. Selecting a datum there lists what holds it; selecting a function
+//! here lists what calls it, what it calls, and every type it touches, each of
+//! those a link down to the rung that draws types.
 //!
-//! The sheet is a **section**: bands of call depth run its full width,
-//! captioned at the left margin the way the dependency chart's rings caption
-//! their hops, and prisms cross every band — one per module, or per type, or
-//! per file, as the cartouche's `group` reading asks. A mark sits at the
-//! crossing of its depth and its frame, so both readings come off the paper at
-//! once. Two other seatings were built and read on a real workspace on
-//! 2026-08-25 and cut by the user; `spec/function-viewer.md` records what they
-//! were and why.
+//! The seating is the **shelved section**, approved 2026-08-26 after two
+//! prototypes were read and rejected. The band × prism section it replaced —
+//! and the three seatings tried before that — are recorded in
+//! `spec/function-viewer.md`.
 
 pub(crate) mod chrome;
 pub(crate) mod layout;
@@ -37,7 +34,7 @@ use crate::Route;
 use crate::graph::data::CodeGraph;
 use crate::views::chrome::plural;
 use crate::views::data::VisFloor;
-use crate::views::func::chrome::{FnBandSheet, FnCartouche, FnSearch, FnSheet};
+use crate::views::func::chrome::{FnBandSheet, FnCartouche, FnSearch, FnSheet, FnTreeSheet};
 use crate::views::func::map::FnChart;
 use crate::views::func::model::FnModel;
 use crate::views::func::quote::FnQuotation;
@@ -48,6 +45,10 @@ pub(super) enum FnSel {
     /// One declaration: the file it is written in, then the label its sheet
     /// selects by.
     Mark(String, String),
+    /// One frame's whole boundary, named by the declaration that owns it: the
+    /// block and everything shelved inside it. Containment is the call, so a
+    /// box is a subtree, and selecting the box is selecting the subtree.
+    Tree(String, String),
     /// One module boundary: the crate — by its cargo package name — then the
     /// module path as rust nests it.
     Mod(Vec<String>),
@@ -61,8 +62,18 @@ impl FnSel {
     fn of(route: &Route) -> Option<Self> {
         match route {
             Route::FnFocus { path, item, .. } => Some(FnSel::Mark(path.join("/"), item.clone())),
+            Route::FnTreeFocus { path, item } => Some(FnSel::Tree(path.join("/"), item.clone())),
             Route::FnModFocus { module } => Some(FnSel::Mod(module.clone())),
             Route::FnBandFocus { band } => Some(FnSel::Band(*band)),
+            _ => None,
+        }
+    }
+
+    /// The (file, label) of the declaration this selection is read from, where
+    /// it is read from one — what a reveal unfolds the way in to.
+    fn at(&self) -> Option<(&str, &str)> {
+        match self {
+            FnSel::Mark(path, label) | FnSel::Tree(path, label) => Some((path, label)),
             _ => None,
         }
     }
@@ -74,6 +85,15 @@ pub(super) fn mark_route(path: &str, item: &str) -> Route {
         path: path.split('/').map(str::to_string).collect(),
         item: item.to_string(),
         peek: None,
+    }
+}
+
+/// The route that selects one frame's whole boundary — the declaration named
+/// here and everything shelved inside it.
+pub(super) fn tree_route(path: &str, item: &str) -> Route {
+    Route::FnTreeFocus {
+        path: path.split('/').map(str::to_string).collect(),
+        item: item.to_string(),
     }
 }
 
@@ -114,115 +134,201 @@ pub(super) fn peek_route(sel: &Sel, path: &str, label: &str) -> Route {
     }
 }
 
-/// What a frame on the paper is — how the marks are grouped inside the module
-/// they are written in.
+/// In what order the callees on one shelf are seated.
 ///
-/// Two thirds of what runs is a *method*, and a method's first fact is whose it
-/// is. Seating every declaration of a module in one shelf loses that: `keyword`
-/// and `at_step` and `showing` are all `VisFloor`'s, and the paper should say
-/// so. So the grouping is a reading of its own (2026-08-25, user), and it
-/// nests **inside** the module frames rather than replacing them: a module is
-/// where rust reads the code, and no grouping may overwrite that.
+/// The ground is the call tree, so a frame is a caller and its shelves are what
+/// it runs. Nothing here is a *box* around anything — a second nesting system
+/// fighting the call nesting was built once, as the retired per-type prism, and
+/// it lost. What a declaration is written in and whose method it is are read as
+/// the order its shelf seats in, and as words on its own head.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(super) enum Group {
-    /// Module frames alone: everything a module declares on one shelf.
+pub(super) enum FnOrder {
+    /// Heaviest chain first: a callee that carries a hundred declarations
+    /// under it seats before one that carries none.
     #[default]
+    Weight,
+    /// Siblings cluster by the module they are written in, so a frame reaching
+    /// across the workspace says which parts of it.
     Module,
-    /// A frame per type inside the module: a method sits with the type its
-    /// impl names, and with the trait clause it answers. A free declaration
-    /// stays on the module's own shelf, because nothing owns it.
+    /// Siblings cluster by the type or trait whose impl they are written in —
+    /// a type's methods seat together — with the free declarations clustered
+    /// ahead of them. Weight still orders inside a cluster.
     Owner,
-    /// A frame per file inside the module — where the declaration is written,
-    /// which is the grouping a reviewer reading a diff already has in hand.
-    File,
 }
 
-impl Group {
-    pub(super) const ALL: [Group; 3] = [Group::Module, Group::Owner, Group::File];
+impl FnOrder {
+    pub(super) const ALL: [FnOrder; 3] = [FnOrder::Weight, FnOrder::Module, FnOrder::Owner];
 
     pub(super) fn label(self) -> &'static str {
         match self {
-            Group::Module => "module",
-            Group::Owner => "type",
-            Group::File => "file",
+            FnOrder::Weight => "weight",
+            FnOrder::Module => "module",
+            FnOrder::Owner => "owner",
         }
     }
 
     pub(super) fn hint(self) -> &'static str {
         match self {
-            Group::Module => "one shelf per module — everything it declares, together",
-            Group::Owner => {
-                "a frame per type: a method sits with the type its impl names, \
-                 a free declaration on the module's own shelf"
+            FnOrder::Weight => "heaviest chain first on every shelf",
+            FnOrder::Module => "siblings cluster by the module they are written in",
+            FnOrder::Owner => {
+                "siblings cluster by the type whose impl they are written in, free \
+                 declarations first"
             }
-            Group::File => "a frame per file — where the declaration is written",
         }
     }
 }
 
-/// Which reading of the chart's calls is drawn, against whatever the reader
-/// has in hand.
+/// Which calls the chart draws: **the direction it reads them in.**
 ///
-/// Direction only means something **against an anchor**: one hairline is this
-/// function's call and that function's caller, so `calls` and `callers` can
-/// pick different wires only once the chart knows which mark is in focus. The
-/// anchor is never invented — the selection, the block under the cursor, or,
-/// on the resting plate, the declarations the epoch touched.
+/// A call that put a declaration where it sits is already said by the
+/// shelving, so it takes no ink at all. What is left is every other resolved
+/// call, and this reading says which way round to read them.
+///
+/// It is the data chart's `references` reading, one rung down, and it learned
+/// the same lesson (2026-08-27, user: *"I don't understand the wires rest,
+/// all, selection. I thought we should just show callers, callees, or
+/// both?"*). The stops used to be `rest · all · selection` — three amounts of
+/// ink, which is a word about the drawing rather than about the code, and the
+/// reader has to hold a rule in their head to know what any of them will
+/// show. `calls` and `callers` are the words a reviewer already has.
+///
+/// Direction only means something **against an anchor**: the same wire is one
+/// declaration's call and another's caller, so `calls` and `callers` can pick
+/// different wires only once the chart knows which mark the reader has in
+/// hand. The anchor is never invented — it is whatever is in focus:
+///
+/// - the **selection**, whenever there is one: its own wires ink in the chosen
+///   direction and stay inked;
+/// - the **diff** on the resting plate — `calls` draws what the changed
+///   declarations run, `callers` draws whose code runs them, which is the
+///   blast-radius question a review brings to this chart;
+/// - and where a workspace has neither, every wire the shelving cannot say is
+///   drawn, because a reading with nothing in focus has no direction to take.
+///
+/// Hovering a mark is a fourth thing, and it is not a direction: it inks
+/// *everything* that mark calls and everything that calls it, both ways round,
+/// because what a reader hovers a block for is what the shelving could not
+/// tell them. That ink lives in a layer of its own and never changes this one.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub(super) enum CallDir {
-    /// What the anchor's own body reaches for — the code it runs.
+pub(super) enum FnWires {
+    /// What the anchor's own body runs — its wires out. The default: the
+    /// question a reviewer brings to a change is what it reaches for.
     #[default]
     Calls,
-    /// Whose code runs the anchor.
+    /// Whose code runs the anchor — its wires in.
     Callers,
-    /// Both ways round.
+    /// Both ways round, and — with no anchor at all — the whole unthinned
+    /// family.
     Both,
 }
 
-impl CallDir {
+impl FnWires {
+    pub(super) const ALL_STOPS: [FnWires; 3] = [FnWires::Calls, FnWires::Callers, FnWires::Both];
+
     pub(super) fn label(self) -> &'static str {
         match self {
-            CallDir::Calls => "calls",
-            CallDir::Callers => "callers",
-            CallDir::Both => "both",
+            FnWires::Calls => "calls",
+            FnWires::Callers => "callers",
+            FnWires::Both => "both",
         }
     }
 
     pub(super) fn hint(self) -> &'static str {
         match self {
-            CallDir::Calls => "what the selection — or, at rest, what the diff — runs",
-            CallDir::Callers => "whose code runs the selection — or, at rest, the diff",
-            CallDir::Both => "both ways round",
+            FnWires::Calls => {
+                "what the mark in focus runs — with nothing selected, what the diff's own declarations run"
+            }
+            FnWires::Callers => {
+                "whose code runs the mark in focus — with nothing selected, whose code runs the diff's own declarations"
+            }
+            FnWires::Both => {
+                "both ways round; with nothing in focus, every call the shelving cannot say"
+            }
+        }
+    }
+
+    /// Whether this reading draws one wire anchored on `at`. `def` is the end
+    /// being leaned on — the callee — and `user` the end that leans, which is
+    /// the caller. The same shape, and the same three lines, as the data
+    /// chart's [`crate::views::data::RefDir::draws`], because it is the same
+    /// question about the other half of the language.
+    pub(super) fn draws<T: PartialEq>(self, at: &T, def: &T, user: &T) -> bool {
+        match self {
+            FnWires::Calls => user == at,
+            FnWires::Callers => def == at,
+            FnWires::Both => user == at || def == at,
         }
     }
 }
 
-/// The whole reading one build of the chart draws. The plate is not here: it
-/// moves blocks, never marks or wires, so switching it must not re-read the
-/// survey. The grouping is, because it changes what a frame *is*.
+/// The frames the reviewer folded by hand, each named the way a fold has to
+/// survive the next build: the file a declaration is written in, then the label
+/// its own URL selects it by. A mark id is an index into one build and says
+/// nothing across two.
+pub(super) type FnFolds = std::collections::HashSet<(String, String)>;
+
+/// One frame's name in a [`FnFolds`] set — the same pair `/fn/mark/:..path?item=`
+/// carries, so a fold and a selection say one word for one declaration.
+pub(super) fn fold_key(path: &str, label: &str) -> (String, String) {
+    (path.to_string(), label.to_string())
+}
+
+/// The whole reading one build of the chart draws. The wires reading is not
+/// here: it inks lines, never marks or seats, so switching it must not re-read
+/// the survey. The order is, because it decides where every block sits — and so
+/// are the folds, because a fold decides what is on the paper at all.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub(super) struct FnReading {
-    pub(super) calls: CallDir,
     pub(super) vis_floor: VisFloor,
-    pub(super) group: Group,
+    pub(super) order: FnOrder,
+    /// The frames whose contents are off the paper.
+    pub(super) folds: FnFolds,
+    /// The folds the paper was **packed** around — a subset of `folds`, and
+    /// usually empty.
+    ///
+    /// A fold by hand does not re-lay the sheet (2026-08-27, user: *"when a
+    /// thing is folded, try not to re-layout? because it just disrupts the
+    /// visual anchor."*). Folding elides in place: what was inside the frame
+    /// goes off the paper, the frame says how much in words, and its footprint
+    /// stays reserved, so no sibling, ancestor or wire moves by a pixel. The
+    /// reviewer's eye stays where they left it, which is the whole reason they
+    /// folded something next to it.
+    ///
+    /// The compact packing still happens — but only where the paper is being
+    /// laid again regardless, which means an `order` or `visibility` change, and
+    /// a session's first build. Then, and only then, this set catches up with
+    /// `folds` and the packer gets to skip what they hide. Opening a fold the
+    /// packer *did* skip has to make room for it, so that one re-lays too, and
+    /// the fold leaves both sets at once.
+    pub(super) packed: FnFolds,
 }
 
 /// This altitude's own review-session state. Provided by the app shell, which
 /// outlives every route change, so stepping between selections — or out to
-/// another rung and back — never resets a reading.
+/// another rung and back — never resets a reading or reopens a fold.
 #[derive(Clone, Copy)]
 pub(crate) struct FnState {
-    pub(super) calls: Signal<CallDir>,
+    pub(super) wires: Signal<FnWires>,
     pub(super) vis_floor: Signal<VisFloor>,
-    pub(super) group: Signal<Group>,
+    pub(super) order: Signal<FnOrder>,
+    /// The frames the reviewer folded by hand on this chart. Session state,
+    /// kept like the camera and never in the URL: a fold is where the reviewer
+    /// is looking, not what they are looking at.
+    pub(super) folds: Signal<FnFolds>,
+    /// Which of those folds the packer was allowed to skip — see
+    /// [`FnReading::packed`].
+    pub(super) packed: Signal<FnFolds>,
 }
 
 impl FnState {
     pub(crate) fn new() -> Self {
         Self {
-            calls: Signal::new(CallDir::default()),
+            wires: Signal::new(FnWires::default()),
             vis_floor: Signal::new(VisFloor::default()),
-            group: Signal::new(Group::default()),
+            order: Signal::new(FnOrder::default()),
+            folds: Signal::new(FnFolds::new()),
+            packed: Signal::new(FnFolds::new()),
         }
     }
 
@@ -231,9 +337,53 @@ impl FnState {
     /// that control.
     pub(super) fn reading(&self) -> FnReading {
         FnReading {
-            calls: *self.calls.read(),
             vis_floor: *self.vis_floor.read(),
-            group: *self.group.read(),
+            order: *self.order.read(),
+            folds: self.folds.read().clone(),
+            packed: self.packed.read().clone(),
+        }
+    }
+
+    /// The paper is being laid again anyway, so the packer may as well pack
+    /// around every fold that is open right now. Called when the `order` or the
+    /// `visibility` reading moves — the two controls that move every block on
+    /// the sheet — and never for a fold by hand.
+    pub(super) fn repack(&self) {
+        // **Peeked, never read.** This runs inside an effect keyed on the two
+        // readings that lay the paper again; a tracked read of the fold set here
+        // would subscribe that effect to the fold set, and every fold by hand
+        // would immediately pack itself away — which is the one thing the
+        // in-place elision exists to prevent. (It did, until it was measured.)
+        let mut packed = self.packed;
+        let folds = self.folds.peek().clone();
+        if *packed.peek() != folds {
+            packed.set(folds);
+        }
+    }
+
+    /// One frame folded or opened by hand. Folding elides in place; opening a
+    /// frame the packer skipped has to give its contents room again, which is
+    /// the one fold gesture that re-lays the sheet.
+    pub(super) fn fold(&self, keys: Vec<(String, String)>, shut: bool) {
+        let (mut folds, mut packed) = (self.folds, self.packed);
+        let mut open = folds.peek().clone();
+        let mut skipped = packed.peek().clone();
+        let mut moved = false;
+        for key in keys {
+            match shut {
+                true => moved |= open.insert(key),
+                false => {
+                    moved |= open.remove(&key);
+                    moved |= skipped.remove(&key);
+                }
+            }
+        }
+        if !moved {
+            return;
+        }
+        folds.set(open);
+        if *packed.peek() != skipped {
+            packed.set(skipped);
         }
     }
 }
@@ -250,8 +400,10 @@ pub(crate) fn FnOverview() -> Element {
     rsx! {}
 }
 
-/// `/fn/mod/:..module` — one module boundary selected. There is no sheet: a
-/// module is a place on the paper, and the paper is already saying it.
+/// `/fn/mod/:..module` — one module selected. The chart lights every mark
+/// written in it, wherever the call tree seated them, and recedes the rest.
+/// There is no sheet: the reading is the paper's own, and every lit head
+/// already says its name.
 #[component]
 pub(crate) fn FnModFocus(module: Vec<String>) -> Element {
     let _ = module;
@@ -269,6 +421,28 @@ pub(crate) fn FnBandFocus(band: u32) -> Element {
     rsx! {
         div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-auto z-10 flex items-end sm:inset-x-auto sm:bottom-0 sm:right-0 sm:top-14 sm:items-start sm:p-3 sm:pt-0",
             FnBandSheet { key: "{band}", graph, band }
+        }
+    }
+}
+
+/// `/fn/tree/:..path?:item` — one frame's whole boundary selected. Containment
+/// is the call, so the box is a subtree: everything shelved inside keeps full
+/// ink, everything one call across the line reads a step behind, and the sheet
+/// lists what crosses the boundary in each direction.
+#[component]
+pub(crate) fn FnTreeFocus(path: Vec<String>, item: String) -> Element {
+    let Some(graph) = crate::views::survey::use_survey() else {
+        return rsx! {};
+    };
+    let joined = path.join("/");
+    rsx! {
+        div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-auto z-10 flex items-end sm:inset-x-auto sm:bottom-0 sm:right-0 sm:top-14 sm:items-start sm:p-3 sm:pt-0",
+            FnTreeSheet {
+                key: "{joined}|{item}",
+                graph,
+                path: joined,
+                item,
+            }
         }
     }
 }
@@ -410,6 +584,12 @@ mod tests {
             "/fn/mod/slope-cli/views"
         );
         assert_eq!(band_route(2).to_string(), "/fn/depth/2");
+        // A boundary is a focus of its own: the same pair of facts, read as the
+        // whole subtree the box holds rather than as the one declaration.
+        assert_eq!(
+            tree_route("src/views/func/model.rs", "FnModel::build").to_string(),
+            "/fn/tree/src/views/func/model.rs?item=FnModel::build"
+        );
         let sel = ("src/main.rs".to_string(), "main".to_string());
         assert_eq!(
             peek_route(&sel, "src/analyze/code.rs", "survey").to_string(),

@@ -34,16 +34,34 @@ pub(super) fn history_back() {
     }
 }
 
+/// And one step forward, for the same reason.
+pub(super) fn history_forward() {
+    #[cfg(target_arch = "wasm32")]
+    if let Some(window) = web_sys::window()
+        && let Ok(history) = window.history()
+    {
+        let _ = history.forward();
+    }
+}
+
 /// Arrow keys retrace the review: every focus is a URL, so left and right
 /// are the browser's back and forward on every route. Acts entirely in JS
 /// and installs once — the guard keeps remounts from stacking listeners.
 /// Typing fields keep their caret keys.
+///
+/// The function altitude is the one exception, and it owns the whole arrow
+/// grammar there rather than sharing it: `↓` and `↑` walk the seating, down
+/// into a callee and up to the caller a block seats in. `←` and `→` still mean
+/// the trail there — the same thing they mean here, whatever is selected — but
+/// that chart's own listener is what answers them, because two listeners both
+/// acting on one press would step twice.
 const NAV_KEYS_JS: &str = r#"
 if (!window.__slopeNavKeys) {
     window.__slopeNavKeys = (e) => {
         if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
         const t = e.target, tag = t && t.tagName;
         if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || (t && t.isContentEditable)) return;
+        if (location.pathname.startsWith('/fn')) return;
         if (e.key === 'ArrowLeft') { e.preventDefault(); history.back(); }
         else if (e.key === 'ArrowRight') { e.preventDefault(); history.forward(); }
     };
@@ -85,6 +103,7 @@ pub(crate) fn AppShell() -> Element {
         }
         Route::FnOverview {}
         | Route::FnFocus { .. }
+        | Route::FnTreeFocus { .. }
         | Route::FnModFocus { .. }
         | Route::FnBandFocus { .. } => Some(Rung::Fns),
         _ => None,

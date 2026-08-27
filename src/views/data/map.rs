@@ -63,6 +63,10 @@ const MARK_MIN_W: f64 = 152.0;
 const MARK_MAX_W: f64 = 300.0;
 const ROW_MIN_W: f64 = 132.0;
 const ROW_FOLD_H: f64 = 22.0;
+/// A folded holder's counted row, and the fold mark's own room at the end of a
+/// head row.
+const PACKED_H: f64 = 13.0;
+const FOLD_MARK_W: f64 = 15.0;
 const WRAP_SLACK: f64 = 1.12;
 /// The kids band: the hairline rule under the rows (margin + border), the
 /// clear paper inside it, and the gap between two nested blocks.
@@ -142,11 +146,19 @@ struct MeasuredBlock {
     ty: String,
     ty_target: Held,
     /// The blocks nested inside this one, measured, with each one's offset
-    /// from the kids shelf's origin.
+    /// from the kids shelf's origin. Empty where the reviewer folded the shelf.
     kids: Vec<MeasuredBlock>,
     kid_at: Vec<(f64, f64)>,
     /// The shelf's own height, kids and gaps included.
     kids_h: f64,
+    /// State is shelved inside this block: it has a shelf to fold, so its head
+    /// draws the fold mark. True whether or not the shelf is folded.
+    shelves: bool,
+    /// The reviewer folded the shelf. Its own quoted rows are untouched; what
+    /// stood under the rule is one counted row now.
+    folded: bool,
+    /// What the folded shelf is holding back, in words.
+    packed: String,
     /// From the block's top edge to where the kids band begins: the header
     /// and every quoted row above the rule.
     core_h: f64,
@@ -191,6 +203,11 @@ impl DataNodeData {
         }
     }
 }
+
+/// Where a mark a fold hides is read instead, and the folds standing in the way
+/// of it: the block that stands for it on the paper, and the keys a reveal opens
+/// outermost first.
+type FoldedAway = (Anchor, Vec<(String, String)>);
 
 /// A frame, placed, with its label and the two gestures its border answers.
 #[derive(Clone, PartialEq)]
@@ -246,6 +263,13 @@ struct DataDrawing {
     rects: HashMap<Anchor, Placed>,
     /// The URL's (path, item) key for every drawn mark.
     locate: HashMap<(String, String), Anchor>,
+    /// Every mark a folded holder has off the paper, by the same key: the block
+    /// standing for it, and the folds a reveal must open to put it back. A
+    /// selection, a search hit or a quoted row's bold run may all name one, and
+    /// a selection the reader cannot see is not a focus.
+    folded_away: HashMap<(String, String), FoldedAway>,
+    /// Which block stands for each hidden mark, for the reading's own ink.
+    packs: HashMap<u32, u32>,
     frame: Option<Rect>,
     dirty: bool,
 }
@@ -363,6 +387,34 @@ impl DataKin {
             down: std::collections::HashSet::new(),
             near,
         }
+    }
+
+    /// Where a folded holder hides part of what this reading lights, the block
+    /// that stands for it carries the ink. Recede acts on a block's own paint
+    /// and never on its box, so a folded holder whose state is in the chain
+    /// reads at full pressure: the reviewer has to see that the chain runs
+    /// through it.
+    fn carry(mut self, packs: &HashMap<u32, u32>) -> Self {
+        if packs.is_empty() {
+            return self;
+        }
+        let stand_for = |set: &mut std::collections::HashSet<Anchor>| {
+            let reps: Vec<Anchor> = set
+                .iter()
+                .filter_map(|a| match a {
+                    Anchor::Mark(id) => packs.get(id).map(|&rep| Anchor::Mark(rep)),
+                    _ => None,
+                })
+                .collect();
+            set.extend(reps);
+        };
+        stand_for(&mut self.up);
+        stand_for(&mut self.down);
+        stand_for(&mut self.near);
+        if let Some(home) = self.home.as_mut() {
+            stand_for(&mut home.inside);
+        }
+        self
     }
 
     /// The module reading, when this is one: the chosen frame and everything
@@ -510,13 +562,21 @@ impl MeasuredBlock {
             _ => mark.rows.fields.len() + mark.rows.variants.len(),
         };
         let (open, close) = mark.head.kind.brackets(body_rows);
+        let shelves = mark.seat.shelves;
+        let folded = mark.seat.folded;
+        let packed = match folded {
+            true => format!("+ {} inside", mark.seat.packed),
+            false => String::new(),
+        };
         let mut widest = text_w(&head, 10.5)
             + if letter.is_some() { 12.0 } else { 0.0 }
             + if open.is_empty() {
                 0.0
             } else {
                 text_w(open, 10.5) + 4.0
-            };
+            }
+            // The fold mark's own room at the end of the head row.
+            + if shelves { FOLD_MARK_W } else { 0.0 };
         let wrapping = MARK_MAX_W - PAD_X;
         for row in &mark.rows.fields {
             widest = widest.max((text_w(&row.written(), 10.0) + ROW_INDENT).min(wrapping));
@@ -528,6 +588,9 @@ impl MeasuredBlock {
             // Browsers round each glyph up at this size; measured with the
             // font's exact advance the last characters clip. Carry slack.
             widest = widest.max(text_w(fold, 9.0) * META_SLACK);
+        }
+        if folded {
+            widest = widest.max(text_w(&packed, 9.5) * META_SLACK);
         }
         if !mark.rows.ty.is_empty() {
             widest = widest.max((text_w(&mark.rows.ty, 9.5) + ROW_INDENT).min(wrapping));
@@ -549,10 +612,17 @@ impl MeasuredBlock {
             + mark.rows.fields.len() as f64 * ROW_H
             + mark.rows.variants.len() as f64 * ROW_H
             + if close.is_empty() { 0.0 } else { ROW_H };
-        let kids_band = if kids.is_empty() {
-            0.0
-        } else {
-            KIDS_RULE + KIDS_PAD + kids_h + KIDS_PAD
+        // The nested shelf's band. A holder folded **in place** keeps the whole
+        // band its shelf had, because that reserved room is what stops the
+        // skyline closing up and moving every block the reader was looking at
+        // (2026-08-27, user). The counted row stands inside that room, where the
+        // shelf stood. Only a fold the packer was allowed to skip — where the
+        // paper was being laid again anyway — shrinks to the counted row's own
+        // band, and there its kids never reached this measure at all.
+        let kids_band = match (folded, kids.is_empty()) {
+            (true, true) => KIDS_RULE + KIDS_PAD + PACKED_H + KIDS_PAD,
+            (_, true) => 0.0,
+            (_, false) => KIDS_RULE + KIDS_PAD + kids_h + KIDS_PAD,
         };
         let fold_block = if folds.is_empty() {
             0.0
@@ -579,6 +649,9 @@ impl MeasuredBlock {
             kids,
             kid_at,
             kids_h,
+            shelves,
+            folded,
+            packed,
             core_h,
             folds,
             counts: mark.count_words(),
@@ -626,6 +699,12 @@ impl MeasuredBlock {
                 h: self.size.1,
             },
         );
+        // What a fold elided is measured — the band is reserved — but it is not
+        // on the paper, so it has no box a camera, a selection or a wire may
+        // land on.
+        if self.folded {
+            return;
+        }
         let band = y + self.core_h + KIDS_RULE + KIDS_PAD;
         for (kid, (dx, dy)) in self.kids.iter().zip(&self.kid_at) {
             kid.abs_rects(x + KID_X + dx, band + dy, out);
@@ -635,6 +714,9 @@ impl MeasuredBlock {
     /// Which frame this view and everything nested in it are drawn inside.
     fn frames_of(&self, frame: u32, out: &mut HashMap<Anchor, u32>) {
         out.insert(Anchor::Mark(self.id), frame);
+        if self.folded {
+            return;
+        }
         for kid in &self.kids {
             kid.frames_of(frame, out);
         }
@@ -646,6 +728,9 @@ impl MeasuredBlock {
             (self.path.clone(), self.label.clone()),
             Anchor::Mark(self.id),
         );
+        if self.folded {
+            return;
+        }
         for kid in &self.kids {
             kid.keys_of(out);
         }
@@ -787,15 +872,38 @@ impl From<&DataModel> for DataDrawing {
             })
             .collect();
 
+        // Every end read through the folds. A wire whose far end a folded holder
+        // hides is **re-anchored to that holder's block** — the block stands for
+        // the state it holds — rather than cut, which is the same answer this
+        // chart already gives a folded module, whose edges land on its counted
+        // row. The model's own edges keep their real ends: only the paper reads
+        // through this.
+        let shown = |a: Anchor| match a {
+            Anchor::Mark(id) => Anchor::Mark(model.shown(id)),
+            row => row,
+        };
+
         // The arrowhead rests on the holder, so the wire runs held → holder.
+        let mut drawn_holds: std::collections::HashSet<String> = std::collections::HashSet::new();
         let holds: Vec<WireView> = model
             .holds
             .iter()
             .filter_map(|hold| {
-                let (a, b) = (
-                    rects.get(&hold.held).copied()?,
-                    rects.get(&hold.holder).copied()?,
+                let (held, holder) = (shown(hold.held), shown(hold.holder));
+                // Both ends inside one fold: the block is the whole of what the
+                // reader can see, and a line from a block to itself says
+                // nothing.
+                if held == holder {
+                    return None;
+                }
+                let key = format!(
+                    "{:?}>{:?}:{:?}:{}:{:?}",
+                    held, holder, hold.kind, hold.via, hold.event
                 );
+                if !drawn_holds.insert(key.clone()) {
+                    return None;
+                }
+                let (a, b) = (rects.get(&held).copied()?, rects.get(&holder).copied()?);
                 let (from, to) = a.tie_ends(b);
                 let event_word = match hold.event {
                     Some(HoldEvent::Added) => Some("added"),
@@ -808,11 +916,11 @@ impl From<&DataModel> for DataDrawing {
                     None => (!hold.via.is_empty()).then(|| hold.via.clone()),
                 };
                 Some(WireView {
-                    key: hold.key(),
+                    key,
                     from,
                     to,
-                    a: hold.held,
-                    b: hold.holder,
+                    a: held,
+                    b: holder,
                     label,
                     width: hold.kind.width(),
                     rest: hold.rest,
@@ -828,37 +936,62 @@ impl From<&DataModel> for DataDrawing {
             })
             .collect();
 
-        let ties: Vec<WireView> = model
-            .ties
-            .iter()
-            .filter_map(|tie| {
-                let (a, b) = (
-                    rects.get(&tie.def).copied()?,
-                    rects.get(&tie.user).copied()?,
-                );
-                let (from, to) = a.tie_ends(b);
-                Some(WireView {
-                    key: tie.key(),
-                    from,
-                    to,
-                    a: tie.def,
-                    b: tie.user,
-                    label: tie.labeled.then(|| tie.count.to_string()),
-                    width: tie_width(tie.count),
-                    rest: tie.rest,
-                    class: "is-ref",
-                    event: "",
-                    weight: tie.count,
-                    bundle: false,
-                })
-            })
-            .collect();
+        // The dashed family, the same way round — and two references a fold
+        // gathered onto one line carry their counts with them, so the line still
+        // says what it carries.
+        let mut ties: Vec<WireView> = Vec::with_capacity(model.ties.len());
+        let mut at_pair: HashMap<(Anchor, Anchor), usize> = HashMap::new();
+        for tie in &model.ties {
+            let (def, user) = (shown(tie.def), shown(tie.user));
+            if def == user {
+                continue;
+            }
+            if let Some(&at) = at_pair.get(&(def, user)) {
+                let wire: &mut WireView = &mut ties[at];
+                wire.weight += tie.count;
+                wire.rest |= tie.rest;
+                wire.label = wire.label.as_ref().map(|_| wire.weight.to_string());
+                wire.width = tie_width(wire.weight);
+                continue;
+            }
+            let (Some(a), Some(b)) = (rects.get(&def).copied(), rects.get(&user).copied()) else {
+                continue;
+            };
+            let (from, to) = a.tie_ends(b);
+            at_pair.insert((def, user), ties.len());
+            ties.push(WireView {
+                key: format!("{def:?}~{user:?}"),
+                from,
+                to,
+                a: def,
+                b: user,
+                label: tie.labeled.then(|| tie.count.to_string()),
+                width: tie_width(tie.count),
+                rest: tie.rest,
+                class: "is-ref",
+                event: "",
+                weight: tie.count,
+                bundle: false,
+            });
+        }
 
         let frame = Rect::bounds(nodes.iter().map(|n| n.rect())).or_else(|| {
             frames
                 .first()
                 .map(|f| Rect::new(f.at.x, f.at.y, f.at.w, f.at.h))
         });
+
+        let folded_away = model
+            .marks
+            .iter()
+            .filter(|m| model.hidden(m.id))
+            .map(|m| {
+                (
+                    (m.head.path.clone(), m.head.label.clone()),
+                    (Anchor::Mark(model.shown(m.id)), model.reveal(m.id)),
+                )
+            })
+            .collect();
 
         DataDrawing {
             nodes,
@@ -869,6 +1002,8 @@ impl From<&DataModel> for DataDrawing {
             homes,
             rects,
             locate,
+            folded_away,
+            packs: model.packs.clone(),
             frame,
             dirty: model.marks.iter().any(|m| m.letter().is_some()),
         }
@@ -1040,6 +1175,29 @@ fn DataPlate(
     let push = to.clone();
     let pressed = to.clone();
     let mut hot = hot;
+    // The shelf fold: its own mark on the head row, never the selection's side
+    // effect, and never the block's own quoted rows — a quotation missing its
+    // fields is a misquotation, so only the state shelved under the rule folds.
+    let state = use_data();
+    let key = crate::views::data::model::block_key(&view.path, &view.label);
+    let shut_key = key.clone();
+    let was_folded = view.folded;
+    // Written through the session state, which knows the difference between
+    // eliding a shelf in place — what a fold by hand does, moving nothing — and
+    // giving a packed-away shelf its room back, which is the one fold gesture
+    // that lays the paper again.
+    let shut = move |e: Event<MouseData>| {
+        e.prevent_default();
+        e.stop_propagation();
+        state.fold_block(key.clone(), !was_folded);
+    };
+    let fold_words = match view.folded {
+        true => format!(
+            "the state {} owns is folded — {} · click to put it back",
+            view.name, view.packed
+        ),
+        false => format!("fold the state {} owns to one counted row", view.name),
+    };
     rsx! {
         div {
             class: "data-mark",
@@ -1090,6 +1248,17 @@ fn DataPlate(
                             "{view.open}"
                         }
                     }
+                    // The one gesture that re-lays the paper is a mark of its
+                    // own, the way a module's fold is on its border.
+                    if view.shelves {
+                        button {
+                            class: "dm-shut",
+                            "aria-label": "{fold_words}",
+                            title: "{fold_words}",
+                            onclick: shut,
+                            if view.folded { "+" } else { "−" }
+                        }
+                    }
                 }
                 if !view.ty.is_empty() {
                     p { class: "dm-ty",
@@ -1130,9 +1299,27 @@ fn DataPlate(
                     p { class: "dm-close", "{view.close}" }
                 }
             }
+            // Folded, the shelf is one counted row under the same rule — where
+            // the state stood, and saying how much of it. Nothing is silently
+            // cut, and the row puts it back.
+            if view.folded {
+                div { class: "dm-kids",
+                    button {
+                        class: "dm-packed",
+                        "aria-label": "{fold_words}",
+                        title: "{fold_words}",
+                        onclick: move |e: Event<MouseData>| {
+                            e.prevent_default();
+                            e.stop_propagation();
+                            state.fold_block(shut_key.clone(), false);
+                        },
+                        "{view.packed}"
+                    }
+                }
+            }
             // The state this block owns, nested under a hairline rule: the
             // paper's own nesting is the ownership, so no line restates it.
-            if !view.kids.is_empty() {
+            if !view.folded && !view.kids.is_empty() {
                 div { class: "dm-kids", style: "height: {KIDS_PAD + view.kids_h + KIDS_PAD}px;",
                     for (i , kid) in view.kids.iter().enumerate() {
                         div {
@@ -1695,28 +1882,37 @@ pub(super) fn DataChart(
                     }
                     view.kids.iter().find_map(|kid| find(kid, path, label))
                 }
-                let id = drawing.nodes.iter().find_map(|n| match &n.data {
-                    DataNodeData::Mark(m) => find(m, &path, &label),
-                    _ => None,
-                })?;
-                Some(DataKin::read(
-                    Anchor::Mark(id),
-                    *data.ref_dir.read(),
-                    &drawing.pairs,
-                    &tie_pairs,
-                ))
+                // A selection a fold has off the paper is read on the block that
+                // stands for it: the holder stands for the state it holds, so a
+                // reader who folds the block their selection sits in still sees
+                // where the selection went.
+                let at = drawing
+                    .nodes
+                    .iter()
+                    .find_map(|n| match &n.data {
+                        DataNodeData::Mark(m) => find(m, &path, &label).map(Anchor::Mark),
+                        _ => None,
+                    })
+                    .or_else(|| drawing.folded_away.get(&(path, label)).map(|(at, _)| *at))?;
+                Some(
+                    DataKin::read(at, *data.ref_dir.read(), &drawing.pairs, &tie_pairs)
+                        .carry(&drawing.packs),
+                )
             }
             DataSel::Mod(key) => {
                 let frame = drawing.frames.iter().find(|f| f.key == key)?.id;
                 let hold_pairs: Vec<(Anchor, Anchor)> = drawing.pairs.clone();
-                Some(DataKin::read_mod(
-                    frame,
-                    *data.ref_dir.read(),
-                    &drawing.frames,
-                    &drawing.homes,
-                    &hold_pairs,
-                    &tie_pairs,
-                ))
+                Some(
+                    DataKin::read_mod(
+                        frame,
+                        *data.ref_dir.read(),
+                        &drawing.frames,
+                        &drawing.homes,
+                        &hold_pairs,
+                        &tie_pairs,
+                    )
+                    .carry(&drawing.packs),
+                )
             }
         }
     }));
@@ -1810,6 +2006,42 @@ pub(super) fn DataChart(
         }
     });
 
+    // A selection must never be invisible: a selection URL, a search hit or a
+    // quoted row's bold run naming state a folded holder has off the paper
+    // opens the folds on the way to it first. The drawing is peeked, never
+    // read, so this fires when the *selection* moves and not when a fold does:
+    // folding the holder a selection sits in is the reader's own move, and the
+    // block that folded stands for it.
+    // The two controls that move every block on the sheet. The paper is being
+    // laid again for them anyway, so this is where the skyline is allowed to
+    // catch up with the holder folds and close up over what they hide — the
+    // reader has no anchor to lose, because nothing is where it was.
+    use_effect(use_reactive(
+        (&*data.ref_dir.read(), &*data.vis_floor.read()),
+        move |_| data.repack(),
+    ));
+
+    let revealed: Signal<u32> = use_signal(|| 0);
+    use_effect(use_reactive((&sel,), move |(sel,)| {
+        let Some(DataSel::Mark(path, label)) = sel else {
+            return;
+        };
+        let open = match chart.peek().folded_away.get(&(path, label)) {
+            Some((_, open)) if !open.is_empty() => open.clone(),
+            _ => return,
+        };
+        // A reveal opens the folds on the way in through the same door a hand
+        // does: a shelf the skyline had packed away needs its room back, so
+        // opening it lays the paper again — which is why the camera answers a
+        // reveal and nothing else.
+        for key in open {
+            data.fold_block(key, false);
+        }
+        let mut revealed = revealed;
+        let now = *revealed.peek();
+        revealed.set(now + 1);
+    }));
+
     // The camera glides to a selection it cannot show: off the glass, or
     // below reading zoom. A selection already legible moves nothing — the
     // Kept-Ground rule holds everywhere the reader can actually read.
@@ -1818,6 +2050,10 @@ pub(super) fn DataChart(
         if !core_live() {
             return;
         }
+        // A reveal is the one re-layout the camera answers: the block the reader
+        // asked for was inside a fold, and now it is on the paper again. Every
+        // other fold leaves the camera exactly where it was.
+        let _ = revealed();
         let Some(DataSel::Mark(path, label)) = sel else {
             return;
         };
@@ -2063,7 +2299,10 @@ mod tests {
             state: MarkState::default(),
             seat: MarkSeat {
                 tier: Tier::Root,
+                shelves: !kids.is_empty(),
                 kids,
+                folded: false,
+                packed: 0,
                 held_by: 0,
             },
             undrawn: Undrawn::default(),

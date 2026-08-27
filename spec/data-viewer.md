@@ -138,8 +138,8 @@ silently became load-bearing. Visitor mode: **Operate**.
   in the search widens the reading to the stop that draws it; a URL kept from
   a wider reading opens a sheet that names the rung and offers `draw it`.
 - **No budget fold.** Every datum the reading admits is drawn. The only
-  counted rows are a hand-folded module's `+ n items` and the vocabulary
-  fan-in fold.
+  counted rows are a hand-folded module's `+ n items`, a hand-folded holder's
+  `+ n inside`, and the vocabulary fan-in fold.
 - **Selection** is a URL and a reading: blast radius walks every structural
   relation — nesting included — upward; uses neighbours read a step behind;
   strangers recede. Receding acts on a block's *own paint* (frame + text),
@@ -152,6 +152,21 @@ silently became load-bearing. Visitor mode: **Operate**.
   package name and not rust-analyzer's crate display name, so a crate is
   called the same thing here and one rung up and the dep chart's focus
   panel can descend into a member's frame with "its data ↓".
+- **A holder folds its shelf** (2026-08-26, user): the same `−` / `+` mark at
+  the end of a block's head row, acting on **the state nested inside it** and
+  nothing else. The hairline rule stays, the shelf becomes one counted row —
+  `+ 6 inside`, itself the way back — and the block's own fields and variants
+  never fold, because a block quotes its whole declaration and a quotation
+  missing its fields is a misquotation. `held by n types` is a different fact
+  (a fan-in the chart folded, not state a reader closed) and neither hides the
+  other. Every edge into the state it swallowed **re-anchors to the holder's own
+  block**, the way a folded module's edges land on its counted row, so nothing
+  dangles; two references gathered onto one line gather their counts too. A
+  selection URL, a search hit or a quoted row's bold run naming folded-away
+  state **opens the folds on the way in first**, outermost first. Keyed by
+  (file, label) — the same pair the selection URL carries — so a fold survives
+  the next build. See DESIGN.md's Hand-Fold Rule, which this, the module fold
+  and the function chart's frame fold all keep.
 - **The structural diff** rides along in the shared grammar: `A`/`M`/`D`
   letters, flare frames, ghosts quoted from the base standing in their frame,
   `+`/struck rows woven in place, added/removed holding edges in flare with
@@ -312,8 +327,27 @@ do?*
 - Blocks are measured in code around their measured kids (post-order); the
   frame layout is `data::layout`, with every top-level block a leaf seat. Nested rects are derived from the parent's placement, so wires can
   land on state drawn three layers deep.
-- `DataState` (the folds and the `references` reading) and `DataCamera` live
-  on the app shell; `DataSurvey` — the survey gate that fetches
+- The fold sets are the reading, not the drawing: `DataReading::folds` (module
+  keys) and `DataReading::blocks` (holder keys) both travel into
+  `DataModel::build`, which fills `DataModel::packs`, the map from each hidden
+  mark to the holder standing for it. The model's own edges keep their real ends;
+  only `DataDrawing` reads them through `packs`, which is what makes the sheets
+  and the blast radius truthful while the paper re-anchors.
+- **A holder fold elides in place** (2026-08-27, user). A folded holder *keeps*
+  its `seat.kids`, so the post-order measure still measures them and the block
+  still reserves the band its shelf filled — the skyline does not close up and no
+  other block on the sheet moves. What leaves them off the paper is the drawing:
+  the plate renders the counted row instead of the kid markup, and `abs_rects`,
+  `keys_of` and `frames_of` stop at a folded holder, so nothing hidden has a box
+  a camera, a selection or a wire can land on. Only `DataReading::packed_blocks`
+  — the subset the skyline was allowed to skip, widened by `DataState::repack` on
+  a `references` or `visibility` change and never by a fold — empties `seat.kids`
+  and lets the paper close up. `DataState::fold_block` is the only writer of a
+  hand fold, and opening a packed-away holder leaves both sets at once, because
+  its state needs its room back. The function chart keeps the same two sets for
+  its frame folds.
+- `DataState` (the two fold sets and the `references` reading) and `DataCamera`
+  live on the app shell; `DataSurvey` — the survey gate that fetches
   `code_graph()` and holds its loading and failure plates — is mounted there
   too, above the routes, so a selection change never re-runs rust-analyzer.
 

@@ -33,7 +33,7 @@ use crate::graph::data::{CodeGraph, Vis};
 use crate::views::chrome::plural;
 use crate::views::data::chrome::{DataCartouche, DataSearch, DataSheet};
 use crate::views::data::map::DataChart;
-use crate::views::data::model::{DataModel, Folds};
+use crate::views::data::model::{BlockFolds, DataModel, Folds};
 use crate::views::data::quote::Quotation;
 use crate::views::survey::use_survey;
 
@@ -264,6 +264,21 @@ pub(super) struct DataReading {
     pub(super) ref_dir: RefDir,
     pub(super) vis_floor: VisFloor,
     pub(super) folds: Folds,
+    /// The holder blocks whose nested shelf the reviewer folded by hand. A
+    /// second fold at a second altitude of the same paper: the module boundary
+    /// folds a whole frame, this folds the state one block owns.
+    pub(super) blocks: BlockFolds,
+    /// The holder folds the skyline was **packed** around — a subset of
+    /// `blocks`, and usually empty.
+    ///
+    /// A holder fold by hand does not re-lay the sheet (2026-08-27, user): it
+    /// elides in place, keeping the band its shelf had, so no block the reader
+    /// was looking at moves. The skyline only closes up over a fold where the
+    /// paper is being laid again anyway — a `references` or `visibility` change,
+    /// or the session's first build — and this is the set that says which those
+    /// were. The same rule, and the same two sets, as the function chart's
+    /// frame folds.
+    pub(super) packed_blocks: BlockFolds,
 }
 
 /// The data chart's own review-session state. Both stores are this altitude's:
@@ -276,6 +291,11 @@ pub(super) struct DataReading {
 pub(super) struct DataState {
     /// The modules the reviewer folded by hand on this chart.
     pub(super) folds: Signal<Folds>,
+    /// The holder blocks whose nested shelf the reviewer folded by hand.
+    pub(super) blocks: Signal<BlockFolds>,
+    /// Which of those folds the skyline was packed around — see
+    /// [`DataReading::packed_blocks`].
+    pub(super) packed_blocks: Signal<BlockFolds>,
     /// Which direction the chart's body references are read in.
     pub(super) ref_dir: Signal<RefDir>,
     /// How narrow a declaration may be and still be drawn.
@@ -286,6 +306,8 @@ impl DataState {
     pub(super) fn new() -> Self {
         Self {
             folds: Signal::new(Folds::new()),
+            blocks: Signal::new(BlockFolds::new()),
+            packed_blocks: Signal::new(BlockFolds::new()),
             ref_dir: Signal::new(RefDir::default()),
             vis_floor: Signal::new(VisFloor::default()),
         }
@@ -299,6 +321,42 @@ impl DataState {
             ref_dir: *self.ref_dir.read(),
             vis_floor: *self.vis_floor.read(),
             folds: self.folds.read().clone(),
+            blocks: self.blocks.read().clone(),
+            packed_blocks: self.packed_blocks.read().clone(),
+        }
+    }
+
+    /// The paper is being laid again anyway, so the skyline may as well pack
+    /// around every holder fold that is open right now. Called when the
+    /// `references` or `visibility` reading moves, and never for a fold by hand.
+    pub(super) fn repack(&self) {
+        // **Peeked, never read.** This runs inside an effect keyed on the two
+        // readings that lay the paper again; a tracked read of the fold set here
+        // would subscribe that effect to the fold set, and every fold by hand
+        // would immediately pack itself away — which is the one thing the
+        // in-place elision exists to prevent. (It did, until it was measured.)
+        let mut packed = self.packed_blocks;
+        let blocks = self.blocks.peek().clone();
+        if *packed.peek() != blocks {
+            packed.set(blocks);
+        }
+    }
+
+    /// One holder folded or opened by hand. Folding elides in place; opening a
+    /// holder the skyline packed away has to give its state room again, which is
+    /// the one fold gesture that re-lays the sheet.
+    pub(super) fn fold_block(&self, key: (String, String), shut: bool) {
+        let (mut blocks, mut packed) = (self.blocks, self.packed_blocks);
+        match shut {
+            true => {
+                blocks.with_mut(|set| set.insert(key));
+            }
+            false => {
+                blocks.with_mut(|set| set.remove(&key));
+                if packed.peek().contains(&key) {
+                    packed.with_mut(|set| set.remove(&key));
+                }
+            }
         }
     }
 }

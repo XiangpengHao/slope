@@ -1,29 +1,42 @@
-//! Where the function chart's blocks sit: the **section**.
+//! Where the function chart's blocks sit: the **shelved section**.
 //!
-//! Bands of call depth run the full width of the sheet, captioned at the left
-//! margin the way the dependency chart's rings caption their hops, and prisms
-//! cross every band — one per frame the grouping asks for, a module or a type
-//! or a file. A mark sits at the crossing of its depth and its frame, so both
-//! readings come off the paper at once.
+//! Containment is the call. Every declaration is seated inside the frame of the
+//! caller that reaches it first, and what a frame holds shelves in wrapped rows
+//! under its head — the same move the data chart makes when a held type nests
+//! inside its holder, one rung down. The entry points are the frames on the
+//! ground, packed in wrapped rows across the sheet; what no entry point reaches
+//! shelves in its own strip below them.
 //!
-//! A pure function of (model, measured sizes). Every block is measured before
-//! anything is placed, and the same survey always draws the same chart: no
-//! physics, no randomness, no measurement of anything the browser has already
-//! laid out.
+//! A pure function of (model, measured blocks). Every block is measured before
+//! anything is placed — its head row and the signature quoted under it — a
+//! frame is measured from that box and what shelves in it, and the same survey
+//! always draws the same chart: no physics, no randomness, no measurement of
+//! anything the browser has already laid out.
 //!
-//! Two other seatings stood here until 2026-08-25 and were cut by the user
-//! after all three were built and read on a real workspace: a **mechanism**
-//! plate (nested module frames with parts in depth rows inside them) read
-//! whose code before what runs from where, and a **strips** plate (one road
-//! per entry point, stations running right) came out a twenty-thousand-unit
-//! ribbon — twenty-four roads, the busy ones stacking a hundred marks at one
-//! depth. What the strips plate wanted is a selection on this one.
+//! A **fold** is part of that purity, not an overlay on it — but it is an
+//! elision, not a re-packing. A frame the reviewer folded keeps its whole
+//! footprint here: every mark inside it is still measured and still placed, so
+//! no sibling, ancestor or wire moves by a pixel when the reader closes it, and
+//! the eye stays on whatever it was anchored to. What the fold does is take
+//! those marks off the *drawing*; the frame says how many in words, where its
+//! shelf stood.
+//!
+//! The one exception is `model.packed` — the folds the packer is allowed to
+//! skip, which is only ever the set the paper was already being laid again
+//! around: an `order` or `visibility` change, or a session's first build. A
+//! frame in that set is measured and placed as though it shelved nothing, and
+//! the sheet closes up over it. Nothing folds itself and nothing folds by a
+//! count; both sets are frames a reader closed by hand.
+//!
+//! The packing is wrapped rows rather than the data chart's skyline. A shelf
+//! here reads left to right in the order the reading seats it — the order the
+//! arrow keys walk — and a skyline drops a short box back into a hole two rows
+//! up, which is a tighter box and a shelf nobody can follow.
 
 use std::collections::HashMap;
 
 use dioxus_flow::prelude::Point;
 
-use crate::views::data::layout::skyline;
 use crate::views::func::model::FnModel;
 
 /// One placed box on the paper, in flow units — one unit is one CSS pixel at
@@ -37,106 +50,116 @@ pub(super) struct Placed {
 }
 
 impl Placed {
-    pub(super) fn center(&self) -> Point {
-        Point::new(self.x + self.w / 2.0, self.y + self.h / 2.0)
-    }
-
-    /// Which sides of two boxes face each other, so a wire leaves and lands on
-    /// open paper instead of crossing its own block.
-    pub(super) fn tie_ends(self, other: Self) -> (Point, Point) {
-        let (ac, bc) = (self.center(), other.center());
-        if (ac.x - bc.x).abs() > (ac.y - bc.y).abs() {
-            let left = ac.x < bc.x;
-            (
-                Point::new(if left { self.x + self.w } else { self.x }, ac.y),
-                Point::new(if left { other.x } else { other.x + other.w }, bc.y),
-            )
-        } else {
-            let top = ac.y < bc.y;
-            (
-                Point::new(ac.x, if top { self.y + self.h } else { self.y }),
-                Point::new(bc.x, if top { other.y } else { other.y + other.h }),
-            )
-        }
+    /// Where a wire ties to this block: the middle of its **head row**, never
+    /// the middle of its box. A frame is as wide as everything it calls, and a
+    /// line leaving the centre of a two-thousand-unit box names nothing.
+    pub(super) fn tie(&self) -> Point {
+        Point::new(
+            self.x + self.w.min(HEAD_TIE) / 2.0,
+            self.y + HEAD_H / 2.0 + 1.0,
+        )
     }
 }
 
-/// Between two seated blocks. Wide enough that a wire can leave a block and
-/// land on its neighbour without crossing a third.
-const GAP: f64 = 18.0;
+/// The head row's own height, borders excluded. These numbers are the CSS in
+/// `tailwind.css`; move one and the other must follow.
+pub(super) const HEAD_H: f64 = 16.0;
+/// Clear paper inside a frame, around what shelves in it. Shared with the
+/// drawing, which aligns the far edition's engraved landmark with the shelf
+/// this reserves.
+pub(super) const PAD: f64 = 5.0;
+/// The hairline rule that closes a block's own quotation and opens the shelf
+/// under it: the rule, and the clear paper on either side of it. Shared with
+/// the drawing, which measures a folded frame's counted words under the same
+/// rule.
+pub(super) const RULE: f64 = 6.0;
+/// Between two blocks on one shelf.
+const GAP: f64 = 4.0;
+/// Between two frames on the ground, which is a shelf of its own.
+const GROUND_GAP: f64 = 14.0;
+/// Above the ring strip: it is a different reading of the paper, and the gap is
+/// what says so before its caption does.
+const RING_GAP: f64 = 34.0;
 /// How much wider than tall a packed shelf aims to be.
 const LANDSCAPE: f64 = 2.4;
-/// A frame narrower than this reads as a column of unrelated plates.
-const MIN_FRAME_W: f64 = 170.0;
-/// The strata plate's left margin, where a band is captioned, and the head
-/// room its prisms need for their engraved names.
-const BAND_CAP_W: f64 = 96.0;
-const PRISM_NAME_H: f64 = 22.0;
-const BAND_GAP: f64 = 22.0;
-const PRISM_GAP: f64 = 26.0;
+/// And the ground, which is read on a landscape glass whole.
+const GROUND_LANDSCAPE: f64 = 2.3;
+/// How far along a block's head a wire ties, at the widest.
+const HEAD_TIE: f64 = 150.0;
 
-/// What the layout must be told about what it seats. Measuring belongs with
-/// the drawing — the layout only places what it is handed.
+/// What the layout must be told about what it seats: every drawn mark's own
+/// box — its head row, the signature quoted under it, and the counted words a
+/// folded frame writes — by mark id. Measuring belongs with the drawing; the
+/// layout only places what it is handed.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub(super) struct Sizes {
-    /// Every drawn mark's block, by mark id.
-    pub(super) marks: HashMap<u32, (f64, f64)>,
-    /// The width each frame's engraved name needs along the top of its prism.
-    /// A column narrower than its own name would clip the one word that says
-    /// whose column it is.
-    pub(super) labels: HashMap<u32, f64>,
+    pub(super) own: HashMap<u32, (f64, f64)>,
 }
 
 impl Sizes {
     fn of(&self, id: u32) -> (f64, f64) {
-        self.marks.get(&id).copied().unwrap_or((MIN_FRAME_W, 40.0))
+        self.own.get(&id).copied().unwrap_or((120.0, HEAD_H + 2.0))
     }
 }
 
-/// One band of the section: a full-width lane of one call depth, captioned at
-/// the left margin. The caption is the band's own words, and the band is a
-/// focus like any other, so the lane is a control and not only a rule.
+/// The caption over the ring strip: what stands there, and the band selecting
+/// it pushes. The strip is the one place this chart still captions a band,
+/// because a frame no entry point reaches has nothing above it to say so.
 #[derive(Clone, PartialEq, Debug)]
-pub(super) struct Lane {
+pub(super) struct RingStrip {
     pub(super) at: Placed,
     pub(super) caption: String,
-    /// The band this lane draws — the focus its caption selects.
     pub(super) band: u32,
-}
-
-/// One packed cell of the strata grid: where each of its marks sits inside the
-/// cell, which marks those are, and the box the packing needed.
-type Cell = (Vec<(f64, f64)>, Vec<u32>, f64, f64);
-
-/// One prism of the section: a column crossing every band, standing for one
-/// frame — a module, a type, or a file, as the grouping asks.
-#[derive(Clone, PartialEq, Debug)]
-pub(super) struct Prism {
-    pub(super) frame: u32,
-    pub(super) at: Placed,
-    /// The name engraved along its top — the frame's **whole** path, because a
-    /// section has no nesting to disambiguate one: this workspace writes three
-    /// modules called `data`, and three prisms saying `data` name nothing.
-    pub(super) written: String,
-    /// What selecting the boundary pushes.
-    pub(super) key: Vec<String>,
 }
 
 /// The whole chart, placed and centered on the flow origin.
 #[derive(Clone, PartialEq, Debug, Default)]
 pub(super) struct FnLayout {
     pub(super) marks: HashMap<u32, Placed>,
-    /// Outermost first, so a nested tint lays over its parent's.
-    pub(super) frames: Vec<(u32, Placed)>,
-    pub(super) lanes: Vec<Lane>,
-    pub(super) prisms: Vec<Prism>,
+    pub(super) ring: Option<RingStrip>,
     pub(super) size: (f64, f64),
 }
 
+/// One shelf, packed: where each box sits relative to the shelf's corner, and
+/// the box the packing needed.
+struct Shelf {
+    at: Vec<(f64, f64)>,
+    w: f64,
+    h: f64,
+}
+
+/// Seat boxes in wrapped rows no wider than `target`, in the order given.
+fn shelve(boxes: &[(f64, f64)], target: f64, gap: f64) -> Shelf {
+    let (mut x, mut y, mut row_h, mut w) = (0.0f64, 0.0f64, 0.0f64, 0.0f64);
+    let mut at = Vec::with_capacity(boxes.len());
+    for &(bw, bh) in boxes {
+        if x > 0.0 && x + bw > target {
+            y += row_h + gap;
+            x = 0.0;
+            row_h = 0.0;
+        }
+        at.push((x, y));
+        x += bw + gap;
+        row_h = row_h.max(bh);
+        w = w.max(x - gap);
+    }
+    let h = if boxes.is_empty() { 0.0 } else { y + row_h };
+    Shelf { at, w, h }
+}
+
+/// The width a shelf of these boxes aims for: never narrower than its widest
+/// box, and otherwise the width that makes the shelf a landscape box — the
+/// shape of the paper it is read on.
+fn target_of(boxes: &[(f64, f64)], floor: f64, gap: f64, landscape: f64) -> f64 {
+    let widest = boxes.iter().map(|b| b.0).fold(floor, f64::max);
+    let area: f64 = boxes.iter().map(|(w, h)| (w + gap) * (h + gap)).sum();
+    widest.max((area * landscape).sqrt())
+}
+
 impl FnLayout {
-    /// Seat every mark on the section.
+    /// Seat every mark on the shelved section.
     pub(super) fn build(model: &FnModel, sizes: &Sizes) -> Self {
-        let mut out = Self::strata(model, sizes);
+        let mut out = Self::shelved(model, sizes);
         // Centered on the origin, so the camera's first fit is one move.
         let (w, h) = out.size;
         out.shift(-w / 2.0, -h / 2.0);
@@ -144,144 +167,128 @@ impl FnLayout {
     }
 
     fn shift(&mut self, dx: f64, dy: f64) {
-        let at = |p: &mut Placed| {
-            p.x += dx;
-            p.y += dy;
-        };
         for placed in self.marks.values_mut() {
-            at(placed);
+            placed.x += dx;
+            placed.y += dy;
         }
-        for (_, placed) in self.frames.iter_mut() {
-            at(placed);
+        if let Some(ring) = self.ring.as_mut() {
+            ring.at.x += dx;
+            ring.at.y += dy;
         }
-        for lane in self.lanes.iter_mut() {
-            at(&mut lane.at);
+    }
+
+    fn shelved(model: &FnModel, sizes: &Sizes) -> FnLayout {
+        let mut measure = Measure {
+            model,
+            sizes,
+            size: HashMap::new(),
+            rel: HashMap::new(),
+        };
+        let mut out = FnLayout::default();
+
+        // The ground: the entry points, and any frame whose way in this reading
+        // does not draw, packed the way a frame packs its own shelves.
+        let ground: Vec<(f64, f64)> = model.seats.iter().map(|&id| measure.of(id)).collect();
+        let target = target_of(&ground, 0.0, GROUND_GAP, GROUND_LANDSCAPE);
+        let shelf = shelve(&ground, target, GROUND_GAP);
+        for (&id, (x, y)) in model.seats.iter().zip(&shelf.at) {
+            measure.place(id, *x, *y, &mut out.marks);
         }
-        for prism in self.prisms.iter_mut() {
-            at(&mut prism.at);
+
+        // And the ring below it, in a strip of its own.
+        let mut size = (shelf.w, shelf.h);
+        if !model.ring.is_empty() {
+            let top = shelf.h + RING_GAP;
+            let boxes: Vec<(f64, f64)> = model.ring.iter().map(|&id| measure.of(id)).collect();
+            let target = target_of(&boxes, 0.0, GROUND_GAP, GROUND_LANDSCAPE);
+            let strip = shelve(&boxes, target, GROUND_GAP);
+            for (&id, (x, y)) in model.ring.iter().zip(&strip.at) {
+                measure.place(id, *x, top + *y, &mut out.marks);
+            }
+            out.ring = Some(RingStrip {
+                at: Placed {
+                    x: 0.0,
+                    y: top,
+                    w: strip.w.max(shelf.w),
+                    h: strip.h,
+                },
+                caption: "in a call ring — no entry point reaches these".to_string(),
+                band: model.facts.deepest + 1,
+            });
+            size = (size.0.max(strip.w), top + strip.h);
         }
+        out.size = size;
+        out
     }
 }
 
-impl FnLayout {
-    /// One packed shelf: boxes seated bottom-left inside a target width.
-    fn shelve(boxes: &[(f64, f64)], gap: f64) -> (Vec<(f64, f64)>, f64, f64) {
-        if boxes.is_empty() {
-            return (Vec::new(), 0.0, 0.0);
+/// One measuring pass over the seating tree: a frame is as wide as its own head
+/// or the shelves inside it, whichever is wider, and as tall as it needs to
+/// hold them.
+struct Measure<'m> {
+    model: &'m FnModel,
+    sizes: &'m Sizes,
+    size: HashMap<u32, (f64, f64)>,
+    /// Where each mark sits inside the frame it shelves in.
+    rel: HashMap<u32, (f64, f64)>,
+}
+
+impl Measure<'_> {
+    /// What the packer seats inside one frame: everything, unless this is one of
+    /// the folds the packer was allowed to skip. A fold by hand is *not* in that
+    /// set, so its contents are still measured and still placed — the footprint
+    /// is what keeps the rest of the sheet still — and the drawing is what
+    /// leaves them off the paper.
+    fn kids_of(&self, id: u32) -> Vec<u32> {
+        if self.model.packed.contains(&id) {
+            return Vec::new();
         }
-        let widest = boxes.iter().map(|b| b.0).fold(0.0, f64::max);
-        let area: f64 = boxes.iter().map(|(w, h)| (w + gap) * (h + gap)).sum();
-        let target = widest.max((area * LANDSCAPE).sqrt());
-        let at = skyline(boxes, target, gap);
-        let (mut w, mut h) = (0.0f64, 0.0f64);
-        for ((x, y), (bw, bh)) in at.iter().zip(boxes) {
-            w = w.max(x + bw);
-            h = h.max(y + bh);
-        }
-        (at, w, h)
+        self.model
+            .kids
+            .get(&id)
+            .cloned()
+            .unwrap_or_default()
+            .into_iter()
+            // A tree, never a graph: the way in gives each mark one parent, so
+            // this walk terminates. The guard is against a survey that ever
+            // handed one a cycle.
+            .filter(|kid| *kid != id)
+            .collect()
     }
 
-    fn strata(model: &FnModel, sizes: &Sizes) -> FnLayout {
-        let bands: Vec<u32> = model.bands.iter().map(|(band, _)| *band).collect();
-        // Every cell packed first: a column is as wide as its widest cell, and a
-        // band as tall as its tallest, so the grid is a true section.
-        let mut cells: HashMap<(u32, u32), Cell> = HashMap::new();
-        for column in &model.columns {
-            for (band, ids) in &column.cells {
-                let boxes: Vec<(f64, f64)> = ids.iter().map(|&id| sizes.of(id)).collect();
-                let (at, w, h) = Self::shelve(&boxes, GAP);
-                cells.insert((column.frame, *band), (at, ids.clone(), w, h));
+    fn of(&mut self, id: u32) -> (f64, f64) {
+        if let Some(&size) = self.size.get(&id) {
+            return size;
+        }
+        let (own_w, own_h) = self.sizes.of(id);
+        let kids = self.kids_of(id);
+        if kids.is_empty() {
+            let size = (own_w, own_h);
+            self.size.insert(id, size);
+            return size;
+        }
+        let boxes: Vec<(f64, f64)> = kids.iter().map(|&kid| self.of(kid)).collect();
+        let target = target_of(&boxes, own_w, GAP, LANDSCAPE);
+        let shelf = shelve(&boxes, target, GAP);
+        for (&kid, at) in kids.iter().zip(&shelf.at) {
+            self.rel.insert(kid, *at);
+        }
+        let size = (own_w.max(shelf.w + PAD * 2.0), own_h + RULE + shelf.h + PAD);
+        self.size.insert(id, size);
+        size
+    }
+
+    fn place(&mut self, id: u32, x: f64, y: f64, out: &mut HashMap<u32, Placed>) {
+        let (w, h) = self.of(id);
+        out.insert(id, Placed { x, y, w, h });
+        let (_, own_h) = self.sizes.of(id);
+        for kid in self.kids_of(id) {
+            if out.contains_key(&kid) {
+                continue;
             }
+            let (dx, dy) = self.rel.get(&kid).copied().unwrap_or((0.0, 0.0));
+            self.place(kid, x + PAD + dx, y + own_h + RULE + dy, out);
         }
-        let column_w: HashMap<u32, f64> = model
-            .columns
-            .iter()
-            .map(|c| {
-                let w = bands
-                    .iter()
-                    .filter_map(|band| cells.get(&(c.frame, *band)))
-                    .map(|(_, _, w, _)| *w)
-                    .fold(0.0, f64::max);
-                let named = sizes.labels.get(&c.frame).copied().unwrap_or(0.0);
-                (c.frame, w.max(named).max(MIN_FRAME_W))
-            })
-            .collect();
-        let band_h: HashMap<u32, f64> = bands
-            .iter()
-            .map(|band| {
-                let h = model
-                    .columns
-                    .iter()
-                    .filter_map(|c| cells.get(&(c.frame, *band)))
-                    .map(|(_, _, _, h)| *h)
-                    .fold(0.0, f64::max);
-                (*band, h.max(24.0))
-            })
-            .collect();
-
-        let mut out = FnLayout::default();
-        let mut x = BAND_CAP_W;
-        let mut prism_x: HashMap<u32, f64> = HashMap::new();
-        for column in &model.columns {
-            prism_x.insert(column.frame, x);
-            x += column_w[&column.frame] + PRISM_GAP;
-        }
-        let sheet_w = (x - PRISM_GAP).max(BAND_CAP_W);
-
-        let mut y = PRISM_NAME_H;
-        let mut band_y: HashMap<u32, f64> = HashMap::new();
-        for band in &bands {
-            band_y.insert(*band, y);
-            out.lanes.push(Lane {
-                at: Placed {
-                    x: 0.0,
-                    y,
-                    w: sheet_w,
-                    h: band_h[band],
-                },
-                caption: model.caption_of(*band),
-                band: *band,
-            });
-            y += band_h[band] + BAND_GAP;
-        }
-        let sheet_h = (y - BAND_GAP).max(PRISM_NAME_H);
-
-        for column in &model.columns {
-            let cx = prism_x[&column.frame];
-            out.prisms.push(Prism {
-                frame: column.frame,
-                at: Placed {
-                    x: cx,
-                    y: 0.0,
-                    w: column_w[&column.frame],
-                    h: sheet_h,
-                },
-                written: column.written.clone(),
-                key: column.key.clone(),
-            });
-            for (band, _) in &column.cells {
-                let Some((at, ids, _, _)) = cells.get(&(column.frame, *band)) else {
-                    continue;
-                };
-                for ((&id, (dx, dy)), (w, h)) in ids
-                    .iter()
-                    .zip(at)
-                    .zip(ids.iter().map(|&id| sizes.of(id)).collect::<Vec<_>>())
-                {
-                    out.marks.insert(
-                        id,
-                        Placed {
-                            x: cx + dx,
-                            y: band_y[band] + dy,
-                            w,
-                            h,
-                        },
-                    );
-                }
-            }
-        }
-        out.size = (sheet_w, sheet_h);
-        out
     }
 }
 
@@ -291,14 +298,14 @@ impl FnLayout {
 mod tests {
     use super::*;
     use crate::graph::data::{Delta, ItemKind, Vis};
-    use crate::views::func::model::{Column, FnFacts, FnHead, FnMark, Frame, Tier};
+    use crate::views::func::model::{FnFacts, FnHead, FnMark, Tier};
 
-    fn mark(id: u32, frame: u32, tier: Tier) -> FnMark {
+    fn mark(id: u32, tier: Tier) -> FnMark {
         FnMark {
             id,
-            frame,
             tier,
-            road: None,
+            krate: "slope".to_string(),
+            module: Vec::new(),
             head: FnHead {
                 kind: ItemKind::Fn,
                 vis: Vis::Pub,
@@ -309,66 +316,49 @@ mod tests {
                 section: String::new(),
             },
             rows: Vec::new(),
+            owner: None,
             delta: Delta::Same,
             callers: 0,
             calls: 0,
             touches: 0,
+            runs: 0,
+            crosses: false,
             recurses: false,
+            folded: false,
         }
     }
 
-    fn frame(id: u32, module: &[&str], parent: Option<u32>, marks: &[u32]) -> Frame {
-        Frame {
-            id,
-            krate: "slope".to_string(),
-            module: module.iter().map(|s| (*s).to_string()).collect(),
-            group: String::new(),
-            parent,
-            marks: marks.to_vec(),
-        }
-    }
-
-    /// Two entry points, two one-deep calls, in two modules.
+    /// One entry point holding three callees, a second holding none, and a
+    /// ring of one.
     fn model() -> FnModel {
         FnModel {
             marks: vec![
-                mark(0, 1, Tier::Entry),
-                mark(1, 1, Tier::Deep(1)),
-                mark(2, 2, Tier::Entry),
-                mark(3, 2, Tier::Deep(1)),
+                mark(0, Tier::Entry),
+                mark(1, Tier::Deep(1)),
+                mark(2, Tier::Deep(1)),
+                mark(3, Tier::Deep(2)),
+                mark(4, Tier::Entry),
+                mark(5, Tier::Ring),
             ],
-            frames: vec![
-                frame(0, &[], None, &[]),
-                frame(1, &["analyze"], Some(0), &[0, 1]),
-                frame(2, &["views"], Some(0), &[2, 3]),
-            ],
-            bands: vec![(0, "entry".to_string()), (1, "1 call deep".to_string())],
-            columns: vec![
-                Column {
-                    frame: 1,
-                    written: "analyze".to_string(),
-                    key: vec!["slope".to_string(), "analyze".to_string()],
-                    cells: vec![(0, vec![0]), (1, vec![1])],
-                },
-                Column {
-                    frame: 2,
-                    written: "views".to_string(),
-                    key: vec!["slope".to_string(), "views".to_string()],
-                    cells: vec![(0, vec![2]), (1, vec![3])],
-                },
-            ],
+            via: HashMap::from([(1, 0), (2, 0), (3, 1)]),
+            kids: HashMap::from([(0, vec![1, 2]), (1, vec![3])]),
+            seats: vec![0, 4],
+            ring: vec![5],
             facts: FnFacts {
-                deepest: 1,
+                deepest: 2,
                 ..Default::default()
             },
             ..Default::default()
         }
     }
 
+    /// Every block the same size: a head row, two quoted signature rows and the
+    /// paper around them.
+    const OWN_H: f64 = 48.0;
+
     fn sizes() -> Sizes {
         Sizes {
-            marks: (0..4).map(|id| (id, (180.0, 60.0))).collect(),
-            labels: HashMap::new(),
+            own: (0..6).map(|id| (id, (160.0, OWN_H))).collect(),
         }
     }
 
@@ -376,18 +366,43 @@ mod tests {
         a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
     }
 
-    /// No two blocks may share paper, and every mark must be placed exactly
-    /// once.
+    fn holds(frame: &Placed, kid: &Placed) -> bool {
+        frame.x <= kid.x
+            && frame.y <= kid.y
+            && frame.x + frame.w >= kid.x + kid.w
+            && frame.y + frame.h >= kid.y + kid.h
+    }
+
+    /// Every mark is seated exactly once, and a frame holds what shelves inside
+    /// it outright — containment is the call, so a block outside its caller's
+    /// box would be the chart saying something untrue.
     #[test]
-    fn the_section_seats_every_mark_and_overlaps_nothing() {
+    fn every_mark_is_seated_inside_the_caller_that_reaches_it() {
         let placed = FnLayout::build(&model(), &sizes());
-        assert_eq!(placed.marks.len(), 4, "a mark went missing");
-        let boxes: Vec<Placed> = placed.marks.values().copied().collect();
-        for (i, a) in boxes.iter().enumerate() {
-            for b in &boxes[i + 1..] {
-                assert!(!overlaps(a, b), "blocks overlap: {a:?} {b:?}");
-            }
+        assert_eq!(placed.marks.len(), 6, "a mark went missing");
+        for (kid, up) in [(1u32, 0u32), (2, 0), (3, 1)] {
+            assert!(
+                holds(&placed.marks[&up], &placed.marks[&kid]),
+                "{up} does not hold {kid}"
+            );
         }
+        // And two frames on the ground never share paper.
+        assert!(!overlaps(&placed.marks[&0], &placed.marks[&4]));
+        assert!(!overlaps(&placed.marks[&1], &placed.marks[&2]));
+    }
+
+    /// The ring stands in a strip under the ground, captioned, with the band
+    /// its caption selects.
+    #[test]
+    fn a_call_ring_shelves_in_its_own_strip() {
+        let placed = FnLayout::build(&model(), &sizes());
+        let strip = placed.ring.expect("a ring strip");
+        assert_eq!(strip.band, 3);
+        assert!(strip.caption.starts_with("in a call ring"));
+        let ring = placed.marks[&5];
+        let ground = placed.marks[&0];
+        assert!(ring.y > ground.y + ground.h, "the strip stands below");
+        assert!(strip.at.y <= ring.y);
     }
 
     /// The same model always draws the same chart.
@@ -398,30 +413,105 @@ mod tests {
         assert_eq!(a, b);
     }
 
-    /// A band runs the full width and a prism crosses every band, so a mark
-    /// sits at the crossing of its depth and its frame.
+    /// A shelf reads in the order it was seated in, left to right and then
+    /// down: the order the arrow keys walk is the order the eye walks.
     #[test]
-    fn bands_are_crossed_by_every_prism() {
-        let placed = FnLayout::build(&model(), &sizes());
-        // Same band, different modules: same row, different columns.
-        assert_eq!(placed.marks[&0].y, placed.marks[&2].y);
-        assert!(placed.marks[&0].x < placed.marks[&2].x);
-        // Same module, different bands: same column, different rows.
-        assert_eq!(placed.marks[&0].x, placed.marks[&1].x);
-        assert!(placed.marks[&0].y < placed.marks[&1].y);
-        // Every prism spans every band, and every band is captioned.
-        assert_eq!(placed.prisms.len(), 2);
-        for prism in &placed.prisms {
-            for mark in [&placed.marks[&0], &placed.marks[&1]] {
-                assert!(prism.at.y <= mark.y && prism.at.y + prism.at.h >= mark.y + mark.h);
-            }
-        }
-        let captions: Vec<&str> = placed.lanes.iter().map(|l| l.caption.as_str()).collect();
-        assert_eq!(captions, vec!["entry", "1 call deep"]);
-        assert_eq!(
-            placed.lanes.iter().map(|l| l.band).collect::<Vec<_>>(),
-            vec![0, 1],
-            "every band is a lane, and every lane selects its band"
+    fn a_shelf_reads_in_seating_order() {
+        let mut model = model();
+        model.kids.insert(0, vec![2, 1]);
+        let placed = FnLayout::build(&model, &sizes());
+        let (first, second) = (placed.marks[&2], placed.marks[&1]);
+        assert!(
+            first.y < second.y || (first.y == second.y && first.x < second.x),
+            "the shelf is out of order"
         );
+    }
+
+    /// A leaf is its own box — the head row and the signature quoted under it —
+    /// and nothing more; a frame grows to hold what it calls.
+    #[test]
+    fn a_frame_grows_and_a_leaf_does_not() {
+        let placed = FnLayout::build(&model(), &sizes());
+        assert_eq!(placed.marks[&4].h, OWN_H);
+        assert_eq!(placed.marks[&4].w, 160.0);
+        assert!(placed.marks[&0].h > placed.marks[&1].h);
+        assert!(placed.marks[&0].w >= 160.0);
+    }
+
+    /// **A fold by hand moves nothing.** This is the invariant the whole
+    /// elision exists for (2026-08-27, user): the reviewer folds a frame to get
+    /// it out of the way of something they are looking at, so if the sheet
+    /// re-packs, the fold has thrown away the very thing it was serving. Every
+    /// other frame keeps its exact position and its exact size, the folded
+    /// frame keeps its own footprint, and the sheet keeps its own bounds.
+    #[test]
+    fn a_fold_by_hand_moves_no_other_frame() {
+        let open = FnLayout::build(&model(), &sizes());
+        let mut shut = model();
+        shut.folded = std::collections::HashSet::from([1]);
+        shut.packs = HashMap::from([(3, 1)]);
+        let placed = FnLayout::build(&shut, &sizes());
+
+        // Every mark still sits exactly where it sat — the folded frame and the
+        // marks it hides included, because the footprint is what keeps the rest
+        // of the sheet still.
+        assert_eq!(placed.marks, open.marks, "a fold by hand re-laid the paper");
+        assert_eq!(placed.size, open.size);
+        assert_eq!(placed.ring, open.ring);
+    }
+
+    /// A fold the **packer** was allowed to skip is the other half of the rule:
+    /// it is measured and placed as though it shelved nothing, the sheet closes
+    /// up over it, and what it hides is not placed at all. That only ever
+    /// happens where the paper was being laid again regardless — an `order` or
+    /// `visibility` change, or a session's first build — so there is no anchor
+    /// for it to disrupt.
+    #[test]
+    fn a_packed_fold_is_seated_as_its_own_box() {
+        let mut shut = model();
+        shut.folded = std::collections::HashSet::from([0]);
+        shut.packed = std::collections::HashSet::from([0]);
+        shut.packs = HashMap::from([(1, 0), (2, 0), (3, 0)]);
+        // The packer is handed the folded frame's own box, counted words and
+        // all, exactly as the drawing measures one.
+        let mut own = sizes();
+        own.own.insert(0, (160.0, OWN_H));
+        let placed = FnLayout::build(&shut, &own);
+        assert_eq!(placed.marks[&0].h, OWN_H);
+        assert_eq!(placed.marks[&0].w, 160.0);
+        // What it hides is not placed at all, so nothing on the paper overlaps
+        // and nothing is drawn twice.
+        for hidden in [1u32, 2, 3] {
+            assert!(
+                !placed.marks.contains_key(&hidden),
+                "{hidden} is packed away"
+            );
+        }
+        // The frames that were never folded still stand.
+        assert!(placed.marks.contains_key(&4));
+        assert!(placed.marks.contains_key(&5));
+        // And the whole sheet got smaller, because the paper was laid again.
+        let whole = FnLayout::build(&model(), &sizes());
+        assert!(placed.size.0 * placed.size.1 < whole.size.0 * whole.size.1);
+    }
+
+    /// A fold is deterministic, like every other reading: the same folds always
+    /// draw the same chart, and opening the fold again draws the first one.
+    #[test]
+    fn the_same_folds_always_draw_the_same_chart() {
+        let mut folded = model();
+        folded.folded = std::collections::HashSet::from([1]);
+        folded.packed = std::collections::HashSet::from([1]);
+        folded.packs = HashMap::from([(3, 1)]);
+        assert_eq!(
+            FnLayout::build(&folded, &sizes()),
+            FnLayout::build(&folded, &sizes())
+        );
+        // Unfolding is not a new chart: it is the chart that was there before.
+        let open = FnLayout::build(&model(), &sizes());
+        folded.folded.clear();
+        folded.packed.clear();
+        folded.packs.clear();
+        assert_eq!(FnLayout::build(&folded, &sizes()), open);
     }
 }

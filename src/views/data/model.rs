@@ -108,6 +108,23 @@ pub(super) enum Anchor {
 /// A frame id is an index into one build and says nothing across two.
 pub(super) type Folds = HashSet<Vec<String>>;
 
+/// The holder blocks the reviewer folded by hand — the nested shelf of state
+/// each one owns, taken off the paper. Named the same way, and for the same
+/// reason: the file a declaration is written in, then the label its own URL
+/// selects it by.
+///
+/// A block's own quoted rows are never in here. A block quotes its whole
+/// declaration, and a quotation missing its fields is a misquotation; what
+/// folds is only the state shelved *under* the rule that closes it.
+pub(super) type BlockFolds = HashSet<(String, String)>;
+
+/// One holder's name in a [`BlockFolds`] set — the same pair
+/// `/data/mark/:..path?item=` carries, so a fold and a selection say one word
+/// for one declaration.
+pub(super) fn block_key(path: &str, label: &str) -> (String, String) {
+    (path.to_string(), label.to_string())
+}
+
 /// A module frame's name in a [`Folds`] set, and in the URL that selects it:
 /// the crate first, then the module path. The crate's own frame is that name
 /// alone — and the name is the cargo package (`slope-cli`), the same word the
@@ -521,8 +538,19 @@ pub(super) struct MarkState {
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct MarkSeat {
     pub(super) tier: Tier,
-    /// The marks nested inside this block, in the survey's order.
+    /// The marks nested inside this block, in the survey's order — empty where
+    /// the reviewer folded the shelf by hand, because a fold is a re-layout and
+    /// the packer must simply never see them.
     pub(super) kids: Vec<u32>,
+    /// Anything is shelved inside this block: it has a shelf to fold, so its
+    /// head draws the fold mark. True whether or not the shelf is folded.
+    pub(super) shelves: bool,
+    /// The reviewer folded the shelf.
+    pub(super) folded: bool,
+    /// How much state this block's own fold has off the paper — the counted
+    /// words it writes where the shelf stood, every layer of nesting under it
+    /// included. Zero on an open block.
+    pub(super) packed: u32,
     /// Structural holders folded to a count: nonzero only on vocabulary
     /// marks, whose incoming holds rest folded.
     pub(super) held_by: u32,
@@ -603,15 +631,6 @@ pub(super) struct Hold {
     pub(super) event: Option<HoldEvent>,
 }
 
-impl Hold {
-    pub(super) fn key(&self) -> String {
-        format!(
-            "{:?}>{:?}:{:?}:{}:{:?}",
-            self.held, self.holder, self.kind, self.via, self.event
-        )
-    }
-}
-
 /// One implementation dependence between two drawn marks: one type's impls
 /// lean on another type. The dashed family, always drawn the same direction —
 /// the arrowhead rests on the user.
@@ -626,12 +645,6 @@ pub(super) struct Tie {
     pub(super) rows: Vec<(String, u32)>,
     pub(super) rest: bool,
     pub(super) labeled: bool,
-}
-
-impl Tie {
-    pub(super) fn key(&self) -> String {
-        format!("{:?}~{:?}", self.def, self.user)
-    }
 }
 
 /// One undrawn naming: a declaration whose own signature names a drawn type.
@@ -695,6 +708,13 @@ pub(super) struct DataModel {
     pub(super) ties: Vec<Tie>,
     /// The undrawn naming ink, for the sheet's rows.
     pub(super) naming: Vec<Naming>,
+    /// Every mark a folded holder hides, and the holder that stands for it on
+    /// the paper — the block its wires re-anchor to, and the block that carries
+    /// a lit chain's ink where the chain runs through the fold. The outermost
+    /// fold wins: a fold inside a fold is spoken for by the one the reader can
+    /// see. The edges themselves are untouched, because the ends they name are
+    /// still the real ends; only the paper reads through this.
+    pub(super) packs: HashMap<u32, u32>,
     pub(super) multi_crate: bool,
 }
 
@@ -754,6 +774,45 @@ impl DataModel {
     pub(super) fn frame(&self, id: u32) -> Option<&Frame> {
         self.frames.get(id as usize)
     }
+
+    /// Whether a folded holder has this mark off the paper.
+    pub(super) fn hidden(&self, id: u32) -> bool {
+        self.packs.contains_key(&id)
+    }
+
+    /// The block that stands for a mark on the paper: itself where it is drawn,
+    /// and the outermost folded holder hiding it where it is not.
+    pub(super) fn shown(&self, id: u32) -> u32 {
+        self.packs.get(&id).copied().unwrap_or(id)
+    }
+
+    /// The folded holders standing between the paper and one mark, outermost
+    /// first — what a reveal has to open before a selection can be seen. A
+    /// selection the reader cannot see is not a focus, so a selection URL, a
+    /// search hit and a quoted row's bold run all open the way to it first.
+    pub(super) fn reveal(&self, of: u32) -> Vec<(String, String)> {
+        if self.packs.is_empty() {
+            return Vec::new();
+        }
+        let by_id = self.by_id();
+        let mut out: Vec<(String, String)> = Vec::new();
+        let mut at = of;
+        let mut seen: HashSet<u32> = HashSet::from([of]);
+        while let Some(up) = by_id.get(&at).and_then(|m| match m.seat.tier {
+            Tier::Nested(up) => Some(up),
+            _ => None,
+        }) {
+            if !seen.insert(up) {
+                break;
+            }
+            if let Some(mark) = by_id.get(&up).filter(|m| m.seat.folded) {
+                out.push(block_key(&mark.head.path, &mark.head.label));
+            }
+            at = up;
+        }
+        out.reverse();
+        out
+    }
 }
 
 /// Which frame a file's state belongs to: its crate, and the module path.
@@ -796,6 +855,8 @@ impl DataModel {
             ref_dir,
             vis_floor,
             ref folds,
+            ref blocks,
+            ref packed_blocks,
         } = reading;
         let ghost_of = |id: u32| -> Option<&GhostMark> { graph.ghost(id) };
         let kind_of = |id: u32| -> Option<ItemKind> {
@@ -1080,6 +1141,59 @@ impl DataModel {
                 kids.entry(parent).or_default().push(id);
             }
         }
+
+        // ---- The holder folds: a nested shelf a reviewer closed by hand. ----
+        //
+        // Only the shelf folds. A block quotes its whole declaration — the
+        // module fold above and the visibility reading are the only things that
+        // ever take a quotation off the paper — so what a fold here hides is
+        // exactly the state shelved under the rule that closes those rows.
+        // Nothing folds by a count: this reads the set of holders a reader
+        // closed, and nothing else.
+        let block_of = |id: u32| -> Option<(String, String)> {
+            let mark = graph.item(id)?;
+            Some(block_key(graph.path_of(mark)?, &mark.head.label))
+        };
+        let folded_blocks: HashSet<u32> = drawn
+            .iter()
+            .copied()
+            .filter(|id| kids.get(id).is_some_and(|list| !list.is_empty()))
+            .filter(|&id| block_of(id).is_some_and(|key| blocks.contains(&key)))
+            .collect();
+        // Which of those the skyline was allowed to pack around. The rest are
+        // elisions in place: their shelves are still measured, so the band stays
+        // reserved and nothing else on the sheet moves.
+        let packed_away: HashSet<u32> = folded_blocks
+            .iter()
+            .copied()
+            .filter(|&id| block_of(id).is_some_and(|key| packed_blocks.contains(&key)))
+            .collect();
+        let mut packs: HashMap<u32, u32> = HashMap::new();
+        if !folded_blocks.is_empty() {
+            for &id in &drawn {
+                // Up the ownership chain, keeping the last fold met: the
+                // outermost one is what a reader can actually see.
+                let (mut at, mut rep, mut guard) = (id, None, 0);
+                while let Some(&up) = nest.get(&at) {
+                    if folded_blocks.contains(&up) {
+                        rep = Some(up);
+                    }
+                    at = up;
+                    guard += 1;
+                    if guard > MAX_DEPTH {
+                        break;
+                    }
+                }
+                if let Some(rep) = rep {
+                    packs.insert(id, rep);
+                }
+            }
+        }
+        // What one block's own fold hides: every block nested under it, however
+        // deep — counted from its own shelf and not from what an outer fold
+        // happens to have swallowed, so a fold inside a fold still knows what it
+        // is holding when the reader opens the one above it.
+        let packed_of = |id: u32| -> u32 { (contained(id, &kids) - 1) as u32 };
         let tier_of = |id: u32| -> Tier {
             let Some(mark) = graph.item(id) else {
                 return Tier::Root;
@@ -1380,7 +1494,20 @@ impl DataModel {
                     },
                     seat: MarkSeat {
                         tier,
-                        kids: kids.get(&id).cloned().unwrap_or_default(),
+                        // A fold by hand keeps its kids here — the measure needs
+                        // them to reserve the band — and the drawing is what
+                        // leaves them off the paper. Only a fold the skyline
+                        // packed around hands over nothing.
+                        kids: match packed_away.contains(&id) {
+                            true => Vec::new(),
+                            false => kids.get(&id).cloned().unwrap_or_default(),
+                        },
+                        shelves: kids.get(&id).is_some_and(|list| !list.is_empty()),
+                        folded: folded_blocks.contains(&id),
+                        packed: match folded_blocks.contains(&id) {
+                            true => packed_of(id),
+                            false => 0,
+                        },
                         held_by: if vocab.contains(&id) {
                             holders.get(&id).map_or(0, |set| set.len() as u32)
                         } else {
@@ -1449,6 +1576,9 @@ impl DataModel {
                 seat: MarkSeat {
                     tier: Tier::Standing(Stand::Afar),
                     kids: Vec::new(),
+                    shelves: false,
+                    folded: false,
+                    packed: 0,
                     held_by: 0,
                 },
                 undrawn: Undrawn::default(),
@@ -1589,6 +1719,7 @@ impl DataModel {
             pairs,
             ties,
             naming,
+            packs,
             multi_crate,
         }
     }
@@ -2086,6 +2217,124 @@ pub(in crate::views::data) mod tests {
         // flare line into the block it is drawn inside would say it twice.
         assert_eq!(by_name(&model, "Nut").seat.tier, Tier::Nested(0));
         assert!(model.holds.is_empty());
+    }
+
+    /// One holder folded by hand: its own quotation stays whole, the state
+    /// shelved under it comes off the paper, and the block says how much in
+    /// words. Nothing folds itself and nothing folds by a count.
+    #[test]
+    fn a_folded_holder_keeps_its_quotation_and_counts_what_it_shelved() {
+        let g = graph(
+            vec![
+                mark(0, 0, "Wire", ItemKind::Struct),
+                mark(1, 0, "Nut", ItemKind::Struct),
+                mark(2, 0, "Thread", ItemKind::Struct),
+            ],
+            vec![owns(0, 1), owns(1, 2)],
+        );
+        // Open: `Nut` nests in `Wire` and `Thread` in `Nut`.
+        let open = build(&g);
+        assert_eq!(by_name(&open, "Nut").seat.tier, Tier::Nested(0));
+        assert_eq!(by_name(&open, "Wire").seat.kids, vec![1]);
+        assert!(by_name(&open, "Wire").seat.shelves);
+        assert_eq!(by_name(&open, "Wire").seat.packed, 0);
+        assert!(open.packs.is_empty(), "nothing folds by itself");
+
+        let folded = |keys: &[(&str, &str)]| {
+            DataModel::build(
+                &g,
+                &DataReading {
+                    blocks: keys
+                        .iter()
+                        .map(|(path, label)| block_key(path, label))
+                        .collect(),
+                    ..DataReading::default()
+                },
+            )
+        };
+        let shut = folded(&[("src/graph/data.rs", "Wire")]);
+        let wire = by_name(&shut, "Wire");
+        // The shelf is off the paper and counted; the quotation is untouched.
+        // A fold by hand **elides in place**: the packer still gets the kids, so
+        // it still reserves the band they filled and no other block on the sheet
+        // moves. What leaves them off the paper is the drawing.
+        assert_eq!(wire.seat.kids, vec![1], "the band stays reserved");
+        assert!(wire.seat.folded);
+        assert_eq!(wire.seat.packed, 2, "Nut and the Thread inside it");
+        assert!(wire.seat.shelves, "it still draws a fold mark");
+        assert_eq!(
+            wire.rows,
+            by_name(&open, "Wire").rows,
+            "a block quotes it all"
+        );
+        // Both hidden marks read through the holder that stands for them.
+        assert!(shut.hidden(1) && shut.hidden(2));
+        assert_eq!((shut.shown(1), shut.shown(2)), (0, 0));
+        assert!(!shut.hidden(0));
+        // And the seating itself never moved.
+        assert_eq!(by_name(&shut, "Nut").seat.tier, Tier::Nested(0));
+
+        // The other half of the rule: a fold the skyline was allowed to pack
+        // around hands the packer nothing, so the sheet closes up over it. That
+        // only ever happens where the paper is being laid again regardless — a
+        // `references` or `visibility` change, or the session's first build.
+        let packed = DataModel::build(
+            &g,
+            &DataReading {
+                blocks: HashSet::from([block_key("src/graph/data.rs", "Wire")]),
+                packed_blocks: HashSet::from([block_key("src/graph/data.rs", "Wire")]),
+                ..DataReading::default()
+            },
+        );
+        let wire = by_name(&packed, "Wire");
+        assert!(wire.seat.kids.is_empty(), "the packer never sees them");
+        assert!(wire.seat.folded);
+        assert_eq!(wire.seat.packed, 2);
+
+        // A block that shelves nothing has nothing to fold.
+        let leaf = folded(&[("src/graph/data.rs", "Thread")]);
+        assert!(leaf.packs.is_empty());
+        assert_eq!(by_name(&leaf, "Thread").seat.packed, 0);
+        assert!(!by_name(&leaf, "Thread").seat.shelves);
+    }
+
+    /// The way to a mark a fold hides names every holder it is hiding behind,
+    /// outermost first: a selection the reader cannot see is not a focus.
+    #[test]
+    fn a_reveal_names_every_folded_holder_on_the_way_in() {
+        let g = graph(
+            vec![
+                mark(0, 0, "Wire", ItemKind::Struct),
+                mark(1, 0, "Nut", ItemKind::Struct),
+                mark(2, 0, "Thread", ItemKind::Struct),
+            ],
+            vec![owns(0, 1), owns(1, 2)],
+        );
+        let model = DataModel::build(
+            &g,
+            &DataReading {
+                blocks: [
+                    block_key("src/graph/data.rs", "Wire"),
+                    block_key("src/graph/data.rs", "Nut"),
+                ]
+                .into_iter()
+                .collect(),
+                ..DataReading::default()
+            },
+        );
+        // The outermost fold stands for both, and the reveal opens them in
+        // order — outermost first, or the inner one is never reached.
+        assert_eq!(model.shown(2), 0);
+        assert_eq!(
+            model.reveal(2),
+            vec![
+                block_key("src/graph/data.rs", "Wire"),
+                block_key("src/graph/data.rs", "Nut"),
+            ]
+        );
+        // A block on open paper needs nothing opened, and a folded holder's own
+        // block is on the paper — so nothing opens to reach it either.
+        assert!(model.reveal(0).is_empty());
     }
 
     #[test]
