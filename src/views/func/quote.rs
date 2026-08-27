@@ -68,7 +68,6 @@ pub(super) fn FnQuotation(graph: CodeGraph, sel: Sel, path: String, label: Strin
     // authority here.
     let decl = mark.head.kind.words();
     let locator = format!("{path}:{}", mark.head.line);
-    let id = mark.id;
     rsx! {
         section { class: "plate pointer-events-auto flex max-h-[62dvh] w-full flex-col overflow-hidden sm:max-h-[calc(100dvh-4.25rem)] sm:w-auto sm:max-w-[min(46rem,calc(100vw-37rem))]",
             div { class: "flex items-baseline gap-3 px-4 pt-3 pb-2",
@@ -85,7 +84,7 @@ pub(super) fn FnQuotation(graph: CodeGraph, sel: Sel, path: String, label: Strin
                     "close ×"
                 }
             }
-            Quoted { graph, sel, item: id, path }
+            Quoted { graph, sel, path, label }
         }
     }
 }
@@ -94,9 +93,9 @@ pub(super) fn FnQuotation(graph: CodeGraph, sel: Sel, path: String, label: Strin
 /// the plate's head is drawn from the survey the client already has while the
 /// bytes are still on the way.
 #[component]
-fn Quoted(graph: CodeGraph, sel: Sel, item: u32, path: String) -> Element {
-    let source = use_resource(use_reactive((&item,), |(item,)| async move {
-        item_source(item).await
+fn Quoted(graph: CodeGraph, sel: Sel, path: String, label: String) -> Element {
+    let source = use_resource(use_reactive((&path, &label), |(path, label)| async move {
+        item_source(path, label).await
     }));
     let state = source.read();
     match &*state {

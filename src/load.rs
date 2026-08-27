@@ -27,8 +27,8 @@ pub(crate) async fn dep_graph() -> Result<DepGraph, ServerFnError> {
 
 /// Survey the workspace's code structure with rust-analyzer: every workspace
 /// source file, its items, and semantically resolved references. The first
-/// call runs the survey (tens of seconds on a large workspace); later calls
-/// answer from the cache.
+/// call and the first call after its Rust or Cargo inputs change run the
+/// survey; later calls over the same bytes answer from the cache.
 #[server]
 pub(crate) async fn code_graph() -> Result<CodeGraph, ServerFnError> {
     crate::analyze::code::survey_index()
@@ -37,15 +37,19 @@ pub(crate) async fn code_graph() -> Result<CodeGraph, ServerFnError> {
         .map_err(ServerFnError::new)
 }
 
-/// One item's source, lexed — `item` is an index into [`CodeGraph::items`].
-/// The sheet asks for it when a reviewer opens a row this chart draws no
-/// block for: a function, a trait, a method. A ghost has no source to quote —
-/// its definition left the working copy — and is not askable.
+/// One item's source, lexed. The file and label are the stable identity its
+/// URL carries; a numeric item id is only valid inside one survey generation
+/// and could name something else after the source cache refreshes. The sheet
+/// asks for this when a reviewer opens a row the chart draws no block for. A
+/// ghost has no source to quote and is not askable.
 #[server]
-pub(crate) async fn item_source(item: u32) -> Result<ItemSource, ServerFnError> {
+pub(crate) async fn item_source(path: String, label: String) -> Result<ItemSource, ServerFnError> {
     let idx = crate::analyze::code::survey_index()
         .await
         .map_err(ServerFnError::new)?;
-    idx.item_source(item)
-        .ok_or_else(|| ServerFnError::new(format!("item {item} is not in this survey")))
+    idx.item_source(&path, &label).ok_or_else(|| {
+        ServerFnError::new(format!(
+            "nothing named {label:?} is written in {path} on this survey"
+        ))
+    })
 }
