@@ -151,6 +151,16 @@ three things it needed that nothing else had:
   read one rust-analyzer survey, and neither may pay for it twice, so the
   gate the data chart owned is now shared and mounted above both route
   families by the app shell.
+- **the server cache follows the reviewed source.** a long-running slope
+  process hashes the workspace's Rust and Cargo inputs before reusing its last
+  successful survey. a page reload after those bytes change runs
+  rust-analyzer again; moving between `/data` and `/fn` with the same bytes
+  still reuses one survey. failed surveys are not cached, so retry is a real
+  retry. build output under `target/` does not invalidate the cache.
+- source quotations ask the server by `(file, label)`, the stable identity the
+  URL already carries, rather than by a numeric mark id that only belongs to
+  one survey. a cache refresh therefore cannot make an old id quote a
+  different same-named declaration.
 - **a method's own signature rows.** the data walk filed a method's
   quotation on its type's contract and nowhere else; it now also writes the
   method's own mark — the receiver as written, the parameters, the return —

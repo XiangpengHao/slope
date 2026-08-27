@@ -100,7 +100,6 @@ pub(super) fn Quotation(graph: CodeGraph, sel: Sel, path: String, label: String)
     // written in the quotation itself, which is the authority here.
     let decl = mark.head.kind.words();
     let locator = format!("{path}:{}", mark.head.line);
-    let id = mark.id;
     rsx! {
         // The plate takes the room between the cartouche and the sheet and
         // stops: a hundred columns of rust fit on a desktop, and neither piece
@@ -120,7 +119,7 @@ pub(super) fn Quotation(graph: CodeGraph, sel: Sel, path: String, label: String)
                     "close ×"
                 }
             }
-            Quoted { graph, sel, item: id, path }
+            Quoted { graph, sel, path, label }
         }
     }
 }
@@ -129,13 +128,12 @@ pub(super) fn Quotation(graph: CodeGraph, sel: Sel, path: String, label: String)
 /// the plate's head is drawn from the survey the client already has while the
 /// bytes are still on the way.
 #[component]
-fn Quoted(graph: CodeGraph, sel: Sel, item: u32, path: String) -> Element {
-    // Reactive on the item, not merely captured with it: stepping from one row
-    // of a sheet to the next changes this component's props and nothing else,
-    // and a fetch keyed on the first item it ever saw would leave the second
-    // row's plate quoting the first row's source.
-    let source = use_resource(use_reactive((&item,), |(item,)| async move {
-        item_source(item).await
+fn Quoted(graph: CodeGraph, sel: Sel, path: String, label: String) -> Element {
+    // Reactive on the stable URL identity, not a survey-local numeric id:
+    // stepping between rows must fetch the new declaration, and a refreshed
+    // source cache must never reinterpret an old id as a different item.
+    let source = use_resource(use_reactive((&path, &label), |(path, label)| async move {
+        item_source(path, label).await
     }));
     let state = source.read();
     match &*state {

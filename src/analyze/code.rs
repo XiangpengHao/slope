@@ -22,7 +22,8 @@
 //! rustc sees them), but not omniscient: names that type inference cannot
 //! settle are counted and reported in words, never silently invented.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
 
@@ -36,7 +37,7 @@ use ra_ap_syntax::{
     AstNode, AstToken, Edition, SyntaxKind, SyntaxNode, SyntaxToken, TextRange, TextSize, ast,
 };
 use ra_ap_vfs::{FileId, Vfs};
-use tokio::sync::OnceCell;
+use tokio::sync::Mutex;
 
 use super::data;
 use crate::graph::data::{
@@ -89,27 +90,144 @@ struct RefSpan {
     label: String,
 }
 
-static SURVEY: OnceCell<Result<Arc<CodeIndex>, String>> = OnceCell::const_new();
+/// The last successful survey, kept only while the Rust and Cargo inputs it
+/// read are still byte-for-byte the same. The reviewed workspace is outside
+/// this application's source tree in normal use, so the web dev server does
+/// not know when it changed and cannot invalidate this for us.
+struct CachedSurvey {
+    root: std::path::PathBuf,
+    source_hash: u64,
+    index: Arc<CodeIndex>,
+}
 
-/// The cached survey. The first caller pays for it (tens of seconds on a
-/// large workspace — rust-analyzer loads the whole workspace); everyone
-/// after answers from memory.
+static SURVEY: Mutex<Option<CachedSurvey>> = Mutex::const_new(None);
+
+/// The cached survey. A caller pays for rust-analyzer only when the workspace's
+/// Rust or Cargo inputs changed; later calls over the same bytes answer from
+/// memory. Failed surveys are not cached, so the retry control really retries.
 pub(crate) async fn survey_index() -> Result<Arc<CodeIndex>, String> {
-    SURVEY
-        .get_or_init(|| async {
-            tokio::task::spawn_blocking(|| {
-                let dir = super::workspace_dir();
-                std::panic::catch_unwind(AssertUnwindSafe(|| survey(&dir)))
-                    .unwrap_or_else(|_| {
-                        Err("the code survey crashed inside rust-analyzer".to_string())
-                    })
-                    .map(Arc::new)
-            })
-            .await
-            .unwrap_or_else(|e| Err(e.to_string()))
-        })
+    let dir = super::workspace_dir();
+    let root = dunce_canonical(&dir);
+    let hash_root = root.clone();
+    let source_hash = tokio::task::spawn_blocking(move || survey_source_hash(&hash_root))
         .await
-        .clone()
+        .map_err(|e| e.to_string())??;
+
+    // Keep the guard through the survey. Two browser requests arriving
+    // together should share one expensive rust-analyzer load, not start two.
+    let mut cached = SURVEY.lock().await;
+    if let Some(hit) = cached
+        .as_ref()
+        .filter(|hit| hit.root == root && hit.source_hash == source_hash)
+    {
+        return Ok(hit.index.clone());
+    }
+
+    let index = tokio::task::spawn_blocking(move || {
+        std::panic::catch_unwind(AssertUnwindSafe(|| survey(&dir)))
+            .unwrap_or_else(|_| Err("the code survey crashed inside rust-analyzer".to_string()))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+    .map(Arc::new)?;
+    *cached = Some(CachedSurvey {
+        root,
+        source_hash,
+        index: index.clone(),
+    });
+    Ok(index)
+}
+
+/// A content fingerprint of everything that can change the live Rust graph.
+/// Reading these bytes is small beside loading rust-analyzer, and unlike mtimes
+/// it notices a checkout or rewrite that preserves file size and timestamps.
+fn survey_source_hash(root: &std::path::Path) -> Result<u64, String> {
+    fn ignored_dir(name: &std::ffi::OsStr) -> bool {
+        matches!(
+            name.to_str(),
+            Some(".git" | ".direnv" | "node_modules" | "target")
+        )
+    }
+
+    fn input(path: &std::path::Path) -> bool {
+        if path.extension().is_some_and(|ext| ext == "rs") {
+            return true;
+        }
+        matches!(
+            path.file_name().and_then(std::ffi::OsStr::to_str),
+            Some(
+                "Cargo.toml"
+                    | "Cargo.lock"
+                    | "config"
+                    | "config.toml"
+                    | "rust-toolchain"
+                    | "rust-toolchain.toml"
+            )
+        )
+    }
+
+    fn walk(
+        root: &std::path::Path,
+        dir: &std::path::Path,
+        seen: &mut HashSet<std::path::PathBuf>,
+        hash: &mut DefaultHasher,
+    ) -> Result<(), String> {
+        let canonical = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.to_path_buf());
+        if !seen.insert(canonical) {
+            return Ok(());
+        }
+        let mut entries: Vec<std::fs::DirEntry> = std::fs::read_dir(dir)
+            .map_err(|e| {
+                format!(
+                    "could not read {} while checking the survey cache: {e}",
+                    dir.display()
+                )
+            })?
+            .collect::<Result<_, _>>()
+            .map_err(|e| {
+                format!(
+                    "could not list {} while checking the survey cache: {e}",
+                    dir.display()
+                )
+            })?;
+        entries.sort_by_key(std::fs::DirEntry::path);
+        for entry in entries {
+            let path = entry.path();
+            let kind = entry.file_type().map_err(|e| {
+                format!(
+                    "could not inspect {} while checking the survey cache: {e}",
+                    path.display()
+                )
+            })?;
+            if kind.is_dir() {
+                if !ignored_dir(&entry.file_name()) {
+                    walk(root, &path, seen, hash)?;
+                }
+                continue;
+            }
+            if !input(&path) {
+                continue;
+            }
+            path.strip_prefix(root)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .hash(hash);
+            std::fs::read(&path)
+                .map_err(|e| {
+                    format!(
+                        "could not read {} while checking the survey cache: {e}",
+                        path.display()
+                    )
+                })?
+                .hash(hash);
+        }
+        Ok(())
+    }
+
+    let mut hash = DefaultHasher::new();
+    let mut seen = HashSet::new();
+    walk(root, root, &mut seen, &mut hash)?;
+    Ok(hash.finish())
 }
 
 /// Offsets where each line starts, for offset → line mapping.
@@ -1479,7 +1597,12 @@ impl CodeIndex {
     /// closing brace are quoted from their own lines, and everything is
     /// dedented by the block's indent, so the item stands inside it the way
     /// the file writes it.
-    pub(crate) fn item_source(&self, item: u32) -> Option<ItemSource> {
+    pub(crate) fn item_source(&self, path: &str, label: &str) -> Option<ItemSource> {
+        // A mark id is only a position in one survey generation. The source
+        // cache can refresh after the workspace changes, so the server API
+        // names the declaration by the same stable pair its URL carries and
+        // resolves the current generation's id here.
+        let item = self.graph.declared(path, label)?.id;
         let mark = self.graph.item(item)?;
         let file = mark.file as usize;
         let local = *self.mark_local.get(item as usize)? as usize;
@@ -1762,6 +1885,52 @@ fn classify(tokens: &[SyntaxToken], i: usize) -> Tok {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_survey_cache_follows_source_bytes_not_target_noise() {
+        struct Temp(std::path::PathBuf);
+        impl Drop for Temp {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let nonce = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time after the epoch")
+            .as_nanos();
+        let temp = Temp(
+            std::env::temp_dir().join(format!("slope-survey-cache-{}-{nonce}", std::process::id())),
+        );
+        std::fs::create_dir_all(temp.0.join("src")).expect("source directory");
+        std::fs::create_dir_all(temp.0.join("target/debug")).expect("target directory");
+        std::fs::write(
+            temp.0.join("Cargo.toml"),
+            "[package]\nname = \"cache-fixture\"\nversion = \"0.1.0\"\n",
+        )
+        .expect("manifest");
+        let source = temp.0.join("src/lib.rs");
+        std::fs::write(&source, "pub struct ApiEpisodeArm;\n").expect("first source");
+        let before = survey_source_hash(&temp.0).expect("first hash");
+
+        // The declaration changed while the server stayed alive. Even a
+        // same-size rewrite has to invalidate the semantic survey.
+        std::fs::write(&source, "pub struct NewEpisodeArm;\n").expect("changed source");
+        let changed = survey_source_hash(&temp.0).expect("changed hash");
+        assert_ne!(before, changed);
+
+        // Build output is outside the chart and changes constantly. It must
+        // not make a route change pay for rust-analyzer again.
+        std::fs::write(
+            temp.0.join("target/debug/generated.rs"),
+            "pub struct Noise;\n",
+        )
+        .expect("target noise");
+        assert_eq!(
+            changed,
+            survey_source_hash(&temp.0).expect("hash after target noise")
+        );
+    }
 
     /// As `member_dirs` hands them over: deepest directory first.
     fn members() -> Vec<(String, String)> {

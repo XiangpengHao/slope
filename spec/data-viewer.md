@@ -305,8 +305,9 @@ do?*
 ## Implementation notes
 
 - `src/views/data/{model,layout,map,chrome,mod,quote}.rs`. The quotation
-  plate is `data::quote`, over one server call: `api::item_source(item)` hands
-  back the item's source lexed into token-classed runs with the resolved
+  plate is `data::quote`, over one server call:
+  `item_source(file, label)` hands back the item's source lexed into
+  token-classed runs with the resolved
   references attached as links. The server keeps what the graph does not carry
   over the wire — every surveyed file's text, each item's byte range, and
   every resolved reference's own name-token range — in
