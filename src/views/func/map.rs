@@ -45,7 +45,7 @@ use dioxus_flow::prelude::{
 use crate::Route;
 use crate::graph::data::{CodeGraph, ItemKind};
 use crate::views::chrome::{narrow_viewport, prefers_reduced_motion, use_settled, window_size};
-use crate::views::func::layout::{self, FnLayout, HEAD_H, Placed, RingStrip, Sizes};
+use crate::views::func::layout::{self, FnLayout, HEAD_H, Placed, RingStrip, Sizes, TieSide};
 use crate::views::func::model::{CallKind, FnMark, FnModel, SigRow, Tier};
 use crate::views::func::{
     FnOrder, FnSel, FnWires, band_route, fold_key, mark_route, tree_route, use_fns,
@@ -108,7 +108,9 @@ fn text_w(text: &str, px: f64) -> f64 {
 
 /// The engraved width of one wire: heavier the more references the survey
 /// resolved for the pair, as everywhere in this system. A contract is one
-/// promise, so it draws at the hairline.
+/// promise, so it draws at the hairline. Weight is the whole of what a resting
+/// wire says about itself — it has no colour, and under the blocks it has no
+/// crossing either.
 fn wire_width(answers: bool, count: u32) -> f64 {
     match answers {
         true => 1.0,
@@ -313,6 +315,11 @@ struct WireView {
     /// the survey — it inks lines, and nothing else.
     def_dirty: bool,
     user_dirty: bool,
+    /// Which edge of each end's head row the wire ties to — the edge facing the
+    /// other end. Carried on the wire because the fan pass needs it after every
+    /// end has been found, and because it is what the drawn point *means*.
+    from_side: TieSide,
+    to_side: TieSide,
     class: &'static str,
 }
 
@@ -517,6 +524,9 @@ impl FnDrawing {
             .collect();
         let mut wires: Vec<WireView> = Vec::with_capacity(model.calls.len());
         let mut at_pair: HashMap<(u32, u32, bool), usize> = HashMap::new();
+        // One block's own height — the band the seating reserved for its head
+        // and its quotation, which is the paper a wire may not cross.
+        let own_h = |id: u32| sizes.own.get(&id).map_or(HEAD_H, |&(_, h)| h);
         for call in &model.calls {
             // What the shelving already says takes no ink at all.
             if call.seats {
@@ -543,10 +553,17 @@ impl FnDrawing {
                 continue;
             };
             at_pair.insert((def, user, answers), wires.len());
+            // Each end ties on its own band's facing edge, and the band is the
+            // block's *own* height — a frame's box is mostly the shelf it
+            // holds, which is the sheet's ground and not the block's paper.
+            let (from_own, to_own) = (own_h(def), own_h(user));
+            let (from_side, to_side) = (from.tie_side(from_own, *to), to.tie_side(to_own, *from));
             wires.push(WireView {
                 key: format!("{def}-{user}-{}", answers as u8),
-                from: from.tie(),
-                to: to.tie(),
+                // The middle of the facing edge for now; the fan pass below
+                // spreads the ends that share one edge.
+                from: from.tie_at(from_own, from_side, 0.5),
+                to: to.tie_at(to_own, to_side, 0.5),
                 def,
                 user,
                 count: call.count,
@@ -554,6 +571,8 @@ impl FnDrawing {
                 width: 0.0,
                 def_dirty: touched.contains(&call.def) || touched.contains(&def),
                 user_dirty: touched.contains(&call.user) || touched.contains(&user),
+                from_side,
+                to_side,
                 class: match answers {
                     true => "is-answers",
                     false => "is-call",
@@ -569,6 +588,59 @@ impl FnDrawing {
                 true => Some("answers".to_string()),
                 false => (wire.count > 1).then(|| wire.count.to_string()),
             };
+        }
+        // **The fan.** Every end that ties to one edge of one head row spreads
+        // across that edge instead of stacking on its middle. A head the survey
+        // reaches from six places used to take six arrowheads on one point —
+        // a blot exactly where the reader was looking for a name — and six
+        // lines converging through the head text to reach it. Spread, each line
+        // arrives on its own bit of boundary and the head stays readable.
+        //
+        // Ordered along the edge by where the other end stands, so the fan
+        // spreads rather than braids, and by the wire itself where two other
+        // ends stand together, so one survey always draws one chart.
+        let mut fan: HashMap<(u32, TieSide), Vec<(usize, bool)>> = HashMap::new();
+        for (at, wire) in wires.iter().enumerate() {
+            fan.entry((wire.def, wire.from_side))
+                .or_default()
+                .push((at, false));
+            fan.entry((wire.user, wire.to_side))
+                .or_default()
+                .push((at, true));
+        }
+        for ((id, side), mut ends) in fan {
+            let Some(&place) = rects.get(&id) else {
+                continue;
+            };
+            // Where the other end of one wire stands, along this edge's own
+            // axis: across the paper for a top or a foot, down it for a side.
+            let along = |&(nth, to_end): &(usize, bool)| -> f64 {
+                let wire = &wires[nth];
+                let far = match to_end {
+                    true => wire.def,
+                    false => wire.user,
+                };
+                let Some(other) = rects.get(&far) else {
+                    return 0.0;
+                };
+                match side {
+                    TieSide::Top | TieSide::Under => other.x,
+                    _ => other.y,
+                }
+            };
+            ends.sort_by(|a, b| {
+                along(a)
+                    .total_cmp(&along(b))
+                    .then_with(|| (a.0, a.1).cmp(&(b.0, b.1)))
+            });
+            let slots = ends.len() + 1;
+            for (slot, (wire, to_end)) in ends.into_iter().enumerate() {
+                let point = place.tie_at(own_h(id), side, (slot + 1) as f64 / slots as f64);
+                match to_end {
+                    true => wires[wire].to = point,
+                    false => wires[wire].from = point,
+                }
+            }
         }
 
         // One boundary per frame that shelves anything, folded or not: the ring
@@ -1388,6 +1460,21 @@ fn drawn_under(reading: FnWires, w: &WireView, picked: bool, dirty: bool, lit: b
 
 /// Both families as one engraved layer, the contracts first and lighter.
 ///
+/// Drawn **twice**, at two altitudes, because a wire at rest and a wire the
+/// reader lit are two different kinds of ink (2026-08-27, user: *"the lines
+/// crossing over the boxes … they are too pronounced"*):
+///
+/// - the resting families and the strangers a reading pushed back go **under**
+///   the blocks (`over: false`), where the paper of every block they pass
+///   behind covers them. They keep the gutters — between the frames on the
+///   ground, between the shelved rows — which is all a resting wire ever needed:
+///   a trace of where the line runs, not a line across a quotation;
+/// - the selection's own lit reading goes **over** them (`over: true`), because
+///   ink the reader asked for has to be followable end to end.
+///
+/// The two together are exactly what one layer drew before, so no reading gains
+/// or loses a wire by this split.
+///
 /// No wire on this chart ever takes the flare. The structural diff reads the
 /// base edition syntactically, so it is exact about *declarations* and knows
 /// nothing about a rewritten body: there is no such thing as a changed call for
@@ -1402,6 +1489,9 @@ fn WireLayer(
     /// Whether the diff has anything to say. With no selection this is what
     /// gives the reading an anchor to take a direction against.
     dirty: bool,
+    /// Whether this is the layer over the blocks — the lit reading — or the
+    /// resting one under them.
+    over: bool,
 ) -> Element {
     // A wire this reading does not draw is not in the DOM at all; the hover
     // reading gives it back through [`HotWireLayer`] instead, in a layer of its
@@ -1423,6 +1513,11 @@ fn WireLayer(
             None if dirty && w.anchored(reading) => "is-quiet",
             None => "is-faint",
         };
+        // One altitude per kind of ink: the lit reading rides over the blocks,
+        // everything at rest under them.
+        if (classes == "is-kin") != over {
+            return None;
+        }
         Some(draw_wire(w, side, classes))
     };
     rsx! {
@@ -2108,6 +2203,16 @@ pub(super) fn FnChart(
                         kin: kin(),
                         reading: *fns.wires.read(),
                         dirty: chart.read().dirty,
+                        over: false,
+                    }
+                }
+                WorldLayer { class: "fn-wires fn-wires-lit",
+                    WireLayer {
+                        wires: chart.read().wires.clone(),
+                        kin: kin(),
+                        reading: *fns.wires.read(),
+                        dirty: chart.read().dirty,
+                        over: true,
                     }
                 }
                 WorldLayer { class: "fn-wires fn-wires-hot",
@@ -2767,6 +2872,77 @@ mod tests {
         assert!(whole.wires.is_empty(), "a head names nothing to itself");
     }
 
+    /// **A wire ties to the edge of a head row, never through it — and ends
+    /// that share one edge fan across it.**
+    ///
+    /// The head's own centre was the tie once, which is why the lines read as
+    /// crossing the boxes: every wire had to cut half a head row of quoted
+    /// source to reach the point it ended on, and a head six callers reach took
+    /// six arrowheads on one pixel. Both facts are geometry, so both are pinned
+    /// here.
+    #[test]
+    fn a_wire_ties_on_the_edge_of_a_head_and_fans_where_it_shares_one() {
+        // Six declarations on the ground, all called by a seventh — the shape
+        // that piled six arrowheads on one head.
+        let marks: Vec<FnMark> = (0..7)
+            .map(|id| mark(id, &format!("fn{id}"), &[], false))
+            .collect();
+        let model = FnModel {
+            marks,
+            calls: (1..7)
+                .map(|def| crate::views::func::model::Call {
+                    def,
+                    user: 0,
+                    kind: CallKind::Call,
+                    count: 1,
+                    seats: false,
+                })
+                .collect(),
+            seats: (0..7).collect(),
+            ..Default::default()
+        };
+        let drawing = FnDrawing::build(&model);
+        assert_eq!(drawing.wires.len(), 6, "one line per call");
+
+        let mut shared: HashMap<(u32, TieSide), Vec<(i64, i64)>> = HashMap::new();
+        for w in &drawing.wires {
+            for (id, at, side) in [(w.def, w.from, w.from_side), (w.user, w.to, w.to_side)] {
+                let box_of = drawing.rects[&id];
+                // Every one of these blocks is a leaf, so its whole box is its
+                // own band: the tie has to sit on that box's boundary.
+                let on_edge = match side {
+                    TieSide::Top => (at.y - box_of.y).abs() < 0.01,
+                    TieSide::Under => (at.y - (box_of.y + box_of.h)).abs() < 0.01,
+                    TieSide::Left => (at.x - box_of.x).abs() < 0.01,
+                    TieSide::Right => (at.x - (box_of.x + box_of.w)).abs() < 0.01,
+                };
+                assert!(on_edge, "an end sits on the edge it faces, not inside");
+                assert!(
+                    at.x >= box_of.x - 0.01 && at.x <= box_of.x + box_of.w + 0.01,
+                    "and on the box, never off it"
+                );
+                assert!(
+                    at.y >= box_of.y - 0.01 && at.y <= box_of.y + box_of.h + 0.01,
+                    "and never inside the quotation"
+                );
+                shared
+                    .entry((id, side))
+                    .or_default()
+                    .push(((at.x * 100.0) as i64, (at.y * 100.0) as i64));
+            }
+        }
+        // Every end that shares an edge with another stands on its own point.
+        let mut fanned = 0;
+        for ((_, _), mut points) in shared {
+            let count = points.len();
+            points.sort_unstable();
+            points.dedup();
+            assert_eq!(points.len(), count, "two ends stacked on one point");
+            fanned += (count > 1) as usize;
+        }
+        assert!(fanned > 0, "the shape under test shares no edge at all");
+    }
+
     /// One drawn wire, with the diff's word about each of its ends.
     fn wire(def_dirty: bool, user_dirty: bool, contract: bool) -> WireView {
         WireView {
@@ -2780,6 +2956,8 @@ mod tests {
             width: 1.0,
             def_dirty,
             user_dirty,
+            from_side: TieSide::Right,
+            to_side: TieSide::Left,
             class: match contract {
                 true => "is-answers",
                 false => "is-call",

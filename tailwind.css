@@ -1512,9 +1512,17 @@ details.fold:not([open]) > summary::after {
 /* The signature, quoted under the head the way a data block quotes its fields:
    the receiver first, each parameter as the source declares it, then the
    return. A line wider than the block ellipsizes and its hover words carry the
-   whole of it — a quotation may be cut short on the paper, never paraphrased. */
+   whole of it — a quotation may be cut short on the paper, never paraphrased.
+
+   The quotation is on paper of its own, like the head row above it. A frame's
+   *interior* is still clear — the shelf under the rule is the sheet's own
+   ground, so a frame can never paint over what it holds — but the block's own
+   two bands are opaque, and that is what a resting wire now dives under
+   instead of crossing. Its height is `own_open` in `views/func/layout.rs`,
+   which the seating keeps clear of everything it shelves. */
 .slope .fm-body {
   padding: 0 5px 4px;
+  background: var(--color-paper);
 }
 .slope .fm-row,
 .slope .fm-tail {
@@ -1663,9 +1671,28 @@ details.fold:not([open]) > summary::after {
 
 /* The two families. Solid is a call — at this altitude a body is the
    declaration; dashed and lighter is a contract, a promise rather than a
-   call. Both rest on the dependent. */
+   call. Both rest on the dependent.
+
+   **Under the blocks**, like the data chart's own families one rung up and for
+   the reason the design's layering rule gives: the ground under the ties, the
+   ties under the blocks. Painted over them this layer put every resting
+   diagonal across the quotations it passed, which is the loudest ink on a sheet
+   whose whole point is readable code (2026-08-27, user: *"the lines crossing
+   over the boxes … they are too pronounced"*). Under them a resting wire keeps
+   the gutters — between the frames on the ground, between the shelved rows —
+   and is covered by the paper of every block it passes behind. `z-index: 0`
+   puts it below `.df-viewport`, which the flow library holds at 1. */
 .slope .df-world-layer.fn-wires {
-  z-index: 1;
+  z-index: 0;
+}
+/* The two layers of ink the reader *asked for* ride over the blocks, because
+   ink that answers a gesture has to be followable end to end: the selection's
+   lit reading, and the hovered mark's own wires. Stated on both, since they
+   wear `fn-wires` for its family styles and would otherwise inherit its
+   altitude. */
+.slope .df-world-layer.fn-wires.fn-wires-lit,
+.slope .df-world-layer.fn-wires.fn-wires-hot {
+  z-index: 2;
 }
 /* The same isolation as `data-wires-hot`, for the same measured reason. */
 .slope .df-world-layer.fn-wires-hot {
@@ -1714,12 +1741,16 @@ details.fold:not([open]) > summary::after {
 /* The resting pressures. A wire the reading rests is drawn light; one it only
    admits — the `all` reading — is drawn lighter still. Neither is a wire the
    reader asked for, and both are given back at full ink by hover or selection
-   of either end. */
+   of either end.
+
+   A step up from what they rested at while this layer painted over the blocks:
+   the gutters are all a resting wire owns now, and in a gutter it has to be
+   visible to be a trace at all. */
 .slope .fn-wire.is-quiet {
-  opacity: 0.26;
+  opacity: 0.34;
 }
 .slope .fn-wire.is-faint {
-  opacity: 0.13;
+  opacity: 0.18;
 }
 .slope .fn-wire.is-hot .wire-path,
 .slope .fn-wire.is-kin .wire-path {
@@ -1733,8 +1764,19 @@ details.fold:not([open]) > summary::after {
 .slope .fn-wire.is-kin .wire-label {
   fill: var(--color-ink);
 }
+/* Lit ink is the one ink that still crosses a quotation, because ink the reader
+   asked for has to be followable over the blocks between its two ends. A hair
+   of transparency is what keeps a full-pressure line from reading as a cut
+   through the source under it — a halo or a casing would occlude the text
+   instead, which is the opposite of the point. The far edition takes it back to
+   1 below: down there the quotations are gone and a lit wire is the only thing
+   left to see. */
+.slope .fn-wire.is-hot,
+.slope .fn-wire.is-kin {
+  opacity: 0.85;
+}
 .slope .fn-wire.is-dim {
-  opacity: 0.18;
+  opacity: 0.24;
 }
 /* No wire here carries the flare. The diff reads declarations, not bodies, so
    a changed call is not a thing this survey can see: the diff's ink is the

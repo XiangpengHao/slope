@@ -49,15 +49,98 @@ pub(super) struct Placed {
     pub(super) h: f64,
 }
 
+/// Which edge of a block's own **band** — its head row and the quotation under
+/// it, which is the only paper a block actually covers — a wire ties to.
+///
+/// Four sides, and each one is a real boundary of that band: a tie is somewhere
+/// a wire can leave without crossing the block it belongs to. `Under` is the
+/// band's own foot, which is the exit for a call into the block's own shelf; the
+/// shelf is the sheet's ground, not the block's paper.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub(super) enum TieSide {
+    Top,
+    Left,
+    Right,
+    Under,
+}
+
 impl Placed {
-    /// Where a wire ties to this block: the middle of its **head row**, never
-    /// the middle of its box. A frame is as wide as everything it calls, and a
-    /// line leaving the centre of a two-thousand-unit box names nothing.
-    pub(super) fn tie(&self) -> Point {
-        Point::new(
-            self.x + self.w.min(HEAD_TIE) / 2.0,
-            self.y + HEAD_H / 2.0 + 1.0,
-        )
+    /// How far along this block's head a wire may tie: the first `HEAD_TIE`
+    /// units of it. A frame is as wide as everything it calls, and a line tied
+    /// out in a two-thousand-unit head names nothing, so the top and the foot
+    /// tie beside the name.
+    fn span(&self) -> (f64, f64) {
+        let w = self.w.min(HEAD_TIE);
+        let pad = (w * 0.18).min(FAN_PAD);
+        (self.x + pad, self.x + w - pad)
+    }
+
+    /// The band this block covers: its head row and its quotation, `own` tall.
+    /// The rest of a frame's box is the shelf it holds, which is the sheet's own
+    /// ground and no part of the block's paper.
+    fn band(&self, own: f64) -> Placed {
+        Placed {
+            x: self.x,
+            y: self.y,
+            w: self.w,
+            h: own.max(HEAD_H),
+        }
+    }
+
+    /// Which edge of this block's band faces `other` — the **nearest edge**,
+    /// which is where a wire between the two ties. `own` is this block's own
+    /// height, the band without the shelf under it.
+    ///
+    /// The head row's own centre was the tie once, and centre-to-centre is
+    /// exactly what drove every line through the text it was pointing at: a wire
+    /// had to cross half a head row, and often the whole quotation under it, to
+    /// reach the point it ended on. An edge tie starts where the paper ends.
+    pub(super) fn tie_side(&self, own: f64, other: Placed) -> TieSide {
+        let band = self.band(own);
+        let them = other.band(HEAD_H);
+        let (them_x, them_y) = (them.x + them.w.min(HEAD_TIE) / 2.0, them.y + them.h / 2.0);
+        // Above my band: the top edge faces it, and above a head row is always
+        // somebody else's paper.
+        if them_y < band.y {
+            return TieSide::Top;
+        }
+        // Below my band and inside my own width: a call into my own shelf, so
+        // the wire leaves by the band's foot and stays in the shelf it is
+        // reaching into.
+        if them_y > band.y + band.h && them_x > band.x && them_x < band.x + band.w {
+            return TieSide::Under;
+        }
+        // Beside me: out of the band's own side. Never the head's cut span —
+        // that edge is in the middle of the head text on any frame wider than
+        // `HEAD_TIE`, which is every frame.
+        let (from, to) = self.span();
+        match them_x < (from + to) / 2.0 {
+            true => TieSide::Left,
+            false => TieSide::Right,
+        }
+    }
+
+    /// Where on that edge the wire ties. `slot` runs 0..1 across the edge's own
+    /// fanning span, so several wires sharing one edge stand apart instead of
+    /// stacking on one point; one wire alone takes the middle, which is where
+    /// the old centre tie sat.
+    pub(super) fn tie_at(&self, own: f64, side: TieSide, slot: f64) -> Point {
+        let band = self.band(own);
+        let slot = slot.clamp(0.0, 1.0);
+        let (from, to) = self.span();
+        match side {
+            TieSide::Top => Point::new(from + slot * (to - from), band.y),
+            TieSide::Under => Point::new(from + slot * (to - from), band.y + band.h),
+            TieSide::Left | TieSide::Right => {
+                let x = match side {
+                    TieSide::Left => band.x,
+                    _ => band.x + band.w,
+                };
+                // Down the head row, which is the row the tie is about however
+                // deep the quotation under it runs.
+                Point::new(x, band.y + 2.0 + slot * (HEAD_H - 4.0))
+            }
+        }
     }
 }
 
@@ -86,6 +169,9 @@ const LANDSCAPE: f64 = 2.4;
 const GROUND_LANDSCAPE: f64 = 2.3;
 /// How far along a block's head a wire ties, at the widest.
 const HEAD_TIE: f64 = 150.0;
+/// Clear head row left at each end of a fanned edge, so a wire never ties on
+/// the corner it would round.
+const FAN_PAD: f64 = 14.0;
 
 /// What the layout must be told about what it seats: every drawn mark's own
 /// box — its head row, the signature quoted under it, and the counted words a

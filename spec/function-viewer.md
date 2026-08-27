@@ -98,10 +98,39 @@ every *other* resolved call.
 **The resting reading of those is two per mark**: each mark's heaviest crossing
 call in each direction, which is the same rule the data chart rests its
 references at. Hovering either end inks every wire that mark has, both ways
-round; a selection's wires ink and stay inked; `wires: all` admits the rest at
-0.26. A contract wire never folds — it is what makes the tree honest about a
-`dyn` call. Drawing all the resolved calls at once would be exactly the
-hairball the Selection's-Ink rule forbids one rung up.
+round; a selection's wires ink and stay inked. A contract wire never folds — it
+is what makes the tree honest about a `dyn` call. Drawing all the resolved calls
+at once would be exactly the hairball the Selection's-Ink rule forbids one rung
+up.
+
+**Resting ink goes under the blocks; ink the reader asked for goes over them**
+(2026-08-27, user: *"don't you think the lines crossing over the boxes doesn't
+look the best? they are too pronounced"*). The whole family used to paint above
+the block layer, against the design's own layering rule, so every resting
+diagonal crossed the quotations it passed — on a sheet whose subject is readable
+source. Now the resting families and the strangers a reading pushed back are
+drawn **beneath** the blocks: they keep the gutters between the frames on the
+ground and between the shelved rows, and the paper of the head row and the
+quotation covers them where they pass behind a block. Beneath the blocks they
+can rest a step up — 0.34 for a wire the reading rests, 0.18 for one it merely
+admits, 0.24 for one a selection dimmed — because a gutter is all they own. The
+hover reading and the selection's lit wires stay **above**, at 0.85: a wire the
+reader asked for has to be followable end to end, and the hair of transparency
+is what keeps it from reading as a cut through the source it crosses.
+
+**A wire ties on the edge of a block's band, and ends that share an edge fan
+across it.** The band is the head row plus the quotation under it — a block's
+own paper, since the rest of a frame's box is the shelf it holds. The tie is on
+the side of that band facing the far end: the **top** where the far end is above
+it, the band's **foot** where the far end is inside the block's own shelf,
+otherwise the **near side**. Along the top and the foot the tie stays within the
+first 150 units of the head, beside the name, because a frame is as wide as
+everything it calls. The head row's own centre was the tie until 2026-08-27,
+which is what drove the lines through the boxes: a wire had to cross half a head
+row of quoted source to reach its end point, and a head six calls reach took six
+arrowheads on one pixel — a blot exactly where the reader was looking for a
+name. Ends sharing one edge now spread across it, ordered by where their far
+ends stand so the fan spreads rather than braids.
 
 The diff earns no place there either, and was tried: unfolding every wire that
 merely touched a changed declaration washed a sixty-declaration change's whole
@@ -360,6 +389,24 @@ leave for.
   never read), so navigating into a fold opens it while folding the frame a
   selection sits in does not fight the reader — the folded head stands for the
   selection instead, and `FnKin::carry` gives it the lit ink.
+- The wires are drawn by **three world layers** over one `Vec<WireView>`, and
+  which layer a wire lands in is the only thing the split changes: `.fn-wires`
+  (`z-index: 0`, under the flow's own viewport) takes everything at rest,
+  `.fn-wires-lit` (`z-index: 2`) takes the wires a selection inked, and
+  `.fn-wires-hot` (`z-index: 2`, `will-change: transform`) takes the settled
+  hover's own copies. `WireLayer` draws both plates from one component with an
+  `over` flag, so the two together are exactly the set one layer drew before.
+  The hover layer stays what it was — its own compositor layer, no mount
+  animation, never re-rendered by a pointer that is merely travelling.
+- The tie geometry lives with the box, in `layout.rs`: `Placed::tie_side` picks
+  the facing edge of the block's band (`TieSide::{Top, Under, Left, Right}` —
+  `own` height from `Sizes::own`, the same number the seating reserved) and
+  `Placed::tie_at` places the point along that edge from a 0..1 slot.
+  `FnDrawing::build` then runs one **fan pass**: every (mark, side) pair
+  collects the ends that tie there, sorts them by where their far ends stand
+  (wire index breaking the tie, so one survey draws one chart) and hands each a
+  slot. A `HashMap` walk is safe here because each pass writes one distinct
+  wire end.
 - The boundary rings are one `EdgeLayer` on the ground layer: two rects per
   shelving frame (a 10px transparent `pointer-events: stroke` hit and a 1.2px
   line that inks on hover), painted outermost first so a nested boundary wins
