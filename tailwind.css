@@ -1373,6 +1373,9 @@ details.fold:not([open]) > summary::after {
   padding: 0;
   color: inherit;
   text-decoration: none;
+  /* The whole block is the link, as the data chart's is: the head row alone
+     left the quotation under it inert while the border lit on hover. */
+  cursor: pointer;
   /* One beat for one gesture. A selection moves the rooms, the landmarks and
      the wires over 400ms; the blocks used to snap under all three, which read
      as two different answers to one click. The paint is what travels — the
@@ -1495,7 +1498,6 @@ details.fold:not([open]) > summary::after {
   line-height: 15px;
   white-space: nowrap;
   overflow: hidden;
-  cursor: pointer;
 }
 .slope .fm-kw {
   flex: none;
@@ -1547,7 +1549,6 @@ details.fold:not([open]) > summary::after {
 .slope .fm-body {
   padding: 0 5px 4px;
   background: var(--color-paper);
-  cursor: default;
 }
 .slope .fm-row,
 .slope .fm-tail {

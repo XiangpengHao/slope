@@ -132,6 +132,13 @@ silently became load-bearing. Visitor mode: **Operate**.
   - **A hidden holder is not the absence of a holder.** A type whose every
     holder is narrower than the reading draws does not become a root: it
     stands, and its sheet says the reading is what left the holder off.
+  - **It narrows the paper, never a sheet** (2026-08-28, user). A selection
+    sheet names every end that touches the declaration it opened — the types
+    that hold it, the state it holds, the signatures and bodies that reach it —
+    whatever rung that end is written at. An end with no block carries `off` in
+    its word, in the relation's own words (`owns · off`, `Arc · off`), and opens
+    as a quotation of its source: the slider is how a reviewer navigates a graph
+    too big to read at once, not a redaction.
   A declaration off the reading leaves no row and no count in its frame —
   only the cartouche's one line, `n narrower declarations off this reading`,
   so a narrow reading never reads as an empty workspace. Naming a declaration

@@ -60,7 +60,7 @@ impl FnSel {
     fn of(route: &Route) -> Option<Self> {
         match route {
             Route::FnFocus { path, item, .. } => Some(FnSel::Mark(path.join("/"), item.clone())),
-            Route::FnOwnerFocus { path, owner } => {
+            Route::FnOwnerFocus { path, owner, .. } => {
                 Some(FnSel::Owner(path.join("/"), owner.clone()))
             }
             Route::FnModFocus { module } => Some(FnSel::Mod(module.clone())),
@@ -85,6 +85,7 @@ pub(super) fn owner_route(path: &str, label: &str) -> Route {
     Route::FnOwnerFocus {
         path: path.split('/').map(str::to_string).collect(),
         owner: label.to_string(),
+        peek: None,
     }
 }
 
@@ -122,6 +123,69 @@ pub(super) fn peek_route(sel: &Sel, path: &str, label: &str) -> Route {
         path: sel.0.split('/').map(str::to_string).collect(),
         item: sel.1.clone(),
         peek: Some(peek_key(path, label)),
+    }
+}
+
+/// The same move on a container's sheet: the room stays selected, and one of
+/// its rows opens as a quotation beside it. A container lists methods the
+/// reading draws no block for — a private one is still written somewhere
+/// (2026-08-28, user) — so its sheet hosts quotations exactly as a
+/// declaration's does.
+pub(super) fn owner_peek_route(sel: &Sel, path: &str, label: &str) -> Route {
+    Route::FnOwnerFocus {
+        path: sel.0.split('/').map(str::to_string).collect(),
+        owner: sel.1.clone(),
+        peek: Some(peek_key(path, label)),
+    }
+}
+
+/// The same sheet with its quotation shut: what Escape closes first, and what
+/// the plate's own `close` says. `None` where nothing is quoted.
+pub(super) fn unquote_route(at: &Route) -> Option<Route> {
+    match at.clone() {
+        Route::FnFocus {
+            path,
+            item,
+            peek: Some(_),
+        } => Some(Route::FnFocus {
+            path,
+            item,
+            peek: None,
+        }),
+        Route::FnOwnerFocus {
+            path,
+            owner,
+            peek: Some(_),
+        } => Some(Route::FnOwnerFocus {
+            path,
+            owner,
+            peek: None,
+        }),
+        _ => None,
+    }
+}
+
+/// The quotation route for whichever sheet is open right now: a row asks the
+/// URL it is standing on rather than rebuilding a selection it cannot see. A
+/// route that hosts no quotation — a module, a band — quotes nothing.
+pub(super) fn quote_route(at: &Route, path: &str, label: &str) -> Option<Route> {
+    let peek = Some(peek_key(path, label));
+    match at.clone() {
+        Route::FnFocus {
+            path: sel, item, ..
+        } => Some(Route::FnFocus {
+            path: sel,
+            item,
+            peek,
+        }),
+        Route::FnOwnerFocus {
+            path: sel, owner, ..
+        } => Some(Route::FnOwnerFocus {
+            path: sel,
+            owner,
+            peek,
+        }),
+        _ => None,
     }
 }
 
@@ -391,23 +455,39 @@ pub(crate) fn FnBandFocus(band: u32) -> Element {
     }
 }
 
-/// `/fn/impl/:..path?:owner` — one owner container selected. Every method
-/// written on that type or trait keeps full ink, everything one call across the
+/// `/fn/impl/:..path?:peek&:owner` — one owner container selected, and
+/// optionally one of its rows opened as a quotation. Every method written on
+/// that type or trait keeps full ink, everything one call across the
 /// container's line reads a step behind, and the sheet **lists** the methods and
 /// the crossings rather than counting them.
 #[component]
-pub(crate) fn FnOwnerFocus(path: Vec<String>, owner: String) -> Element {
+pub(crate) fn FnOwnerFocus(path: Vec<String>, owner: String, peek: Option<String>) -> Element {
     let Some(graph) = crate::views::survey::use_survey() else {
         return rsx! {};
     };
     let joined = path.join("/");
+    let quoted = peek
+        .as_deref()
+        .and_then(peek_at)
+        .map(|(at, label)| (at.to_string(), label.to_string()));
     rsx! {
         div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-auto z-10 flex items-end sm:inset-x-auto sm:bottom-0 sm:right-0 sm:top-14 sm:items-start sm:p-3 sm:pt-0",
             FnOwnerSheet {
                 key: "{joined}|{owner}",
-                graph,
-                path: joined,
-                owner,
+                graph: graph.clone(),
+                path: joined.clone(),
+                owner: owner.clone(),
+                peek,
+            }
+        }
+        if let Some((at, label)) = quoted {
+            div { class: "pointer-events-none absolute inset-x-3 bottom-12 top-3 z-20 flex items-end sm:inset-x-auto sm:bottom-0 sm:right-[19.5rem] sm:top-14 sm:items-start sm:p-3 sm:pl-0 sm:pt-0",
+                FnQuotation {
+                    key: "{at}|{label}",
+                    graph,
+                    path: at,
+                    label,
+                }
             }
         }
     }
@@ -444,7 +524,6 @@ pub(crate) fn FnFocus(path: Vec<String>, item: String, peek: Option<String>) -> 
                 FnQuotation {
                     key: "{at}|{label}",
                     graph,
-                    sel: (joined, item),
                     path: at,
                     label,
                 }
@@ -461,14 +540,7 @@ pub(super) fn FnShell(graph: CodeGraph, workspace: String, diff_line: String) ->
     let sel = FnSel::of(&route);
     // What Escape closes first, while a row of the sheet is quoted: the same
     // selection with the quotation shut.
-    let unquote = match &route {
-        Route::FnFocus {
-            path,
-            item,
-            peek: Some(_),
-        } => Some(mark_route(&path.join("/"), item)),
-        _ => None,
-    };
+    let unquote = unquote_route(&route);
     let facts = use_memo(use_reactive((&graph,), move |(graph,)| {
         FnModel::build(&graph, &fns.reading()).facts
     }));

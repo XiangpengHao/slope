@@ -219,7 +219,8 @@ what this rule exists to prevent.
 ## Readings and focuses
 
 - **visibility** — the same four-stop slider the data chart slides, reading the
-  same keyword each declaration writes. `n off` at its foot; naming a
+  same keyword each declaration writes. It narrows the **paper** and never a
+  sheet (2026-08-28, user). `n off` at its foot; naming a
   declaration in the search widens the reading to the stop that draws it. This
   is the **API lens**: at `pub(crate)` each module frame reads as exactly its
   crate-public surface — the free functions it publishes and, in each container,
@@ -237,7 +238,7 @@ what this rule exists to prevent.
   the stops were renamed away from, and with the corridors standing it was also
   the hairball they exist to prevent.
 - Every focus is a URL: `/fn`, `/fn/mark/:..path?item=` (with `peek=` for a
-  quoted row), `/fn/impl/:..path?owner=` (one owner container), `/fn/mod/:..module`
+  quoted row), `/fn/impl/:..path?owner=` (with `peek=` too), `/fn/mod/:..module`
   (one module boundary), and `/fn/depth/:band` (one whole band). Back retraces
   the trail; `f`, `/` and Escape behave as at every altitude. A fold is the one
   review state that is *not* a URL.
@@ -245,6 +246,12 @@ what this rule exists to prevent.
   direction and keeps them inked, reads the block at the far end of each a step
   behind, and recedes every stranger to 0.32. The recede acts on a block's paint
   and never on its box — a receded room can hold a lit block.
+  **The whole block is the target** (2026-08-28, user), as the data chart's
+  block is: the head row alone carried the click until then, so the quoted
+  signature under it — two thirds of the mark — sat inside a border that lit on
+  hover and answered nothing. One block reads as one thing, so it is one link:
+  `role="link"` and `tabindex` on the block itself, `enter` reading its source
+  once it is in hand.
 - An **owner-container selection** is the room read as what it is. Clicking its
   border selects every method written on that type or trait; inside keeps full
   ink, everything one call across the line reads a step behind, and every wire
@@ -252,6 +259,10 @@ what this rule exists to prevent.
   Its sheet **lists** rather than counts: `Methods` in declaration order (keyword,
   visibility, name, diff letter, locator, each a link), then `Called from
   outside` and `Calls out`, heaviest first, eight rows before `show all n`.
+  Every method written on the type is a row, the reading's floor included, so
+  the container sheet hosts quotations exactly as a declaration's does —
+  `/fn/impl/:..path?peek=<file>@<label>&owner=` — and `close ×`, back and Escape
+  all shut the quotation without moving the selection.
 - A **module boundary** is the dual of the data chart's, and reads the same way:
   everything written inside keeps full ink, everything one call across the line
   reads a step behind, every crossing wire inks and stays inked, and every other
@@ -293,6 +304,17 @@ sentence: `nothing in the workspace calls it.`
 quoted signature block, and `enter` all open the selected mark's own source on
 the quotation plate — `peek=<file>@<label>` naming the selection itself, so back
 closes it and Escape steps out of the quotation before the selection.
+
+**A sheet is never narrowed by the reading** (2026-08-28, user). The visibility
+slider is how a reviewer navigates a graph too big to read at once, not a
+redaction: `Called by`, `Calls`, `upstream` and a container's `Methods` list
+every end the survey resolved, whatever rung it is written at. An end the paper
+draws no block for carries `off` in its word — `1 call · off` — and opens as a
+quotation of its own source, which is the same grammar every undrawn end at both
+altitudes already keeps. The model draws the paper's wires from `calls` and the
+sheets from `all_calls`, and the blast radius walks the whole call graph:
+`a_sheet_keeps_the_calls_the_paper_drops` in `views::func::model` holds the two
+apart.
 
 ## The far edition
 

@@ -19,14 +19,18 @@ use crate::Route;
 use crate::graph::data::CodeGraph;
 use crate::graph::quote::{ItemSource, SrcLink, SrcRun};
 use crate::load::item_source;
-use crate::views::func::{Sel, mark_route, peek_route};
+use crate::views::func::{mark_route, quote_route, unquote_route};
 
 impl SrcLink {
     /// Where a run inside a quotation goes: this chart's own block for anything
     /// that runs, the data chart's block for a type it draws, and this chart's
     /// quotation plate for everything else. A reference to a whole file goes
     /// nowhere — a module has no place at either altitude.
-    fn route(&self, graph: &CodeGraph, sel: &Sel) -> Option<Route> {
+    ///
+    /// The plate hangs off whichever sheet opened it — a declaration's or a
+    /// container's — so the quotation it opens next is that same sheet's, read
+    /// off the URL rather than rebuilt from a selection it cannot see.
+    fn route(&self, graph: &CodeGraph, at: &Route) -> Option<Route> {
         if self.label.is_empty() {
             return None;
         }
@@ -37,7 +41,7 @@ impl SrcLink {
         if far.head.kind.is_data() && far.parent.is_none() {
             return Some(crate::views::data::mark_route(&self.path, &self.label));
         }
-        Some(peek_route(sel, &self.path, &self.label))
+        quote_route(at, &self.path, &self.label)
     }
 }
 
@@ -47,8 +51,9 @@ const GAP: &str = "⋮";
 /// One row of a sheet, quoted: the declaration it names, where it is written,
 /// and its own source, on a plate that stands beside the sheet.
 #[component]
-pub(super) fn FnQuotation(graph: CodeGraph, sel: Sel, path: String, label: String) -> Element {
-    let close = mark_route(&sel.0, &sel.1);
+pub(super) fn FnQuotation(graph: CodeGraph, path: String, label: String) -> Element {
+    let at = use_route::<Route>();
+    let close = unquote_route(&at).unwrap_or(Route::FnOverview {});
     let Some(mark) = graph.declared(&path, &label) else {
         return rsx! {
             section { class: "plate pointer-events-auto w-full max-w-[34rem] px-4 py-3 sm:w-auto",
@@ -84,7 +89,7 @@ pub(super) fn FnQuotation(graph: CodeGraph, sel: Sel, path: String, label: Strin
                     "close ×"
                 }
             }
-            Quoted { graph, sel, path, label }
+            Quoted { graph, path, label }
         }
     }
 }
@@ -93,7 +98,7 @@ pub(super) fn FnQuotation(graph: CodeGraph, sel: Sel, path: String, label: Strin
 /// the plate's head is drawn from the survey the client already has while the
 /// bytes are still on the way.
 #[component]
-fn Quoted(graph: CodeGraph, sel: Sel, path: String, label: String) -> Element {
+fn Quoted(graph: CodeGraph, path: String, label: String) -> Element {
     let source = use_resource(use_reactive((&path, &label), |(path, label)| async move {
         item_source(path, label).await
     }));
@@ -106,7 +111,7 @@ fn Quoted(graph: CodeGraph, sel: Sel, path: String, label: String) -> Element {
             p { class: "px-4 pb-3 font-data text-[10px] leading-relaxed text-ink-soft", "{err}" }
         },
         Some(Ok(source)) => rsx! {
-            Pane { graph, sel, source: source.clone() }
+            Pane { graph, source: source.clone() }
         },
     }
 }
@@ -115,8 +120,10 @@ fn Quoted(graph: CodeGraph, sel: Sel, path: String, label: String) -> Element {
 /// counting from its first line in the real file, no wrapping, and the text
 /// selectable so it can be copied straight off the plate.
 #[component]
-fn Pane(graph: CodeGraph, sel: Sel, source: ItemSource) -> Element {
+fn Pane(graph: CodeGraph, source: ItemSource) -> Element {
     let nav = use_navigator();
+    // The sheet this plate hangs off, for the runs that quote rather than step.
+    let sheet = use_route::<Route>();
     let no_runs: &[SrcRun] = &[];
     let mut rows: Vec<(String, &[SrcRun])> = Vec::new();
     let mut quoted: Option<u32> = None;
@@ -146,7 +153,7 @@ fn Pane(graph: CodeGraph, sel: Sel, source: ItemSource) -> Element {
                                         .link
                                         .and_then(|l| source.links.get(l as usize))
                                         .and_then(|link| {
-                                            link.route(&graph, &sel).map(|route| (route, link.clone()))
+                                            link.route(&graph, &sheet).map(|route| (route, link.clone()))
                                         });
                                     match target {
                                         Some((route, link)) => {

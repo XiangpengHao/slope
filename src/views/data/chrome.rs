@@ -10,7 +10,7 @@ use crate::Route;
 use crate::graph::data::{CodeGraph, Delta, HoldEvent, HoldKind, ItemMark, Vis};
 use crate::views::chrome::{Altitude, AltitudeSwitch, plural};
 use crate::views::data::model::{
-    Anchor, DataFacts, DataMark, DataModel, RowState, Stand, Tier, Unseen, upstream,
+    Anchor, DataFacts, DataMark, DataModel, OffHold, RowState, Stand, Tier, Unseen, upstream,
 };
 use crate::views::data::{
     RefDir, Sel, VisFloor, mark_route, mod_route, peek_at, peek_key, peek_route, use_data,
@@ -441,6 +441,19 @@ fn RowCells(row: HoldRow, dead: bool) -> Element {
     }
 }
 
+impl OffHold {
+    /// What the row says the relation is: the relation's own word, and `off`
+    /// after it where the **reading** is what left the far end without a block.
+    /// A `dyn Trait` field earns no `off` — no stop of the slider would seat a
+    /// trait — so its row reads `dyn` and quotes the contract's source.
+    fn word(&self) -> String {
+        match self.off {
+            true => format!("{} · off", self.kind.word(&self.via)),
+            false => self.kind.word(&self.via),
+        }
+    }
+}
+
 /// One end of a uses edge as the sheet reads it.
 type UsesRow<'a> = (&'a Anchor, u32, &'a [(String, u32)]);
 
@@ -604,8 +617,8 @@ impl DataMark {
                     .to_string()
             }
             Tier::Standing(Stand::Narrower) => {
-                "every type that holds it is narrower than this reading draws — widen it to see \
-                 them."
+                "every type that holds it is narrower than this reading draws, so no line on the \
+                 paper reaches it — the rows below name them."
                     .to_string()
             }
         }
@@ -918,15 +931,16 @@ pub(super) fn DataSheet(
                 .collect(),
         ),
     );
-    // The holders this reading left off the paper. `Stand::Narrower` says the
-    // tier in one sentence; these are the rows behind it, each quoting the
-    // holder's own source — an empty list under that sentence would be the
-    // sheet withholding names it has (2026-08-25).
+    // The holders this reading left off the paper, each in the word its own
+    // relation writes. `Stand::Narrower` says the tier in one sentence; these
+    // are the rows behind it, each quoting the holder's own source — an empty
+    // list under that sentence would be the sheet withholding names it has
+    // (2026-08-25), and so would a list narrowed by the slider (2026-08-28).
     used_by.extend(
         mark.undrawn
             .holders_off
             .iter()
-            .filter_map(|&holder| namer_row(holder, None, "owns · off")),
+            .filter_map(|h| namer_row(h.item, None, &h.word())),
     );
     // The naming ink this chart refuses to draw, in rows: the free
     // declarations whose own signature names it (each a link to its
@@ -991,6 +1005,15 @@ pub(super) fn DataSheet(
                 .map(|h| (&h.held, h.kind, h.via.as_str(), h.event))
                 .collect(),
         ),
+    );
+    // And the state it holds that this reading draws no block for: a field is
+    // written whether or not the slider draws what it reaches, so the row
+    // stands and quotes the declaration's own source.
+    uses.extend(
+        mark.undrawn
+            .held_off
+            .iter()
+            .filter_map(|h| namer_row(h.item, None, &h.word())),
     );
 
     // The implementation ink, both ways round — and then the same ink from

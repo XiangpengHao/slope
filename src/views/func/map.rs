@@ -1030,8 +1030,8 @@ fn FnPlate(view: MeasuredBlock, kin: Option<FnKin>, hot: Signal<Option<u32>>) ->
     };
     let push = to.clone();
     // Enter means one thing at this altitude: read the selected declaration's
-    // own source. A head row that is not the selection yet is selected by it;
-    // on the mark already in hand it opens the quotation. Clicking is what lets
+    // own source. A block that is not the selection yet is selected by it; on
+    // the mark already in hand it opens the quotation. Clicking is what lets
     // a selection go, and Enter never does two things.
     let pressed = match picked {
         true => crate::views::func::peek_route(
@@ -1044,31 +1044,36 @@ fn FnPlate(view: MeasuredBlock, kin: Option<FnKin>, hot: Signal<Option<u32>>) ->
     let mut hot = hot;
     let id = view.id;
     rsx! {
+        // The **whole block** is the link, exactly as the data chart's is
+        // (2026-08-28, user). The head row alone carried the gesture, so two
+        // thirds of a mark — its quoted signature — sat under a border that
+        // lit on hover and answered nothing; a block that reads as one thing
+        // is one target.
         div {
             class: "fn-mark",
             class: if !kin_class.is_empty() { "{kin_class}" },
             class: if view.entry { "is-entry" },
             class: if view.ring { "is-ring" },
             class: if view.letter.is_some() { "is-diff" },
+            role: "link",
+            tabindex: "0",
+            "aria-label": "{title}",
+            title: "{title}",
+            onclick: move |e: Event<MouseData>| {
+                e.prevent_default();
+                e.stop_propagation();
+                nav.push(push.clone());
+            },
+            onkeydown: move |e: Event<KeyboardData>| {
+                if e.key() == Key::Enter {
+                    e.stop_propagation();
+                    nav.push(pressed.clone());
+                }
+            },
+            onmouseenter: move |_| hot.set(Some(id)),
+            onmouseleave: move |_| hot.set(None),
             header {
                 class: "fm-head",
-                role: "link",
-                tabindex: "0",
-                "aria-label": "{title}",
-                title: "{title}",
-                onclick: move |e: Event<MouseData>| {
-                    e.prevent_default();
-                    e.stop_propagation();
-                    nav.push(push.clone());
-                },
-                onkeydown: move |e: Event<KeyboardData>| {
-                    if e.key() == Key::Enter {
-                        e.stop_propagation();
-                        nav.push(pressed.clone());
-                    }
-                },
-                onmouseenter: move |_| hot.set(Some(id)),
-                onmouseleave: move |_| hot.set(None),
                 span { class: "fm-kw", "{view.decl}" }
                 // The declaration's own name, as rust writes it: the name and
                 // the bracket the signature opens with, with no space invented

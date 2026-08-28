@@ -58,8 +58,8 @@ enum Route {
         FnOverview {},
         #[route("/fn/mark/:..path?:peek&:item")]
         FnFocus { path: Vec<String>, peek: Option<String>, item: String },
-        #[route("/fn/impl/:..path?:owner")]
-        FnOwnerFocus { path: Vec<String>, owner: String },
+        #[route("/fn/impl/:..path?:peek&:owner")]
+        FnOwnerFocus { path: Vec<String>, peek: Option<String>, owner: String },
         #[route("/fn/mod/:..module")]
         FnModFocus { module: Vec<String> },
         #[route("/fn/depth/:band")]

@@ -32,12 +32,18 @@
 //! whose every holder is off the reading does not become a root — nothing on
 //! the paper holds it, but something in the workspace does — so it stands with
 //! [`Stand::Narrower`] and the sheet says why.
+//!
+//! And it narrows the **paper** only. A selection sheet names every end that
+//! touches the declaration it opened, whatever rung that end is written at
+//! (2026-08-28, user): the slider is how a reviewer navigates a graph too big
+//! to read at once, not a redaction. An end with no block on the paper carries
+//! `off` in its word and opens as a quotation of its own source.
 
 use std::collections::{HashMap, HashSet};
 
 use crate::Route;
 use crate::graph::data::{
-    CodeGraph, Delta, GhostMark, HoldEvent, HoldKind, ItemKind, ItemMark, MarkRef, Vis,
+    CodeGraph, Delta, GhostMark, HoldEdge, HoldEvent, HoldKind, ItemKind, ItemMark, MarkRef, Vis,
 };
 use crate::views::data::{DataReading, RefDir, mark_route};
 
@@ -480,6 +486,26 @@ pub(super) struct Unseen {
     pub(super) count: u32,
 }
 
+/// One structural relation this reading draws no end for: the far declaration,
+/// and the word the relation itself writes. A holder with no block is still a
+/// holder, and a type held by a block with no block of its own is still held —
+/// the reading folds the picture, it never takes a name off the sheet
+/// (2026-08-28, user). Each is a real item with a definition, so the sheet
+/// gives every one of them a row and a quotation of its source.
+#[derive(Clone, PartialEq, Debug)]
+pub(super) struct OffHold {
+    /// Its [`ItemMark`] id: the row's words, and where the quotation lands.
+    pub(super) item: u32,
+    pub(super) kind: HoldKind,
+    /// The strongest wrapper on the walk, in its own word.
+    pub(super) via: String,
+    /// The **reading** is what left it off the paper — a declaration written
+    /// narrower than the slider draws. False where this chart draws no block
+    /// for that kind of declaration at all: a `dyn Trait` field lands on a
+    /// trait, and no stop of the slider would ever seat one.
+    pub(super) off: bool,
+}
+
 /// One shape or static with a block on the paper.
 #[derive(Clone, PartialEq, Debug)]
 pub(super) struct DataMark {
@@ -572,11 +598,15 @@ pub(super) struct Undrawn {
     /// Where its own impls reach code the chart draws no mark for, the same
     /// way round. Said on the sheet, never on the paper.
     pub(super) unseen_uses: Vec<Unseen>,
-    /// The types that hold it and the visibility reading left off the paper.
-    /// A holder with no block is still a holder, so it is an end and not a
-    /// count: the sheet gives each one a row that quotes its source, and
+    /// The types that hold it and the reading left off the paper. A holder
+    /// with no block is still a holder, so it is an end and not a count: the
+    /// sheet gives each one a row that quotes its source, and
     /// [`Stand::Narrower`] is the tier this list explains.
-    pub(super) holders_off: Vec<u32>,
+    pub(super) holders_off: Vec<OffHold>,
+    /// The same the other way round: the state this block holds that the
+    /// reading left off the paper. A field is written whether or not the
+    /// slider draws what it reaches.
+    pub(super) held_off: Vec<OffHold>,
 }
 
 impl DataMark {
@@ -1030,26 +1060,53 @@ impl DataModel {
         // and by which: held state with nothing on the paper to say so. Ends,
         // not a flag — the sheet gives every one of them a row.
         let mut held_narrower: HashMap<u32, Vec<u32>> = HashMap::new();
+        // The same ink, both ways round and whatever it holds by, for the
+        // sheets: what holds a drawn block from off the paper, and what a drawn
+        // block holds off the paper.
+        let mut holders_off: HashMap<u32, Vec<OffHold>> = HashMap::new();
+        let mut held_off: HashMap<u32, Vec<OffHold>> = HashMap::new();
         let mut naming: Vec<Naming> = Vec::new();
         let mut named_set: HashMap<u32, HashSet<u32>> = HashMap::new();
         let mut named_seen: HashSet<(u32, u32)> = HashSet::new();
+        let placed = |id: u32| anchor_of.get(id as usize).is_some_and(Option::is_some);
+        let off_end = |item: u32, edge: &HoldEdge| OffHold {
+            item,
+            kind: edge.kind,
+            via: edge.via.clone(),
+            off: narrower.contains(&item),
+        };
         for edge in &graph.holds {
             let (from, to) = (edge.from, edge.to);
-            if !drawn_mark(to) || from == to {
+            if from == to {
+                continue;
+            }
+            if !drawn_mark(to) {
+                // The far end has no block — the reading is narrower than the
+                // declaration it reaches. The paper has nothing to draw the
+                // line to; the holder's own sheet still names what it holds.
+                if structural(from, edge.from_method)
+                    && drawn_mark(from)
+                    && !placed(to)
+                    && edge.event != Some(HoldEvent::Removed)
+                {
+                    held_off.entry(from).or_default().push(off_end(to, edge));
+                }
                 continue;
             }
             if structural(from, edge.from_method) {
                 // A holder in a folded module still holds: the edge lands on
                 // the boundary's row, and the held type must not read as a
                 // root while a drawn line says otherwise.
-                let placed = anchor_of.get(from as usize).is_some_and(Option::is_some);
+                let placed = placed(from);
                 if edge.event == Some(HoldEvent::Removed) {
                     continue;
                 }
                 if !placed {
                     // A holder the visibility reading left off the paper holds
                     // it all the same. There is no end to draw the line to, so
-                    // the tier says it in words instead of reading `a root`.
+                    // the tier says it in words instead of reading `a root`,
+                    // and the sheet gives the holder its own row.
+                    holders_off.entry(to).or_default().push(off_end(from, edge));
                     if narrower.contains(&from)
                         && matches!(edge.kind, HoldKind::Owns | HoldKind::Shares)
                     {
@@ -1701,15 +1758,27 @@ impl DataModel {
             });
             ends
         };
+        // One row per (end, relation), in name order: the sheet reads these
+        // beside the drawn ones, and a name engraved twice reads as two
+        // neighbours.
+        let off_ends = |ends: Option<&Vec<OffHold>>| -> Vec<OffHold> {
+            let mut ends = ends.cloned().unwrap_or_default();
+            ends.sort_by(|a, b| {
+                (name_of(a.item), a.item, a.kind as u8, &a.via).cmp(&(
+                    name_of(b.item),
+                    b.item,
+                    b.kind as u8,
+                    &b.via,
+                ))
+            });
+            ends.dedup();
+            ends
+        };
         for mark in &mut marks {
             mark.undrawn.used_by = unseen_ends(unseen_in.get(&mark.id));
             mark.undrawn.unseen_uses = unseen_ends(unseen_out.get(&mark.id));
-            if let Some(holders) = held_narrower.get(&mark.id) {
-                let mut holders = holders.clone();
-                holders.sort_by_key(|&id| (name_of(id), id));
-                holders.dedup();
-                mark.undrawn.holders_off = holders;
-            }
+            mark.undrawn.holders_off = off_ends(holders_off.get(&mark.id));
+            mark.undrawn.held_off = off_ends(held_off.get(&mark.id));
         }
         let multi_crate = crates.len() > 1;
         Self {
@@ -1876,9 +1945,57 @@ pub(in crate::views::data) mod tests {
         // holder is still an end the sheet can name and quote, so it is
         // carried as one rather than left to the tier sentence alone.
         assert!(model.holds.is_empty());
-        assert_eq!(held.undrawn.holders_off, vec![0]);
+        assert_eq!(
+            held.undrawn.holders_off,
+            vec![OffHold {
+                item: 0,
+                kind: HoldKind::Owns,
+                via: String::new(),
+                off: true,
+            }]
+        );
         // Widened, the nesting is back exactly as it was.
         assert_eq!(by_name(&build(&g), "Held").seat.tier, Tier::Nested(0));
+    }
+
+    /// **The reading folds the picture; it never withholds a name.** The same
+    /// holding read from the other end: what a drawn block holds is on its own
+    /// sheet whether or not the slider draws a block for it (2026-08-28, user).
+    #[test]
+    fn a_sheet_names_the_state_the_paper_leaves_off() {
+        let mut g = graph(
+            vec![
+                mark(0, 0, "Keeper", ItemKind::Struct),
+                mark(1, 0, "Held", ItemKind::Struct),
+            ],
+            vec![owns(0, 1)],
+        );
+        // This time the holder is published and what it holds is private.
+        g.items[0].head.vis = Vis::Pub;
+        let reading = DataReading {
+            vis_floor: VisFloor::Pub,
+            ..DataReading::default()
+        };
+        let model = DataModel::build(&g, &reading);
+        let keeper = by_name(&model, "Keeper");
+        // Nothing is drawn — there is no block to draw the line to — and the
+        // sheet still names the field's own type and quotes it.
+        assert!(model.holds.is_empty());
+        assert!(keeper.seat.kids.is_empty());
+        assert_eq!(
+            keeper.undrawn.held_off,
+            vec![OffHold {
+                item: 1,
+                kind: HoldKind::Owns,
+                via: String::new(),
+                off: true,
+            }]
+        );
+        // Widened, the same fact is the nesting itself, and nothing is off.
+        let all = build(&g);
+        let wide = by_name(&all, "Keeper");
+        assert_eq!(wide.seat.kids, vec![1]);
+        assert!(wide.undrawn.held_off.is_empty());
     }
 
     #[test]

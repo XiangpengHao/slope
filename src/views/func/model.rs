@@ -32,6 +32,13 @@
 //! Types have no block here — this chart draws behavior — so what a function
 //! touches is counted in its hover words and spent back out as rows on its
 //! sheet, each one a link down to the data altitude that does draw it.
+//!
+//! The visibility reading narrows the **paper** and nothing else. A sheet lists
+//! every caller, every callee and every method written on a container, whatever
+//! rung it is written at (2026-08-28, user): the slider is how a reviewer
+//! navigates a graph too big to read at once, not a redaction. So the model
+//! carries both — [`FnModel::calls`], the wires the paper draws, and
+//! [`FnModel::all_calls`], every call the survey resolved.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 
@@ -520,6 +527,13 @@ impl Container {
 pub(super) struct FnModel {
     pub(super) marks: Vec<FnMark>,
     pub(super) calls: Vec<Call>,
+    /// Every call the survey resolved, the reading's floor included — the two
+    /// lists above are this one narrowed to what the paper draws. A sheet reads
+    /// these: the slider folds the picture, and folding a picture is not the
+    /// same as withholding a name (2026-08-28, user).
+    pub(super) all_calls: Vec<Call>,
+    /// What calls each declaration over that whole set, for the blast radius.
+    pub(super) all_callers: HashMap<u32, Vec<u32>>,
     /// The crate and module frames, crate frames first and every frame after
     /// the one it sits inside.
     pub(super) frames: Vec<Frame>,
@@ -704,11 +718,15 @@ impl FnModel {
     /// Every mark a rewrite of `from` could reach, walking callers outward: the
     /// transitive callers, and the methods answering a clause it answers. The
     /// blast radius, in the same sense the two rungs above use the word.
+    ///
+    /// Over the whole call graph, never the reading's: a rewrite reaches what
+    /// it reaches, and a private caller two hops out is exactly the one a
+    /// narrowed walk would have promised was not there.
     pub(super) fn upstream(&self, from: u32) -> HashSet<u32> {
         let mut seen: HashSet<u32> = HashSet::new();
         let mut queue: VecDeque<u32> = VecDeque::from([from]);
         while let Some(at) = queue.pop_front() {
-            for &user in self.callers.get(&at).into_iter().flatten() {
+            for &user in self.all_callers.get(&at).into_iter().flatten() {
                 if user != from && seen.insert(user) {
                     queue.push_back(user);
                 }
@@ -918,15 +936,14 @@ impl FnModel {
             mark.touches = touches.get(&mark.id).map_or(0, Vec::len);
         }
 
-        // ---- The drawn ink, narrowed to what the reading draws. ------------
+        // ---- The ink, whole and then narrowed to what the reading draws. ---
         //
-        // Every call is a wire now (2026-08-27, user). The shelved section drew
-        // the way-in call as containment and spent ink only on the rest; the
-        // household's containment says *whose code this is*, which no call can
-        // stand for, so a call that is not drawn is a call not said.
-        let mut calls: Vec<Call> = pairs
+        // Every call the survey resolved, whatever the slider is holding. The
+        // reading is how a reviewer navigates a graph too big to read at once,
+        // and never a redaction (2026-08-28, user): the paper narrows, and a
+        // declaration opened by name is owed every end that touches it.
+        let mut all_calls: Vec<Call> = pairs
             .iter()
-            .filter(|((def, user), _)| drawn.contains(def) && drawn.contains(user))
             .map(|(&(def, user), &count)| Call {
                 def,
                 user,
@@ -934,18 +951,23 @@ impl FnModel {
                 count,
             })
             .collect();
-        calls.extend(
-            answers
-                .iter()
-                .filter(|(clause, answer)| drawn.contains(clause) && drawn.contains(answer))
-                .map(|&(clause, answer)| Call {
-                    def: clause,
-                    user: answer,
-                    kind: CallKind::Answers,
-                    count: 0,
-                }),
-        );
-        calls.sort_by_key(|c| (c.def, c.user, c.kind == CallKind::Answers));
+        all_calls.extend(answers.iter().map(|&(clause, answer)| Call {
+            def: clause,
+            user: answer,
+            kind: CallKind::Answers,
+            count: 0,
+        }));
+        all_calls.sort_by_key(|c| (c.def, c.user, c.kind == CallKind::Answers));
+
+        // Every call is a wire now (2026-08-27, user). The shelved section drew
+        // the way-in call as containment and spent ink only on the rest; the
+        // household's containment says *whose code this is*, which no call can
+        // stand for, so a call that is not drawn is a call not said.
+        let calls: Vec<Call> = all_calls
+            .iter()
+            .filter(|c| drawn.contains(&c.def) && drawn.contains(&c.user))
+            .cloned()
+            .collect();
 
         // What each mark calls and what calls it, over what this reading draws,
         // heaviest first: the order the arrow walk steps in, and the order every
@@ -1028,6 +1050,8 @@ impl FnModel {
         FnModel {
             marks,
             calls,
+            all_calls,
+            all_callers: callers_of,
             frames: house.frames,
             owners: house.owners,
             home: house.home,
@@ -1701,6 +1725,38 @@ mod tests {
         // the slider hides still called it.
         let walk = model.marks.iter().find(|m| m.head.name == "walk").unwrap();
         assert_eq!(walk.tier, Tier::Deep(1));
+    }
+
+    /// **The reading folds the picture; it never withholds a name.** The paper
+    /// drops a wire whose end it does not draw — and the sheet keeps every one
+    /// of them, because a reviewer who opened a declaration asked about that
+    /// declaration and not about the slider (2026-08-28, user).
+    #[test]
+    fn a_sheet_keeps_the_calls_the_paper_drops() {
+        let narrow = FnModel::build(&chain(), &reading(VisFloor::Crate));
+        let wide = FnModel::build(&chain(), &reading(VisFloor::All));
+        // `note` is private: no wire on the narrow paper, every call on both
+        // sheets, and the same call either way the slider is set.
+        assert!(narrow.calls.iter().all(|c| c.def != 2 && c.user != 2));
+        assert_eq!(narrow.all_calls, wide.all_calls);
+        let into_note: Vec<u32> = narrow
+            .all_calls
+            .iter()
+            .filter(|c| c.def == 2)
+            .map(|c| c.user)
+            .collect();
+        assert_eq!(into_note, vec![1], "`walk` calls it, drawn or not");
+        // And the blast radius walks the whole call graph: a rewrite of the
+        // private declaration reaches `walk`, and `main` behind it.
+        assert_eq!(narrow.upstream(2), HashSet::from([1, 0]));
+        assert_eq!(narrow.upstream(2), wide.upstream(2));
+        // The hover words on the mark and the rows on its sheet count the same
+        // ends — the count a sheet states is a count of rows it can name.
+        let walk = narrow.marks.iter().find(|m| m.head.name == "walk").unwrap();
+        assert_eq!(
+            walk.calls, 1,
+            "the private callee is still one of its calls"
+        );
     }
 
     /// A ring nothing reaches is said in words, not dropped: two functions that

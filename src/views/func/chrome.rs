@@ -15,12 +15,13 @@ use std::collections::HashMap;
 use dioxus::prelude::*;
 
 use crate::Route;
-use crate::graph::data::CodeGraph;
+use crate::graph::data::{CodeGraph, ItemMark};
 use crate::views::chrome::{Altitude, AltitudeSwitch, plural};
 use crate::views::data::VisFloor;
 use crate::views::func::model::{FnFacts, FnModel, Touch};
 use crate::views::func::{
-    FnWires, Sel, band_route, mark_route, mod_route, peek_at, peek_key, peek_route, use_fns,
+    FnWires, Sel, band_route, mark_route, mod_route, owner_peek_route, peek_at, peek_key,
+    peek_route, quote_route, use_fns,
 };
 
 /// The chart's title block: the census of what the workspace runs, the ladder,
@@ -330,8 +331,12 @@ struct FnRow {
 }
 
 /// One chunked list of rows: the first eight, then a typographic "show all n".
+///
+/// A row that quotes its end keeps the sheet it is on selected, whichever sheet
+/// that is: the route says which, so no list has to be told.
 #[component]
-fn RowList(rows: Vec<FnRow>, sel: Sel, open: Option<String>) -> Element {
+fn RowList(rows: Vec<FnRow>, open: Option<String>) -> Element {
+    let at = use_route::<Route>();
     let mut all = use_signal(|| false);
     let total = rows.len();
     let shown = if all() || total <= 8 { total } else { 8 };
@@ -344,7 +349,9 @@ fn RowList(rows: Vec<FnRow>, sel: Sel, open: Option<String>) -> Element {
                         let to = row
                             .to
                             .clone()
-                            .or_else(|| quote.map(|(path, label)| peek_route(&sel, path, label)));
+                            .or_else(|| {
+                                quote.and_then(|(path, label)| quote_route(&at, path, label))
+                            });
                         let here = row.peek.is_some() && row.peek == open;
                         let title = match (&row.hint, row.to.is_none() && quote.is_some()) {
                             (Some(hint), true) => Some(format!("{hint} — quote its source")),
@@ -427,7 +434,6 @@ fn Section(
     hint: String,
     rows: Vec<FnRow>,
     empty: String,
-    sel: Sel,
     open: Option<String>,
 ) -> Element {
     rsx! {
@@ -446,7 +452,7 @@ fn Section(
                     "{empty}"
                 }
             } else {
-                RowList { rows, sel, open }
+                RowList { rows, open }
             }
         }
     }
@@ -559,8 +565,11 @@ pub(super) fn FnSheet(
     };
 
     let by_id = model.by_id();
-    // One row per far end. A mark the chart draws re-centres the chart on it;
-    // one it draws no block for opens as a quotation of its own source.
+    // One row per far end, whatever the reading draws. A mark the chart draws
+    // re-centres the chart on it; one written narrower than the slider is
+    // holding says `off` and opens as a quotation of its own source. The
+    // reading folds the picture — it never takes a caller's name off the sheet
+    // of the declaration that reader asked about (2026-08-28, user).
     let far_row = |id: u32, word: String| -> Option<FnRow> {
         let item = graph.item(id)?;
         let file = graph.file(item.file)?;
@@ -570,7 +579,10 @@ pub(super) fn FnSheet(
             decl: item.head.kind.decl_words(&item.head.vis),
             name: item.head.name.clone(),
             letter: drawn.and_then(|m| m.letter()),
-            word,
+            word: match drawn.is_some() {
+                true => word,
+                false => format!("{word} · off"),
+            },
             hint: Some(format!("{}:{}", file.path, item.head.line)),
             peek: (drawn.is_none()).then(|| peek_key(&file.path, &item.head.label)),
         })
@@ -584,7 +596,7 @@ pub(super) fn FnSheet(
     // Whose code runs this, heaviest first — and the contract it answers,
     // which is the one caller a call graph cannot see.
     let mut called_by: Vec<(u32, FnRow)> = model
-        .calls
+        .all_calls
         .iter()
         .filter(|c| c.def == mark.id)
         .filter_map(|c| {
@@ -596,7 +608,7 @@ pub(super) fn FnSheet(
     let called_by: Vec<FnRow> = called_by.into_iter().map(|(_, row)| row).collect();
 
     let mut calls: Vec<(u32, FnRow)> = model
-        .calls
+        .all_calls
         .iter()
         .filter(|c| c.user == mark.id)
         .filter_map(|c| {
@@ -635,7 +647,7 @@ pub(super) fn FnSheet(
     // as direct callers: the fold under `Called by` is what the sheet used to
     // spend on a sentence nobody could follow.
     let direct: std::collections::HashSet<u32> = model
-        .calls
+        .all_calls
         .iter()
         .filter(|c| c.def == mark.id)
         .map(|c| c.user)
@@ -747,11 +759,10 @@ pub(super) fn FnSheet(
             }
             Section {
                 title: "Called by".to_string(),
-                hint: "whose code runs this — the contract it answers included, which is the one caller a call graph cannot see"
+                hint: "whose code runs this, whatever the reading draws — the contract it answers included, which is the one caller a call graph cannot see"
                     .to_string(),
                 rows: called_by,
                 empty: "nothing in the workspace calls it.".to_string(),
-                sel: sel.clone(),
                 open: peek.clone(),
             }
             // The blast radius, in names rather than a number. A count of
@@ -765,19 +776,18 @@ pub(super) fn FnSheet(
                         // The fold's own name is the thing it holds, and what
                         // that thing means is hover words: a summary is a
                         // label on a drawer, not a sentence about it.
-                        title: "every caller a rewrite here could reach, beyond the ones this sheet already lists as direct callers",
+                        title: "every caller a rewrite here could reach, whatever the reading draws, beyond the ones this sheet already lists as direct callers",
                         "upstream ({upstream.len()})"
                     }
-                    RowList { rows: upstream, sel: sel.clone(), open: peek.clone() }
+                    RowList { rows: upstream, open: peek.clone() }
                 }
             }
             Section {
                 title: "Calls".to_string(),
-                hint: "what this declaration's own body runs, and the contract it answers"
+                hint: "what this declaration's own body runs, whatever the reading draws, and the contract it answers"
                     .to_string(),
                 rows: calls,
                 empty: "it calls nothing the survey resolved.".to_string(),
-                sel: sel.clone(),
                 open: peek.clone(),
             }
             if !touched.is_empty() {
@@ -787,7 +797,6 @@ pub(super) fn FnSheet(
                         .to_string(),
                     rows: touched,
                     empty: String::new(),
-                    sel,
                     open: peek,
                 }
             }
@@ -801,7 +810,13 @@ pub(super) fn FnSheet(
 /// the three questions a reader brings to a room are what is in it, what runs it
 /// from outside, and what it reaches out to.
 #[component]
-pub(super) fn FnOwnerSheet(graph: CodeGraph, path: String, owner: String) -> Element {
+pub(super) fn FnOwnerSheet(
+    graph: CodeGraph,
+    path: String,
+    owner: String,
+    /// Which of its rows is open as a quotation, as the URL carries it.
+    peek: Option<String>,
+) -> Element {
     let fns = use_fns();
     let sel: Sel = (path.clone(), owner.clone());
     let model = use_memo(use_reactive((&graph,), move |(graph,)| {
@@ -819,24 +834,61 @@ pub(super) fn FnOwnerSheet(graph: CodeGraph, path: String, owner: String) -> Ele
         };
     };
     let by_id = model.by_id();
-    let inside: std::collections::HashSet<u32> = room.marks.iter().copied().collect();
-    // Every method written on this owner, in the order the source writes them:
-    // the keyword and visibility rust writes, the name, the diff's letter, and
-    // where it is written. Each row is a link — a sheet that counted twelve
-    // nameable declarations and named none of them is the defect this system
-    // rejects everywhere else.
-    let methods: Vec<FnRow> = room
-        .marks
+    // Every method written on this owner, whatever the reading draws — the
+    // room's own census, which the slider narrows on the paper and never here
+    // (2026-08-28, user). A method the chart draws re-centres it; one written
+    // narrower says `off` and opens as a quotation of its own source.
+    let mut written: Vec<&ItemMark> = graph
+        .items
         .iter()
-        .filter_map(|id| by_id.get(id).copied())
-        .map(|m| FnRow {
-            to: Some(mark_route(&m.head.path, &m.head.label)),
-            decl: m.head.decl(),
-            name: m.head.name.clone(),
-            letter: m.letter(),
-            word: m.head.file_line(),
-            hint: Some(format!("{} · {}", m.head.section, m.head.locator())),
-            peek: None,
+        .filter(|m| m.parent == Some(room.ty) && m.head.kind.is_callable())
+        .collect();
+    // Declaration order, as the source writes it: the file, then the line —
+    // the order the container itself reads in.
+    written.sort_by_key(|m| {
+        (
+            graph
+                .file(m.file)
+                .map(|f| f.path.clone())
+                .unwrap_or_default(),
+            m.head.line,
+            m.id,
+        )
+    });
+    let inside: std::collections::HashSet<u32> = written.iter().map(|m| m.id).collect();
+    // Each row is a link — a sheet that counted twelve nameable declarations
+    // and named none of them is the defect this system rejects everywhere
+    // else.
+    let section_of = |mark: u32| -> String {
+        graph
+            .item(room.ty)
+            .and_then(|ty| ty.body.method_rows.iter().find(|r| r.mark == mark))
+            .map(|r| r.section.clone())
+            .unwrap_or_default()
+    };
+    let methods: Vec<FnRow> = written
+        .iter()
+        .filter_map(|m| {
+            let file = graph.file(m.file)?;
+            let drawn = by_id.get(&m.id);
+            let at = format!("{}:{}", file.path, m.head.line);
+            let file_line = format!(
+                "{}:{}",
+                file.path.rsplit('/').next().unwrap_or(&file.path),
+                m.head.line
+            );
+            Some(FnRow {
+                to: drawn.map(|d| mark_route(&d.head.path, &d.head.label)),
+                decl: m.head.kind.decl_words(&m.head.vis),
+                name: m.head.name.clone(),
+                letter: drawn.and_then(|d| d.letter()),
+                word: match drawn.is_some() {
+                    true => file_line,
+                    false => format!("{file_line} · off"),
+                },
+                hint: Some(format!("{} · {at}", section_of(m.id))),
+                peek: (drawn.is_none()).then(|| peek_key(&file.path, &m.head.label)),
+            })
         })
         .collect();
     // Every call with exactly one end inside the container, gathered on the far
@@ -845,7 +897,7 @@ pub(super) fn FnOwnerSheet(graph: CodeGraph, path: String, owner: String) -> Ele
     // data sheet keeps, because a name engraved twice reads as two neighbours.
     let mut into: HashMap<u32, (u32, bool)> = HashMap::new();
     let mut out: HashMap<u32, (u32, bool)> = HashMap::new();
-    for call in &model.calls {
+    for call in &model.all_calls {
         let answers = call.kind == crate::views::func::model::CallKind::Answers;
         let (far, side) = match (inside.contains(&call.def), inside.contains(&call.user)) {
             (true, false) => (call.user, &mut into),
@@ -860,22 +912,28 @@ pub(super) fn FnOwnerSheet(graph: CodeGraph, path: String, owner: String) -> Ele
         let mut rows: Vec<(u32, FnRow)> = ends
             .into_iter()
             .filter_map(|(id, (count, answers))| {
-                let far = by_id.get(&id)?;
+                let item = graph.item(id)?;
+                let file = graph.file(item.file)?;
+                let far = by_id.get(&id);
+                let word = match (answers, count) {
+                    (true, 0) => "answers".to_string(),
+                    (true, n) => format!("answers · {n}"),
+                    (false, 1) => "1 call".to_string(),
+                    (false, n) => format!("{n} calls"),
+                };
                 Some((
                     count,
                     FnRow {
-                        to: Some(mark_route(&far.head.path, &far.head.label)),
-                        decl: far.head.decl(),
-                        name: far.head.label.clone(),
-                        letter: far.letter(),
-                        word: match (answers, count) {
-                            (true, 0) => "answers".to_string(),
-                            (true, n) => format!("answers · {n}"),
-                            (false, 1) => "1 call".to_string(),
-                            (false, n) => format!("{n} calls"),
+                        to: far.map(|f| mark_route(&f.head.path, &f.head.label)),
+                        decl: item.head.kind.decl_words(&item.head.vis),
+                        name: item.head.label.clone(),
+                        letter: far.and_then(|f| f.letter()),
+                        word: match far.is_some() {
+                            true => word,
+                            false => format!("{word} · off"),
                         },
-                        hint: Some(far.head.locator()),
-                        peek: None,
+                        hint: Some(format!("{}:{}", file.path, item.head.line)),
+                        peek: (far.is_none()).then(|| peek_key(&file.path, &item.head.label)),
                     },
                 ))
             })
@@ -889,7 +947,7 @@ pub(super) fn FnOwnerSheet(graph: CodeGraph, path: String, owner: String) -> Ele
     // is the same rule the `Data touched` rows keep.
     let down = match room.on_data {
         true => crate::views::data::mark_route(&room.path, &room.label),
-        false => peek_route(&sel, &room.path, &room.label),
+        false => owner_peek_route(&sel, &room.path, &room.label),
     };
     // The way down, named as the place it goes rather than as a sentence about
     // going there: the sentence is the link's hover words.
@@ -938,29 +996,27 @@ pub(super) fn FnOwnerSheet(graph: CodeGraph, path: String, owner: String) -> Ele
             }
             Section {
                 title: "Methods".to_string(),
-                hint: "every function written on this owner, in the order the source writes them — every impl block it has, wherever in the workspace they are written"
+                hint: "every function written on this owner, whatever the reading draws, in the order the source writes them — every impl block it has, wherever in the workspace they are written"
                     .to_string(),
                 rows: methods,
-                empty: "it declares no method this reading draws.".to_string(),
-                sel: sel.clone(),
-                open: None,
+                empty: "it declares no method the survey read.".to_string(),
+                open: peek.clone(),
             }
             Section {
                 title: "Called from outside".to_string(),
-                hint: "whose code, from outside this container, runs one of its methods"
+                hint: "whose code, from outside this container, runs one of its methods — whatever the reading draws"
                     .to_string(),
                 rows: into,
                 empty: "nothing outside it calls in.".to_string(),
-                sel: sel.clone(),
-                open: None,
+                open: peek.clone(),
             }
             Section {
                 title: "Calls out".to_string(),
-                hint: "what the code inside this container runs beyond it".to_string(),
+                hint: "what the code inside this container runs beyond it, whatever the reading draws"
+                    .to_string(),
                 rows: out,
                 empty: "nothing inside it calls out.".to_string(),
-                sel,
-                open: None,
+                open: peek,
             }
         }
     }
@@ -1015,7 +1071,6 @@ pub(super) fn FnBandSheet(graph: CodeGraph, band: u32) -> Element {
         .collect();
     rows.sort_by(|a, b| a.name.cmp(&b.name));
     let held = rows.len();
-    let sel: Sel = (String::new(), String::new());
     rsx! {
         section { class: "plate pointer-events-auto flex max-h-[60dvh] w-full flex-col overflow-y-auto sm:max-h-[calc(100dvh-4.25rem)] sm:w-72",
             div { class: "px-4 pt-3 pb-2",
@@ -1034,7 +1089,7 @@ pub(super) fn FnBandSheet(graph: CodeGraph, band: u32) -> Element {
                 }
             }
             section { class: "border-t border-ink-line px-4 pt-2 pb-2",
-                RowList { rows, sel, open: None }
+                RowList { rows, open: None }
             }
         }
     }
