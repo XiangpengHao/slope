@@ -9,5 +9,5 @@ mod survey;
 
 pub(crate) use data::{DataFocus, DataModFocus, DataOverview};
 pub(crate) use dep::{DepFocus, DepOverview, DepRing};
-pub(crate) use func::{FnBandFocus, FnFocus, FnModFocus, FnOverview, FnTreeFocus};
+pub(crate) use func::{FnBandFocus, FnFocus, FnModFocus, FnOverview, FnOwnerFocus};
 pub(crate) use shell::AppShell;

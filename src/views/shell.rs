@@ -103,7 +103,7 @@ pub(crate) fn AppShell() -> Element {
         }
         Route::FnOverview {}
         | Route::FnFocus { .. }
-        | Route::FnTreeFocus { .. }
+        | Route::FnOwnerFocus { .. }
         | Route::FnModFocus { .. }
         | Route::FnBandFocus { .. } => Some(Rung::Fns),
         _ => None,

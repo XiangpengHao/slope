@@ -1313,21 +1313,21 @@ details.fold:not([open]) > summary::after {
   }
 }
 
-/* ————— The function altitude: the shelved section —————
-   Containment is the call: a declaration seats inside the frame of the caller
-   that reaches it first, and what it calls shelves in wrapped rows under its
-   own head. A block is one head row — the keyword run, the name, the diff's
-   letter, the module where the seating crosses one — and, where it calls
-   anything, the frame around what it calls. Every number here is also in
-   `views/func/map.rs` and `views/func/layout.rs`, which measure a head before
-   the layout seats it. Move one and the others must follow. */
+/* ————— The function altitude: the household —————
+   Containment is written-in, as at the rung above: a crate frame holds module
+   frames nested the way rust's modules nest, a module frame holds its free
+   declarations and one container per owner that declares methods, and a
+   container holds that owner's methods. A block is one head row — the keyword
+   run, the name, the diff's letter — and the signature quoted under it. Every
+   number here is also in `views/func/map.rs` and `views/func/layout.rs`, which
+   measure a head before the layout seats it. Move one and the others must
+   follow. */
 
-/* The head row is the only hit target on this chart. A frame is as wide as
-   everything it calls, so its box covers most of the sheet: were the box a
-   target, a drag could not pan the paper, a click on clear paper could not
-   deselect, and a frame would take the clicks meant for the blocks shelved
-   inside it. The press still bubbles from a head to the node, which is what
-   keeps a click on a head from also reaching the pane. */
+/* The head row is the only hit target on the blocks. The rooms' own borders are
+   controls too, but they live on the ground layer under the blocks, so the
+   interior of every room stays open paper for the heads, the wires and the pan.
+   The press still bubbles from a head to the node, which is what keeps a click
+   on a head from also reaching the pane. */
 .slope .fn-chart .df-node {
   pointer-events: none;
 }
@@ -1341,26 +1341,12 @@ details.fold:not([open]) > summary::after {
   width: 100%;
   height: 100%;
   overflow: hidden;
-  /* A frame's own paper is its head row's. The body stays clear so the blocks
-     shelved inside it read on the sheet's own ground — and so a frame can
-     never paint over what it holds. */
   background: transparent;
   border: 1px solid var(--color-ink-line);
   padding: 0;
   color: inherit;
   text-decoration: none;
-  /* The head row is the hit target, not the box: a frame is as wide as
-     everything it calls, and a box that size would take the clicks meant for
-     the blocks shelved inside it. */
   pointer-events: none;
-}
-/* A frame that shelves something wears a stronger line than a leaf does, and
-   that step is the affordance: this border is a control — it selects the whole
-   subtree the box holds — and at rest nothing else said so. A leaf's box is
-   just its own mark, so it keeps the hairline. Two steps, drawn depth: the
-   outer lines of the seating are the grabbable ones. */
-.slope .fn-mark.is-frame {
-  border-color: var(--color-ink-soft);
 }
 .slope .fn-mark:hover {
   border-color: var(--color-ink);
@@ -1413,11 +1399,6 @@ details.fold:not([open]) > summary::after {
   font-size: 8.5px;
   color: var(--color-tok-kw);
 }
-.slope .fm-mod {
-  flex: none;
-  font-size: 8px;
-  color: var(--color-ink-soft);
-}
 .slope .fm-nm {
   font-weight: 700;
   /* A function's name in the palette's fn colour, the way a quotation inks
@@ -1435,9 +1416,12 @@ details.fold:not([open]) > summary::after {
   font-size: 9.5px;
   color: var(--color-flare);
 }
-/* The name run: the owner, the name and the opening bracket, written the way
-   rust writes them — one run with no gap invented inside it, because the head
-   is a quotation and `FnModel::build(` is how the source spells it. */
+/* The name run: the name and the opening bracket, written the way rust writes
+   them — one run with no gap invented inside it, because the head is a
+   quotation and `build(` is how the source spells it. Whose method it is, the
+   container the block stands in says; the `Owner::` prefix that used to stand
+   here retired with the shelved section on 2026-08-27, and the qualified label
+   still rides the search rows, the sheet and every URL. */
 .slope .fm-id {
   flex: none;
   min-width: 0;
@@ -1445,81 +1429,18 @@ details.fold:not([open]) > summary::after {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* Whose method this is, as the survey's own label writes it: soft ink in front
-   of the name, so the name is still the part that carries. */
-.slope .fm-own {
-  color: var(--color-ink-soft);
-}
 .slope .fm-open,
 .slope .fm-tail {
   color: var(--color-tok-punct);
-}
-/* The fold mark: `−` while the frame's contents are on the paper, `+` once they
-   are off it. The mark itself is the control — no button chrome — and it is its
-   own gesture, so it never shares a click with the head's own selection.
-
-   It sits at the **right-most end of the head row**, where the data chart puts
-   its own one rung up (`.dm-shut`), because a reader who has learned one chart
-   should not have to learn the other (2026-08-27, user).
-
-   That was the hard part. A head row is as wide as its frame, and a frame is as
-   wide as everything it calls, so right-aligned the mark for a two-thousand-unit
-   frame is a thousand pixels from the name it belongs to and off the glass
-   whenever the name is on it. It was moved beside the name once for exactly that
-   reason, and moved back with the problem actually solved: **the mark rides the
-   glass.** `--cam-r` is the world x the viewport's right edge is over, written
-   on the chart root by `FN_SLIDE_JS` once per animation frame; `--own-r` is this
-   frame's own right edge, written once per build. The mark translates left by
-   the difference — so it sits at the frame's right edge while that edge is
-   visible, and at the right edge of the *visible span* while it is not — floored
-   so it never slides off its own frame's left end. No re-render, no layout: one
-   custom property and a transform. */
-.slope .fm-fold {
-  flex: none;
-  margin-left: auto;
-  padding: 0 1px;
-  width: 12px;
-  background: none;
-  border: 0;
-  font-family: var(--font-data);
-  font-size: 12px;
-  font-weight: 500;
-  line-height: 15px;
-  color: var(--color-ink-soft);
-  text-align: center;
-  cursor: pointer;
-  pointer-events: auto;
-}
-.slope .fm-fold:hover,
-.slope .fm-fold:focus-visible {
-  color: var(--color-ink);
-}
-/* The slide itself. `--cam-r` is absent until the chart's own script writes it
-   (and on a chart that never pans it may stay absent), so the fallback has to be
-   a value that means *do not slide*: `--own-r` itself. The floor keeps the mark
-   inside its frame, one head row's worth in from the left, so a frame whose left
-   edge is off the glass to the left still shows its mark beside its own name
-   rather than in a neighbour's territory. */
-.slope .fm-fold,
-.slope .fm-packed {
-  --fold-slide: clamp(
-    calc(-1 * max(0px, var(--own-w, 0px) - 46px)),
-    calc(var(--cam-r, var(--own-r, 0px)) - var(--own-r, 0px) - 6px),
-    0px
-  );
-  transform: translateX(var(--fold-slide));
 }
 /* The signature, quoted under the head the way a data block quotes its fields:
    the receiver first, each parameter as the source declares it, then the
    return. A line wider than the block ellipsizes and its hover words carry the
    whole of it — a quotation may be cut short on the paper, never paraphrased.
 
-   The quotation is on paper of its own, like the head row above it. A frame's
-   *interior* is still clear — the shelf under the rule is the sheet's own
-   ground, so a frame can never paint over what it holds — but the block's own
-   two bands are opaque, and that is what a resting wire now dives under
-   instead of crossing. Its height is `own_open` in `views/func/layout.rs`,
-   which the seating keeps clear of everything it shelves. */
+   The quotation is on paper of its own, like the head row above it, and that is
+   what a resting wire dives under instead of crossing. A room's *interior* is
+   clear, so a container can never paint over the methods it holds. */
 .slope .fm-body {
   padding: 0 5px 4px;
   background: var(--color-paper);
@@ -1551,122 +1472,196 @@ details.fold:not([open]) > summary::after {
 .slope .fm-row .tok-kw {
   color: var(--color-tok-kw);
 }
-/* The hairline that closes the quotation and opens the shelf under it — the
-   same rule a data block draws over the state it owns. 2 + 1 + 3 = the six
-   units `layout::RULE` reserves. */
-.slope .fm-rule {
-  height: 0;
-  margin: 2px 5px 3px;
-  border-top: 1px solid var(--color-ink-line);
+/* ————— The rooms: module frames and owner containers —————
+   The household's own boxes, drawn on the ground under the blocks. Both keep
+   the same three-mark grammar the data chart's module boundary carries one rung
+   up, and it is three marks and never one: the **border** selects the room, the
+   **label** selects it too (a container's owner name descends to that type's
+   block on `/data` instead), and the mark at the border's other end **folds**
+   what is inside. Only the geometry a reader aims at is hittable — a wide
+   invisible stroke over the same rectangle, and a chip of paper behind each
+   piece of engraving — so a room's whole interior stays open paper for the
+   blocks, the wires and the pan. */
+.slope .fn-frame {
+  fill: color-mix(in srgb, var(--color-ink) 2.6%, transparent);
+  stroke: var(--color-ink-line);
+  stroke-width: 1;
 }
-/* What a folded frame is holding back, in words, where it was holding it.
-   Nothing is silently cut: the count is drawn only because something is
-   hidden, and clicking it puts the shelf back. */
-.slope .fm-packed {
-  display: block;
-  width: 100%;
-  height: 13px;
-  padding: 0 5px;
-  background: none;
-  border: 0;
-  font-family: var(--font-data);
-  font-size: 9px;
-  line-height: 13px;
-  color: var(--color-ink-soft);
-  /* Under the mark that did it, riding the same edge: the words and the mark are
-     one control, and a reader who reaches for one must find the other. */
-  text-align: right;
-  cursor: pointer;
+/* A container is a room inside a room, so it is drawn one step stronger than
+   the module frame it stands in — two steps of drawn depth, and the inner box
+   is the one whose border reads as a control at this zoom. */
+.slope .fn-owner {
+  fill: color-mix(in srgb, var(--color-ink) 3.4%, transparent);
+  stroke: var(--color-ink-soft);
+  stroke-width: 1;
+}
+.slope .fn-frame-pick,
+.slope .fn-frame-shut,
+.slope .fn-owner-pick,
+.slope .fn-owner-down,
+.slope .fn-owner-shut {
   pointer-events: auto;
-}
-.slope .fm-packed:hover,
-.slope .fm-packed:focus-visible {
-  color: var(--color-ink);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-
-/* A frame's own boundary. Containment is the call, so the box is a subtree and
-   its border is the control that selects the whole of it — the same two
-   gestures a module boundary carries one rung up: the line selects, the mark on
-   the head folds. Only the geometry a reader aims at is hittable, so the
-   interior stays open paper for the blocks, the wires and the pan. */
-.slope .fn-edge-hit {
-  fill: none;
-  stroke: transparent;
-  stroke-width: 10;
-  pointer-events: stroke;
   cursor: pointer;
 }
-.slope .fn-edge-line {
+.slope .fn-frame-hit,
+.slope .fn-owner-hit {
   fill: none;
   stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+}
+.slope .fn-frame-tab,
+.slope .fn-frame-hit-mark {
+  fill: transparent;
+  pointer-events: all;
+}
+.slope .fn-frame-group:has(.fn-frame-pick:hover) .fn-frame,
+.slope .fn-frame-group:has(.fn-frame-pick:focus-visible) .fn-frame,
+.slope .fn-owner-group:has(.fn-owner-pick:hover) .fn-owner,
+.slope .fn-owner-group:has(.fn-owner-pick:focus-visible) .fn-owner {
+  stroke: var(--color-ink);
+}
+/* The chosen boundary in full ink, dashed the way a selected ring is: the
+   reader chose a line, so the line is what answers. */
+.slope .fn-frame-group.is-picked .fn-frame,
+.slope .fn-owner-group.is-picked .fn-owner {
+  stroke: var(--color-ink);
   stroke-width: 1.2;
-}
-.slope .fn-edge:hover .fn-edge-line,
-.slope .fn-edge:focus-visible .fn-edge-line {
-  stroke: var(--color-ink);
-}
-/* The chosen boundary in full ink, dashed the way the data chart's chosen
-   module is: the reader picked a line, so the line is what answers. */
-.slope .fn-edge.is-sel .fn-edge-line {
-  stroke: var(--color-ink);
   stroke-dasharray: 7 4;
 }
-.slope .fn-edge {
+.slope .fn-frame-group.is-picked .fn-frame-label {
+  fill: var(--color-ink);
+  font-weight: 600;
+}
+.slope .fn-frame-group,
+.slope .fn-owner-group {
   transition: opacity 400ms ease-out;
 }
-.slope .fn-edge.is-dim {
+.slope .fn-frame-group.is-dim,
+.slope .fn-owner-group.is-dim {
   opacity: 0.3;
 }
+/* The label chips onto the border: rust's own words for the module, with a
+   paper halo so the border reads as interrupted rather than crossed. */
+.slope .fn-frame-label {
+  pointer-events: none;
+  font-family: var(--font-data);
+  font-size: 12px;
+  font-weight: 500;
+  fill: var(--color-ink);
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 6px;
+  stroke-linejoin: round;
+}
+/* A container's own label: `impl` in soft ink, then the owner's name at the
+   kind colour the data chart inks that kind with. The Kind-Color Rule, extended
+   to the one other place a type's kind is drawn rather than only written — see
+   `owner_tint` in `views/func/map.rs`. A trait's name stays ink, because on this
+   chart the palette's purple already means *a function's name*. */
+.slope .fn-owner-kw,
+.slope .fn-owner-name {
+  font-family: var(--font-data);
+  font-size: 11.5px;
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.slope .fn-owner-kw {
+  fill: var(--color-tok-kw);
+}
+.slope .fn-owner-name {
+  font-weight: 700;
+  fill: var(--color-ink);
+}
+.slope .fn-owner-name.is-type {
+  fill: var(--color-tok-type);
+}
+.slope .fn-owner-name.is-sum {
+  fill: var(--color-tok-sum);
+}
+.slope .fn-owner-down:hover .fn-owner-name,
+.slope .fn-owner-down:focus-visible .fn-owner-name {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+/* The fold mark: `−` while the room is on the paper, `+` once what is inside is
+   off it. The mark itself is the control — no button chrome — and it is its own
+   gesture, so it never shares a click with the border's own selection.
 
-/* The ground: the ring strip's caption, under everything an entry point
-   reaches. Hairline ink — a boundary, never a card. */
+   **It rides the glass.** A crate frame is as wide as the sheet, so its right
+   edge is off the glass whenever anything inside it is on: right-aligned, the
+   mark would be a thousand pixels from the border it belongs to. `--cam-r` is
+   the world x the viewport's right edge is over, written on the chart root by
+   `FN_SLIDE_JS` once per animation frame; `--own-r` is this room's own right
+   edge, written once per build. The mark translates left by the difference —
+   sitting at the room's right edge while that edge is visible, and at the right
+   edge of the *visible span* while it is not — floored so it never slides off
+   its own room's left end. No re-render, no layout: one custom property and a
+   transform. */
+.slope .fn-frame-mark,
+.slope .fn-owner-mark {
+  font-family: var(--font-data);
+  font-weight: 500;
+  fill: var(--color-ink-soft);
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 6px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+.slope .fn-frame-mark {
+  font-size: 13px;
+}
+.slope .fn-owner-mark {
+  font-size: 12px;
+}
+.slope .fn-frame-shut:hover .fn-frame-mark,
+.slope .fn-frame-shut:focus-visible .fn-frame-mark,
+.slope .fn-owner-shut:hover .fn-owner-mark,
+.slope .fn-owner-shut:focus-visible .fn-owner-mark {
+  fill: var(--color-ink);
+}
+/* `--cam-r` is absent until the chart's own script writes it (and on a chart
+   that never pans it may stay absent), so the fallback has to be a value that
+   means *do not slide*: `--own-r` itself. The floor keeps the mark inside its
+   own room. */
+.slope .fn-frame-shut,
+.slope .fn-owner-shut {
+  --fold-slide: clamp(
+    calc(-1 * max(0px, var(--own-w, 0px) - 56px)),
+    calc(var(--cam-r, var(--own-r, 0px)) - var(--own-r, 0px) - 8px),
+    0px
+  );
+  transform: translateX(var(--fold-slide));
+}
+/* What a folded room is holding back, in words, on the border where it was
+   holding it. Nothing is silently cut: the count is drawn only because
+   something is hidden. */
+.slope .fn-shut-words {
+  font-family: var(--font-data);
+  font-size: 9.5px;
+  fill: var(--color-ink-soft);
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: var(--color-paper);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+  pointer-events: none;
+}
+
+/* The ground: the rooms, under the blocks they hold. */
 .slope .df-world-layer.fn-ground {
   z-index: 0;
 }
 .slope .df-world-layer.fn-ground svg,
 .slope .df-world-layer.fn-wires svg {
   pointer-events: none;
-}
-.slope .fn-lane-caption {
-  font-family: var(--font-data);
-  font-size: 9.5px;
-  fill: var(--color-ink-soft);
-  paint-order: stroke;
-  stroke: var(--color-paper);
-  stroke-width: 3.5px;
-  stroke-linejoin: round;
-}
-.slope .fn-lane-rule {
-  stroke: var(--color-ink-line);
-  stroke-width: 0.8px;
-  opacity: 0.7;
-}
-.slope .fn-lane-hit {
-  fill: transparent;
-  pointer-events: auto;
-  cursor: pointer;
-}
-/* The caption is the control: hovering the words says so, and the hairline
-   under the strip stays a rule. */
-.slope .fn-lane-pick:hover .fn-lane-caption,
-.slope .fn-lane-pick:focus-visible .fn-lane-caption {
-  fill: var(--color-ink);
-  text-decoration: underline;
-  text-underline-offset: 3px;
-}
-.slope .fn-lane.is-sel .fn-lane-caption {
-  fill: var(--color-ink);
-  font-weight: 700;
-}
-.slope .fn-lane.is-sel .fn-lane-rule {
-  stroke: var(--color-ink);
-  stroke-width: 1.2px;
-  opacity: 1;
-}
-.slope .fn-lane.is-dim {
-  opacity: 0.35;
 }
 
 /* The two families. Solid is a call — at this altitude a body is the
@@ -1700,6 +1695,30 @@ details.fold:not([open]) > summary::after {
 }
 .slope .fn-wire {
   pointer-events: none;
+}
+/* A **corridor** — one line per ordered module pair, standing for every
+   cross-module call between them at rest. It carries a count, so it has to
+   carry a findable subject too: its own hover words, and a click that selects
+   the module at its far end. That is the one place the wires layer takes a
+   pointer at all, and it takes it on the stroke alone. */
+.slope .fn-wire.is-bundle .wire-path {
+  stroke-dasharray: none;
+}
+.slope .fn-wire .wire-hit {
+  stroke: transparent;
+  stroke-width: 12;
+  fill: none;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+.slope .fn-wire.is-bundle:hover .wire-path {
+  stroke: var(--color-ink);
+}
+.slope .fn-wire.is-bundle:hover .wire-head {
+  fill: var(--color-ink);
+}
+.slope .fn-wire.is-bundle .wire-label {
+  font-size: 10px;
 }
 /* Drawn, not cut, for the same reason the data family's ink is — see there. */
 .slope .fn-wire .wire-path {
@@ -1784,16 +1803,21 @@ details.fold:not([open]) > summary::after {
 
 /* The far edition: below reading zoom the quoted rows are dust, so the block
    swaps to what its box can still carry — the keyword, the name and its diff
-   letter. The signature rows, the brackets, the owner prefix and the module word
-   all retire together; the fold's own mark and its counted words stay, because
-   the one thing a fold may never do is go quiet about what it is holding.
-   Nothing moves — every block keeps its box, because the box is the call tree. */
-.slope .fn-chart.is-far .fm-mod,
-.slope .fn-chart.is-far .fm-own,
+   letter. The signature rows and the brackets retire together; a room's own fold
+   mark and its counted words stay, because the one thing a fold may never do is
+   go quiet about what it is holding. Nothing moves — every box keeps its place,
+   because the household does not depend on the zoom. */
 .slope .fn-chart.is-far .fm-open,
 .slope .fn-chart.is-far .fm-body,
-.slope .fn-chart.is-far .fn-wire .wire-label {
+.slope .fn-chart.is-far .fn-wire:not(.is-bundle) .wire-label {
   display: none;
+}
+/* A room's label chip is reading-size type on a border a whole crate wide, so
+   below reading zoom the landmark register takes over from it — see below. The
+   chip itself stays: it is what a reader panning in lands back on. */
+.slope .fn-chart.is-far .fn-owner-kw,
+.slope .fn-chart.is-far .fn-owner-name {
+  opacity: 0.55;
 }
 .slope .fn-chart.is-far .fn-mark.is-entry {
   border-left-width: 8px;
@@ -1812,16 +1836,58 @@ details.fold:not([open]) > summary::after {
 .slope .fn-chart.is-far .fn-wire.is-hot .wire-path {
   stroke-width: 2px !important;
 }
-/* And the resting family recedes to almost nothing. Below reading zoom the
-   blocks are three pixels of type and the sheet carries several hundred
-   resting diagonals: thickened, they became the loudest ink on the paper and
-   drowned the one thing the far edition exists to show. They are still drawn,
-   never cut — pan in and they come back at their resting pressure — but at the
-   opening zoom the landmarks and the contracts are what the paper is for. */
+/* And the individual resting lines retire altogether, leaving the corridors.
+   Below reading zoom the blocks are three pixels of type and the sheet carries
+   several hundred resting diagonals: they became the loudest ink on the paper
+   and drowned the one thing the far edition exists to show. What answers the
+   question at that zoom is *which module calls which*, which is exactly what a
+   corridor says. They are still drawn, never cut — pan in past 0.55 and every
+   one of them is back at its resting pressure. */
 .slope .fn-chart.is-far .fn-wire.is-quiet,
 .slope .fn-chart.is-far .fn-wire.is-faint,
 .slope .fn-chart.is-far .fn-wire.is-dim {
   opacity: 0.06;
+}
+/* `is-quiet` and `is-faint` are exactly the two resting pressures — a wire under
+   a selection wears `is-kin` or `is-dim` instead — so naming them is naming the
+   resting plate, and only the resting plate has corridors to fall back on. */
+.slope .fn-chart.is-far .fn-wire.is-quiet:not(.is-bundle):not(.is-answers),
+.slope .fn-chart.is-far .fn-wire.is-faint:not(.is-bundle):not(.is-answers) {
+  display: none;
+}
+/* A corridor takes the far ground pressure instead: at the opening zoom it is
+   the reading, and its count is the one number on the paper. */
+.slope .fn-chart.is-far .fn-wire.is-bundle {
+  opacity: 0.75;
+}
+.slope .fn-chart.is-far .fn-wire.is-bundle .wire-path {
+  stroke-width: 2.4px !important;
+  stroke: var(--color-ink);
+}
+.slope .fn-chart.is-far .fn-wire.is-bundle .wire-head {
+  fill: var(--color-ink);
+}
+.slope .fn-chart.is-far .fn-wire.is-bundle .wire-label {
+  font-size: 22px;
+  stroke-width: 8px;
+  fill: var(--color-ink);
+}
+/* The one thing a fold may never do is go quiet about what it is holding. At
+   the opening zoom a 13px mark is under three pixels and its 9.5px words are
+   under two, so both take the far ramp — the mark stays the control it is, and
+   the counted words stay the sentence they are. */
+.slope .fn-chart.is-far .fn-frame-mark {
+  font-size: 34px;
+  stroke-width: 13px;
+}
+.slope .fn-chart.is-far .fn-owner-mark {
+  font-size: 28px;
+  stroke-width: 11px;
+}
+.slope .fn-chart.is-far .fn-shut-words {
+  font-size: 26px;
+  stroke-width: 10px;
+  fill: var(--color-ink);
 }
 /* A contract keeps the far pressure whatever the reading rests: a `dyn` call
    is the one edge the shelved section cannot draw as containment, so it is the
@@ -1835,27 +1901,17 @@ details.fold:not([open]) > summary::after {
 .slope .fn-chart.is-far .fn-wire.is-hot {
   opacity: 1;
 }
-.slope .fn-chart.is-far .fn-lane-rule {
-  stroke-width: 2.4px;
-  opacity: 1;
-}
-.slope .fn-chart.is-far .fn-lane-caption {
-  font-size: 26px;
-  /* The caption is engraved on the world, so it crosses whatever the reader
-     has panned under it. The halo is the world's own answer to that, and it
-     has to scale with the lettering. */
-  stroke-width: 10px;
-  fill: var(--color-ink);
-}
 
-/* The far edition's landmark register: each ground frame's own name engraved
-   across its territory, the way a module name engraves across a data frame one
-   rung up. The block's own name does *not* grow — a block sits in a box the
-   call tree sized, and that stays true — so this is a mark of its own, on a
-   layer of its own, measured to the frame in `views/func/map.rs` and sized
-   there (its font size and halo are per-frame data, so they are inline). Its
-   layer rides above the blocks: the shelved section packs frames tight, and on
-   the ground the name would spend its ink behind the paper. */
+
+/* The far edition's landmark register: each room's own name engraved across its
+   territory — the modules, then the heaviest owner containers — the way a module
+   name engraves across a data frame one rung up. The block's own name does *not*
+   grow: a block sits in a box the household sized, and a name grown to fit it
+   would be a different size in every room. So this is a mark of its own, on a
+   layer of its own, measured to the box in `views/func/map.rs` and sized there
+   (its font size and halo are per-box data, so they are inline). Its layer rides
+   above the blocks: the household packs rooms tight, and on the ground the name
+   would spend its ink behind the paper. */
 .slope .df-world-layer.fn-names {
   z-index: 30;
 }

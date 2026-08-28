@@ -2,7 +2,7 @@ use dioxus::prelude::*;
 
 use views::{
     AppShell, DataFocus, DataModFocus, DataOverview, DepFocus, DepOverview, DepRing, FnBandFocus,
-    FnFocus, FnModFocus, FnOverview, FnTreeFocus,
+    FnFocus, FnModFocus, FnOverview, FnOwnerFocus,
 };
 
 /// Server-side analysis: cargo metadata, VCS diff, manifest events.
@@ -58,8 +58,8 @@ enum Route {
         FnOverview {},
         #[route("/fn/mark/:..path?:peek&:item")]
         FnFocus { path: Vec<String>, peek: Option<String>, item: String },
-        #[route("/fn/tree/:..path?:item")]
-        FnTreeFocus { path: Vec<String>, item: String },
+        #[route("/fn/impl/:..path?:owner")]
+        FnOwnerFocus { path: Vec<String>, owner: String },
         #[route("/fn/mod/:..module")]
         FnModFocus { module: Vec<String> },
         #[route("/fn/depth/:band")]

@@ -138,12 +138,16 @@ the ladder was **`dependencies · data`** after that, two rungs, and is
 ## Function viewer (built 2026-08-25)
 
 the third rung, `/fn`: every function, method, trait clause and
-`macro_rules!` the workspace declares, tiered by **call depth** from the
-declarations nothing calls. it is the data chart's dual — a block there
-quotes a struct's fields, a block here quotes a function's signature — and
-its sheet's `Data touched` rows are the one link between the two rungs,
-each one a descent to that type's block on `/data`. full spec in
-`spec/function-viewer.md`.
+`macro_rules!` the workspace declares, drawn in the **household** it is
+written in — a crate frame, module frames nested as rust nests them, and one
+container per owner that declares methods — with a wire for every call
+(reseated 2026-08-27 by user decision; the call-depth tiering it replaced,
+and the shelved call ground of 2026-08-26, are recorded in
+`spec/function-viewer.md`). it is the data chart's dual, on the data chart's
+own ground: a block there quotes a struct's fields, a block here quotes a
+function's signature, and the two are joined by three descent links — a
+sheet's `Data touched` rows, the owner on a sheet, and the owner's own name
+on its container. full spec in `spec/function-viewer.md`.
 
 three things it needed that nothing else had:
 
