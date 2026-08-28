@@ -56,7 +56,7 @@ pub(super) fn FnQuotation(graph: CodeGraph, sel: Sel, path: String, label: Strin
                     "Nothing named “{label}” is written in {path} on this survey."
                 }
                 Link {
-                    class: "mt-2 inline-block font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4",
+                    class: "mt-2 inline-block font-data text-[10px] text-ink underline underline-offset-4",
                     to: close,
                     "close"
                 }
@@ -79,7 +79,7 @@ pub(super) fn FnQuotation(graph: CodeGraph, sel: Sel, path: String, label: Strin
                     p { class: "mt-0.5 font-data text-[9.5px] text-ink-soft", "{locator}" }
                 }
                 Link {
-                    class: "shrink-0 font-data text-[10px] tracking-[0.12em] uppercase text-ink-soft underline-offset-4 hover:text-ink hover:underline",
+                    class: "shrink-0 font-data text-[10px] text-ink-soft underline-offset-4 hover:text-ink hover:underline",
                     to: close,
                     "close ×"
                 }

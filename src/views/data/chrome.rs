@@ -218,12 +218,20 @@ fn VisSlider(off_paper: usize) -> Element {
                     }
                 },
             }
-            div { class: "mt-0.5 flex items-baseline justify-between gap-1",
-                for stop in VisFloor::STOPS {
+            // Each rung under its own tick on the track, the same reading the
+            // function altitude's slider is set to — one ladder, one setting.
+            div { class: "relative mt-0.5 h-[12px]",
+                for (step , stop) in VisFloor::STOPS.into_iter().enumerate() {
                     button {
                         key: "{stop.label()}",
-                        class: "whitespace-nowrap font-data text-[9px]",
+                        class: "absolute top-0 whitespace-nowrap font-data text-[9px]",
                         class: if current == stop { "text-ink" } else { "text-ink-soft hover:text-ink" },
+                        style: match step {
+                            0 => "left: 0".to_string(),
+                            3 => "right: 0".to_string(),
+                            1 => "left: calc(33.3333% + 1px); transform: translateX(-50%)".to_string(),
+                            _ => "left: calc(66.6667% - 1px); transform: translateX(-50%)".to_string(),
+                        },
                         "aria-pressed": if current == stop { "true" } else { "false" },
                         title: "{stop.hint()}",
                         onclick: move |_| stop_at(stop),

@@ -113,8 +113,11 @@ fn WiresSwitch() -> Element {
             class: "border-t border-ink-line px-4 py-1.5",
             role: "group",
             "aria-label": "which way round the chart reads its calls",
+            // A section heading, in the voice this system gives section
+            // headings: the serif's spaced caps, the same run the sheet's own
+            // headings are set in.
             span {
-                class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
+                class: "block font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
                 title: "read against whatever is in focus — the selection, or the diff's own declarations · at rest the calls between two modules ride one corridor each, and an anchor unbundles them",
                 "wires"
             }
@@ -145,53 +148,53 @@ fn FnKeys() -> Element {
     rsx! {
         div { class: "border-t border-ink-line px-4 py-1.5 font-data text-[9.5px] leading-relaxed text-ink-soft",
             span {
-                class: "text-ink",
+                class: "text-ink font-medium",
                 title: "the heaviest call out of the picked declaration — a glide across the paper, since the household seats a callee wherever its own code is written",
                 "↓"
             }
             " into its heaviest callee · "
-            span { class: "text-ink", "↑" }
+            span { class: "text-ink font-medium", "↑" }
             " to its heaviest caller · "
             span {
-                class: "text-ink",
+                class: "text-ink font-medium",
                 title: "back and forward along the review trail — the browser's own keys, as at every altitude",
                 "← →"
             }
             " step back and forward · "
             span {
-                class: "text-ink",
+                class: "text-ink font-medium",
                 title: "fold the room in hand — the container or the module the picked declaration is written in — or open it again",
                 "z"
             }
             " folds the room it is in · "
             span {
-                class: "text-ink",
+                class: "text-ink font-medium",
                 title: "quote the picked declaration's own source on the plate beside the sheet",
                 "enter"
             }
             " reads its source · "
-            span { class: "text-ink", "f" }
+            span { class: "text-ink font-medium", "f" }
             " fits the sheet · "
             span {
-                class: "text-ink",
+                class: "text-ink font-medium",
                 title: "fill the glass with one room — a module frame or an owner container",
                 "double-click a border"
             }
             " fills the glass with it · "
             span {
-                class: "text-ink",
+                class: "text-ink font-medium",
                 title: "a module frame's border selects the module; a container's border selects every method written on that type",
                 "click a border"
             }
             " takes the whole room · "
             span {
-                class: "text-ink",
+                class: "text-ink font-medium",
                 title: "an owner's name on its container: down to that type's block on the data chart",
                 "click an owner's name"
             }
             " goes down to its data · "
             span {
-                class: "text-ink",
+                class: "text-ink font-medium",
                 title: "the fold mark at a module border's other end: shift-click folds every room inside it too",
                 "shift-click a fold mark"
             }
@@ -217,7 +220,7 @@ fn FnVisSlider(off_paper: usize) -> Element {
             role: "group",
             "aria-label": "how narrow a declaration may be and still be drawn",
             span {
-                class: "block font-data text-[9px] tracking-[0.1em] uppercase text-ink-soft",
+                class: "block font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
                 title: "the visibility each declaration writes — not what a chain of private modules leaves reachable from outside",
                 "visibility"
             }
@@ -236,12 +239,23 @@ fn FnVisSlider(off_paper: usize) -> Element {
                     }
                 },
             }
-            div { class: "mt-0.5 flex items-baseline justify-between gap-1",
-                for stop in VisFloor::STOPS {
+            // Each rung stands under its own tick on the track: the two inside
+            // are centred on theirs, and the two at the ends are flush with the
+            // plate's measure, where the track's own travel begins and ends.
+            // The tick positions are drawn in `tailwind.css` from the same two
+            // fractions.
+            div { class: "relative mt-0.5 h-[12px]",
+                for (step , stop) in VisFloor::STOPS.into_iter().enumerate() {
                     button {
                         key: "{stop.label()}",
-                        class: "whitespace-nowrap font-data text-[9px]",
+                        class: "absolute top-0 whitespace-nowrap font-data text-[9px]",
                         class: if current == stop { "text-ink" } else { "text-ink-soft hover:text-ink" },
+                        style: match step {
+                            0 => "left: 0".to_string(),
+                            3 => "right: 0".to_string(),
+                            1 => "left: calc(33.3333% + 1px); transform: translateX(-50%)".to_string(),
+                            _ => "left: calc(66.6667% - 1px); transform: translateX(-50%)".to_string(),
+                        },
                         "aria-pressed": if current == stop { "true" } else { "false" },
                         title: "{stop.hint()}",
                         onclick: move |_| stop_at(stop),
@@ -269,14 +283,32 @@ fn SurveyLimits(notes: Vec<String>) -> Element {
     }
     rsx! {
         details { class: "fold border-t border-ink-line px-4 py-2",
-            summary { class: "cursor-pointer select-none font-data text-[9.5px] tracking-[0.1em] uppercase text-ink-soft hover:text-ink",
-                "what the survey cannot read"
+            summary {
+                class: "cursor-pointer select-none font-data text-[9.5px] text-ink-soft hover:text-ink",
+                title: "what the survey cannot read, in the survey's own words",
+                "the survey's limits"
             }
             div { class: "mt-1.5 space-y-1 pb-1 font-data text-[10px] leading-snug text-ink-soft",
                 for (i , note) in notes.iter().enumerate() {
                     p { key: "{i}", "{note}" }
                 }
             }
+        }
+    }
+}
+
+/// The step back out, at the head of every sheet this altitude opens. A
+/// selection panel says where the reader is before it says what they picked,
+/// and this is the one way out that is always the same word — one of the few
+/// tracked caps runs this system keeps, because a breadcrumb is furniture and
+/// not data.
+#[component]
+fn WholeChart() -> Element {
+    rsx! {
+        Link {
+            class: "mb-1 block font-data text-[10px] tracking-[0.12em] uppercase text-ink-soft underline-offset-4 hover:text-ink hover:underline",
+            to: Route::FnOverview {},
+            "← whole chart"
         }
     }
 }
@@ -318,14 +350,18 @@ fn RowList(rows: Vec<FnRow>, sel: Sel, open: Option<String>) -> Element {
                             (Some(hint), true) => Some(format!("{hint} — quote its source")),
                             (hint, _) => hint.clone(),
                         };
+                        // A row's own text stands on the plate's measure, the
+                        // same 16px the headings above it are set from, while
+                        // its wash runs the whole width of the plate: the
+                        // negative margin is what lets one row be both.
                         let ink = match here {
-                            true => "border-l-2 border-ink bg-ink/5 pr-1 pl-[2px]",
-                            false => "px-1",
+                            true => "-mx-4 border-l-2 border-ink bg-ink/5 pr-4 pl-[14px]",
+                            false => "-mx-4 px-4",
                         };
                         match to {
                             Some(to) => rsx! {
                                 Link {
-                                    class: "flex w-full items-baseline gap-1.5 py-0.5 font-data text-[10.5px] hover:bg-ink/5 {ink}",
+                                    class: "flex items-baseline gap-1.5 py-0.5 font-data text-[10.5px] hover:bg-ink/5 {ink}",
                                     to,
                                     title,
                                     RowCells { row: row.clone(), dead: false }
@@ -333,7 +369,7 @@ fn RowList(rows: Vec<FnRow>, sel: Sel, open: Option<String>) -> Element {
                             },
                             None => rsx! {
                                 span {
-                                    class: "flex w-full items-baseline gap-1.5 px-1 py-0.5 font-data text-[10.5px] text-ink-soft",
+                                    class: "-mx-4 flex items-baseline gap-1.5 px-4 py-0.5 font-data text-[10.5px] text-ink-soft",
                                     title: row.hint.clone(),
                                     RowCells { row: row.clone(), dead: true }
                                 }
@@ -345,7 +381,7 @@ fn RowList(rows: Vec<FnRow>, sel: Sel, open: Option<String>) -> Element {
         }
         if shown < total {
             button {
-                class: "mt-1 px-1 font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
+                class: "mt-1 font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline underline-offset-4 hover:text-ink",
                 onclick: move |_| all.set(true),
                 "show all {total}"
             }
@@ -395,7 +431,7 @@ fn Section(
     open: Option<String>,
 ) -> Element {
     rsx! {
-        section { class: "border-t border-ink-line px-3 pt-2 pb-2",
+        section { class: "border-t border-ink-line px-4 pt-2 pb-2",
             h3 {
                 class: "font-chart text-[11px] tracking-[0.22em] uppercase text-ink",
                 title: "{hint}",
@@ -406,7 +442,7 @@ fn Section(
                 }
             }
             if rows.is_empty() {
-                p { class: "mt-1 px-1 font-data text-[10px] leading-relaxed text-ink-soft",
+                p { class: "mt-1 font-data text-[10px] leading-relaxed text-ink-soft",
                     "{empty}"
                 }
             } else {
@@ -517,11 +553,7 @@ pub(super) fn FnSheet(
                         "Nothing named “{item}” is drawn in {path} on this survey."
                     }
                 }
-                Link {
-                    class: "mt-2 block font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4",
-                    to: Route::FnOverview {},
-                    "← whole chart"
-                }
+                div { class: "mt-2", WholeChart {} }
             }
         };
     };
@@ -627,7 +659,8 @@ pub(super) fn FnSheet(
     };
     rsx! {
         section { class: "plate pointer-events-auto flex max-h-[60dvh] w-full flex-col overflow-y-auto sm:max-h-[calc(100dvh-4.25rem)] sm:w-72",
-            div { class: "px-3 pt-3 pb-2",
+            div { class: "px-4 pt-3 pb-2",
+                WholeChart {}
                 h2 { class: "flex items-baseline gap-1.5 font-data text-[15px] font-semibold",
                     span { class: "shrink-0 text-[10.5px] font-normal text-ink-soft",
                         "{mark.head.decl()}"
@@ -667,8 +700,8 @@ pub(super) fn FnSheet(
                     }
                     Link {
                         class: match reading_here {
-                            true => "shrink-0 font-data text-[9.5px] tracking-[0.12em] uppercase text-ink underline underline-offset-4",
-                            false => "shrink-0 font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline-offset-4 hover:text-ink hover:underline",
+                            true => "shrink-0 font-data text-[9.5px] text-ink underline underline-offset-4",
+                            false => "shrink-0 font-data text-[9.5px] text-ink-soft underline-offset-4 hover:text-ink hover:underline",
                         },
                         to: read_it.clone(),
                         title: "quote the whole declaration beside this sheet — enter does it too",
@@ -680,7 +713,7 @@ pub(super) fn FnSheet(
                 // it, and clicking it opens the body under it.
                 if !mark.rows.is_empty() {
                     Link {
-                        class: "mt-1.5 block border-t border-ink-line pt-1.5 font-data text-[10px] leading-snug hover:bg-ink/5",
+                        class: "-mx-4 mt-1.5 block border-t border-ink-line px-4 pt-1.5 font-data text-[10px] leading-snug hover:bg-ink/5",
                         to: read_it,
                         title: "the signature as rust writes it — click to read the whole declaration",
                         p {
@@ -708,7 +741,7 @@ pub(super) fn FnSheet(
                         }
                     }
                 }
-                p { class: "mt-1.5 border-t border-ink-line pt-1.5 font-data text-[10.5px] leading-relaxed text-ink",
+                p { class: "-mx-4 mt-1.5 border-t border-ink-line px-4 pt-1.5 font-data text-[10.5px] leading-relaxed text-ink",
                     "{stands}"
                 }
             }
@@ -726,12 +759,14 @@ pub(super) fn FnSheet(
             // system calls a defect; the fold says how many and gives them
             // back.
             if !upstream.is_empty() {
-                details { class: "fold border-t border-ink-line px-3 py-2",
-                    summary { class: "cursor-pointer select-none font-data text-[9.5px] tracking-[0.1em] uppercase text-ink-soft hover:text-ink",
-                        // Not `plural`: the noun here is the count itself —
-                        // "10 mores upstream" is what asking a plural helper
-                        // for a word that is already plural gets you.
-                        "a rewrite reaches {upstream.len()} more upstream"
+                details { class: "fold border-t border-ink-line px-4 py-2",
+                    summary {
+                        class: "cursor-pointer select-none font-data text-[9.5px] text-ink-soft hover:text-ink",
+                        // The fold's own name is the thing it holds, and what
+                        // that thing means is hover words: a summary is a
+                        // label on a drawer, not a sentence about it.
+                        title: "every caller a rewrite here could reach, beyond the ones this sheet already lists as direct callers",
+                        "upstream ({upstream.len()})"
                     }
                     RowList { rows: upstream, sel: sel.clone(), open: peek.clone() }
                 }
@@ -779,11 +814,7 @@ pub(super) fn FnOwnerSheet(graph: CodeGraph, path: String, owner: String) -> Ele
                 p { class: "font-data text-[11px] text-ink",
                     "Nothing named “{owner}” declares methods in {path} on this survey."
                 }
-                Link {
-                    class: "mt-2 block font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4",
-                    to: Route::FnOverview {},
-                    "← whole chart"
-                }
+                div { class: "mt-2", WholeChart {} }
             }
         };
     };
@@ -860,9 +891,11 @@ pub(super) fn FnOwnerSheet(graph: CodeGraph, path: String, owner: String) -> Ele
         true => crate::views::data::mark_route(&room.path, &room.label),
         false => peek_route(&sel, &room.path, &room.label),
     };
-    let down_words = match room.on_data {
-        true => "down to its block on the data chart".to_string(),
-        false => "quote its source".to_string(),
+    // The way down, named as the place it goes rather than as a sentence about
+    // going there: the sentence is the link's hover words.
+    let (down_name, down_words) = match room.on_data {
+        true => ("its data ↓", "down to its block on the data chart"),
+        false => ("its source", "quote its source"),
     };
     let tint = match room.kind {
         crate::graph::data::ItemKind::Enum => "text-tok-sum",
@@ -877,7 +910,8 @@ pub(super) fn FnOwnerSheet(graph: CodeGraph, path: String, owner: String) -> Ele
     };
     rsx! {
         section { class: "plate pointer-events-auto flex max-h-[60dvh] w-full flex-col overflow-y-auto sm:max-h-[calc(100dvh-4.25rem)] sm:w-72",
-            div { class: "px-3 pt-3 pb-2",
+            div { class: "px-4 pt-3 pb-2",
+                WholeChart {}
                 h2 { class: "flex items-baseline gap-1.5 font-data text-[15px] font-semibold",
                     span { class: "shrink-0 text-[10.5px] font-normal text-ink-soft",
                         "{room.decl}"
@@ -885,10 +919,10 @@ pub(super) fn FnOwnerSheet(graph: CodeGraph, path: String, owner: String) -> Ele
                     span { class: "min-w-0 truncate {tint}", "{room.name}" }
                 }
                 Link {
-                    class: "mt-0.5 block font-data text-[9.5px] tracking-[0.12em] uppercase text-ink-soft underline-offset-4 hover:text-ink hover:underline",
+                    class: "mt-0.5 block font-data text-[9.5px] text-ink-soft underline-offset-4 hover:text-ink hover:underline",
                     to: down,
                     title: "{room.decl} {room.name} — {down_words}",
-                    "{down_words}"
+                    "{down_name}"
                 }
                 if let Some((key, words)) = mod_key {
                     Link {
@@ -954,11 +988,7 @@ pub(super) fn FnBandSheet(graph: CodeGraph, band: u32) -> Element {
                 p { class: "font-data text-[11px] leading-relaxed text-ink",
                     "No declaration this reading draws sits that many calls in."
                 }
-                Link {
-                    class: "mt-2 block font-data text-[10px] tracking-[0.12em] uppercase text-ink underline underline-offset-4",
-                    to: Route::FnOverview {},
-                    "← whole chart"
-                }
+                div { class: "mt-2", WholeChart {} }
             }
         };
     };
@@ -988,11 +1018,12 @@ pub(super) fn FnBandSheet(graph: CodeGraph, band: u32) -> Element {
     let sel: Sel = (String::new(), String::new());
     rsx! {
         section { class: "plate pointer-events-auto flex max-h-[60dvh] w-full flex-col overflow-y-auto sm:max-h-[calc(100dvh-4.25rem)] sm:w-72",
-            div { class: "px-3 pt-3 pb-2",
+            div { class: "px-4 pt-3 pb-2",
+                WholeChart {}
                 h2 { class: "font-chart text-[13px] tracking-[0.22em] uppercase text-ink",
                     "{caption}"
                 }
-                p { class: "mt-1.5 border-t border-ink-line pt-1.5 font-data text-[10.5px] leading-relaxed text-ink",
+                p { class: "-mx-4 mt-1.5 border-t border-ink-line px-4 pt-1.5 font-data text-[10.5px] leading-relaxed text-ink",
                     if band == 0 {
                         "{plural(held, \"declaration\")} nothing in the workspace calls."
                     } else if band > deepest {
@@ -1002,7 +1033,7 @@ pub(super) fn FnBandSheet(graph: CodeGraph, band: u32) -> Element {
                     }
                 }
             }
-            section { class: "border-t border-ink-line px-3 pt-2 pb-2",
+            section { class: "border-t border-ink-line px-4 pt-2 pb-2",
                 RowList { rows, sel, open: None }
             }
         }
@@ -1094,11 +1125,11 @@ pub(super) fn FnSearch(graph: CodeGraph) -> Element {
             onfocusout: move |_| open.set(false),
             input {
                 id: "fn-search",
-                class: "plate w-full px-3 py-1.5 font-data text-[11px] text-ink placeholder:text-ink-soft",
+                class: "plate w-full py-1.5 pl-3 pr-7 font-data text-[11px] text-ink placeholder:text-ink-soft",
                 r#type: "search",
                 autocomplete: "off",
                 spellcheck: "false",
-                placeholder: "find a declaration…   /",
+                placeholder: "find a declaration…",
                 value: "{query}",
                 oninput: move |e| {
                     query.set(e.value());
@@ -1111,6 +1142,15 @@ pub(super) fn FnSearch(graph: CodeGraph) -> Element {
                         clear();
                     }
                 },
+            }
+            // The key that opens the field, engraved at the field's own right
+            // edge. It rode inside the placeholder on three spaces before, so
+            // it moved with the words and was gone the moment anything was
+            // typed; the field keeps room for it instead.
+            span {
+                class: "pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 font-data text-[10px] text-ink-soft",
+                "aria-hidden": "true",
+                "/"
             }
             if open() && asked {
                 ul {

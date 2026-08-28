@@ -1947,6 +1947,16 @@ pub(super) fn FnChart(
         sel,
         Some(FnSel::Mark(..) | FnSel::Owner(..) | FnSel::Band(..))
     );
+    // A room, a stratum or a module is a *boundary* selection, and it lights
+    // every wire that crosses its line rather than the handful one declaration
+    // has. The lit layer says so, and the stylesheet reads the room's crossings
+    // as a field at half pressure — see `fn-wires-boundary`.
+    let lit_layer = match sel {
+        Some(FnSel::Mod(..) | FnSel::Owner(..) | FnSel::Band(..)) => {
+            "fn-wires fn-wires-lit fn-wires-boundary"
+        }
+        _ => "fn-wires fn-wires-lit",
+    };
     use_effect(use_reactive((&panel,), move |(on,)| {
         let mut sel_on = sel_on;
         if *sel_on.peek() != on {
@@ -2344,7 +2354,7 @@ pub(super) fn FnChart(
                         over: false,
                     }
                 }
-                WorldLayer { class: "fn-wires fn-wires-lit",
+                WorldLayer { class: lit_layer,
                     WireLayer {
                         wires: chart.read().wires.clone(),
                         bundles: chart.read().bundles.clone(),

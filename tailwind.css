@@ -48,6 +48,12 @@ body {
   caret-color: var(--color-ink);
   scrollbar-width: thin;
   scrollbar-color: var(--color-ink-line) transparent;
+  /* A quotation is quoted, never typeset. The data hand's contextual
+     alternates rewrite the source's own punctuation — `->` as an arrow, `=>`
+     as a fat one — so a reader comparing the plate against their editor would
+     be reading glyphs rust does not write. Contextual alternates off take
+     those away and leave the serif's own `fi`/`fl` standing. */
+  font-variant-ligatures: no-contextual;
 }
 .slope :focus-visible {
   outline: 1.5px solid var(--color-ink);
@@ -58,14 +64,34 @@ body {
 }
 
 /* The visibility reading's slider: the chart's own furniture, not the
-   browser's — a hairline rule for the scale and a small square of ink for the
-   thumb, the same two marks every plate is drawn with. The rungs are labelled
-   underneath, so the track carries no ticks of its own. */
+   browser's — a hairline rule for the scale, a tick where each rung stands,
+   and a small square of ink for the thumb, the same marks every plate is drawn
+   with. A scale with no stops on it reads as continuous, and this one has four
+   places it can stand.
+
+   The ticks are drawn on the input's own ground rather than on the track: the
+   track is a hairline with no room inside it to carry a mark. Their span is
+   inset by half the thumb at each end, so a tick's centre is exactly where the
+   thumb's centre comes to rest — the middle two land at a third and two thirds
+   of that inset span, and the labels underneath are set to the same four
+   places (`FnVisSlider` in `views/func/chrome.rs`). */
 .slope input[type="range"].vis-slide {
   appearance: none;
   -webkit-appearance: none;
   height: 9px;
-  background: transparent;
+  background-color: transparent;
+  background-image:
+    linear-gradient(var(--color-ink-line), var(--color-ink-line)),
+    linear-gradient(var(--color-ink-line), var(--color-ink-line)),
+    linear-gradient(var(--color-ink-line), var(--color-ink-line)),
+    linear-gradient(var(--color-ink-line), var(--color-ink-line));
+  background-repeat: no-repeat;
+  background-size: 1px 4px;
+  background-position:
+    left 2.5px top 2.5px,
+    calc(33.3333% + 0.83px) 2.5px,
+    calc(66.6667% - 0.83px) 2.5px,
+    right 2.5px top 2.5px;
   cursor: pointer;
 }
 .slope input[type="range"].vis-slide::-webkit-slider-runnable-track {
@@ -1219,6 +1245,10 @@ details.fold:not([open]) > summary::after {
   flex: none;
   width: 50px;
   padding-right: 12px;
+  /* The left rule of an in-place quotation, in the hairline every rule on a
+     plate is drawn with: the count is the plate's own furniture and the code
+     is the source, and the two are not the same hand. */
+  border-right: 1px solid var(--color-ink-line);
   text-align: right;
   font-size: 9.5px;
   color: var(--color-ink-soft);
@@ -1230,6 +1260,7 @@ details.fold:not([open]) > summary::after {
   user-select: text;
   -webkit-user-select: text;
   padding-right: 16px;
+  padding-left: 10px;
 }
 /* The lines between a block's header and the item written inside it are not
    quoted; the gutter says so with the engraver's own elision and nothing else.
@@ -1323,14 +1354,10 @@ details.fold:not([open]) > summary::after {
    measure a head before the layout seats it. Move one and the others must
    follow. */
 
-/* The head row is the only hit target on the blocks. The rooms' own borders are
-   controls too, but they live on the ground layer under the blocks, so the
-   interior of every room stays open paper for the heads, the wires and the pan.
-   The press still bubbles from a head to the node, which is what keeps a click
-   on a head from also reaching the pane. */
-.slope .fn-chart .df-node {
-  pointer-events: none;
-}
+/* The whole block is the hit target, as a data mark is: in the household
+   ground a mark's body is only its own quoted signature, so nothing nests
+   inside it that a click could be stolen from. The rooms' own borders stay
+   controls on the ground layer, and the paper between blocks still pans. */
 .slope .fn-node {
   width: 100%;
   height: 100%;
@@ -1346,9 +1373,34 @@ details.fold:not([open]) > summary::after {
   padding: 0;
   color: inherit;
   text-decoration: none;
-  pointer-events: none;
+  /* One beat for one gesture. A selection moves the rooms, the landmarks and
+     the wires over 400ms; the blocks used to snap under all three, which read
+     as two different answers to one click. The paint is what travels — the
+     colour of the ink and the colour of the frame — and never the box: a
+     reading may not move a block by a pixel. The wildcard is the block's own
+     quotation, a dozen runs of type, and nothing else. */
+  transition:
+    color 400ms ease-out,
+    border-color 400ms ease-out;
 }
-.slope .fn-mark:hover {
+.slope .fn-mark * {
+  transition:
+    color 400ms ease-out,
+    border-color 400ms ease-out;
+}
+/* The pointer is not a beat. Whatever hover restores, it restores at once —
+   the reader is asking about the block under their hand, and an answer that
+   fades in over four hundred milliseconds is a wait, not an answer. */
+.slope .fn-mark:hover,
+.slope .fn-mark:hover *,
+.slope .fn-mark:focus-within,
+.slope .fn-mark:focus-within * {
+  transition-duration: 80ms;
+}
+/* The keyboard reads the paper too: what the pointer restores, a focused head
+   restores as well, which is what makes the same block answerable either way. */
+.slope .fn-mark:hover,
+.slope .fn-mark:focus-within {
   border-color: var(--color-ink);
 }
 /* An entry point is where a chain of running starts — the same 2.5px ink left
@@ -1363,16 +1415,65 @@ details.fold:not([open]) > summary::after {
   border-style: dashed;
 }
 .slope .fn-mark.is-diff,
-.slope .fn-mark.is-diff:hover {
+.slope .fn-mark.is-diff:hover,
+.slope .fn-mark.is-diff:focus-within,
+.slope .fn-mark.is-diff.is-picked {
   border-color: var(--color-flare);
 }
+/* The block in hand out-inks every other, the hovered one included: a passing
+   pointer used to draw a heavier frame than the reader's own choice. The
+   outline is the app-wide focus ring and its geometry is fixed. */
 .slope .fn-mark.is-picked {
   outline: 1.5px solid var(--color-ink);
   outline-offset: 2px;
+  border-color: var(--color-ink);
 }
-/* A reading's pressure acts on the block's own paint, never on its box. */
-.slope .fn-mark.is-dim {
-  opacity: 0.32;
+/* ————— A reading's pressure —————
+   It acts on the block's own paint, never on its box — and never on the paper
+   under it. A whole-block opacity is what it may not be: at 0.32 the head row
+   and the quotation stopped masking the resting wires drawn beneath them, and
+   every receded block had diagonals running through its source, which is the
+   one thing the layering rule below exists to prevent. The ink recedes and the
+   paper stays: the name a step back, the quoted rows a step behind that, the
+   frame a hairline mixed toward the paper. Mixed, not faded — a receded name
+   is still a name a reader can read, at about three to one.
+
+   The palette goes with the pressure. A quotation carries the token colours
+   while it is being read; receded it is one ink, because a block a reading has
+   set behind is not a quotation anyone is reading.
+
+   **Restored under the pointer**, which is why every mix below is written
+   `:not(:hover)`: the pressure is the reading's, never a verdict on the block,
+   so the block under the reader's hand is given back whole. */
+.slope .fn-mark.is-dim:not(:hover):not(:focus-within) {
+  border-color: color-mix(in srgb, var(--color-ink-line) 55%, var(--color-paper));
+}
+/* The diff's ink recedes as the diff's ink — mixed toward the paper, never
+   greyed. Amber is the one colour on the sheet and a receded change is still
+   a change. */
+.slope .fn-mark.is-diff.is-dim:not(:hover):not(:focus-within) {
+  border-color: color-mix(in srgb, var(--color-flare) 45%, var(--color-paper));
+}
+/* The entry point's edge recedes with the ink it is drawn in and keeps its
+   2.5px: the tier is written in the box, and a reading never moves a box. */
+.slope .fn-mark.is-entry.is-dim:not(:hover):not(:focus-within) {
+  border-left-color: color-mix(in srgb, var(--color-ink) 45%, var(--color-paper));
+}
+.slope .fn-mark.is-dim:not(:hover):not(:focus-within) .fm-nm {
+  color: color-mix(in srgb, var(--color-ink) 45%, var(--color-paper));
+}
+.slope .fn-mark.is-dim:not(:hover):not(:focus-within) .fm-chg,
+.slope .fn-mark.is-dim:not(:hover):not(:focus-within) .fm-mk {
+  color: color-mix(in srgb, var(--color-flare) 45%, var(--color-paper));
+}
+.slope .fn-mark.is-dim:not(:hover):not(:focus-within) .fm-kw,
+.slope .fn-mark.is-dim:not(:hover):not(:focus-within) .fm-open,
+.slope .fn-mark.is-dim:not(:hover):not(:focus-within) .fm-tail,
+.slope .fn-mark.is-dim:not(:hover):not(:focus-within) .fm-row,
+.slope .fn-mark.is-dim:not(:hover):not(:focus-within) .fm-pname,
+.slope .fn-mark.is-dim:not(:hover):not(:focus-within) .fm-ty,
+.slope .fn-mark.is-dim:not(:hover):not(:focus-within) .fm-row .tok-kw {
+  color: color-mix(in srgb, var(--color-ink) 32%, var(--color-paper));
 }
 .slope .fn-mark.is-near {
   opacity: 0.78;
@@ -1380,6 +1481,9 @@ details.fold:not([open]) > summary::after {
 .slope .fn-node.is-rest {
   opacity: 0.62;
 }
+/* The head row is what the press lands on, so it is the row that offers the
+   hand. The quotation under it is text to read and to copy off the paper, and
+   a hand over text that takes no click is a promise the block does not keep. */
 .slope .fm-head {
   display: flex;
   align-items: baseline;
@@ -1391,7 +1495,6 @@ details.fold:not([open]) > summary::after {
   line-height: 15px;
   white-space: nowrap;
   overflow: hidden;
-  pointer-events: auto;
   cursor: pointer;
 }
 .slope .fm-kw {
@@ -1444,6 +1547,7 @@ details.fold:not([open]) > summary::after {
 .slope .fm-body {
   padding: 0 5px 4px;
   background: var(--color-paper);
+  cursor: default;
 }
 .slope .fm-row,
 .slope .fm-tail {
@@ -1695,6 +1799,10 @@ details.fold:not([open]) > summary::after {
 }
 .slope .fn-wire {
   pointer-events: none;
+  /* The selection's beat, the one the blocks, the rooms and the landmarks all
+     travel at. The stroke's own colour stays quick below: a wire's *pressure*
+     is the reading changing its mind, and its colour is the ink arriving. */
+  transition: opacity 400ms ease-out;
 }
 /* A **corridor** — one line per ordered module pair, standing for every
    cross-module call between them at rest. It carries a count, so it has to
@@ -1726,18 +1834,27 @@ details.fold:not([open]) > summary::after {
   fill: none;
   transition:
     stroke 160ms ease-out,
-    opacity 160ms ease-out;
+    opacity 400ms ease-out;
 }
 .slope .fn-wire .wire-head {
   fill: var(--color-ink-line);
   stroke: none;
   transition:
     fill 160ms ease-out,
-    opacity 160ms ease-out;
+    opacity 400ms ease-out;
 }
+/* A reader who has asked for no motion gets the reading with no beat at all:
+   the blocks, the rooms, the landmarks and the wires all arrive at once. */
 @media (prefers-reduced-motion: reduce) {
+  .slope .fn-wire,
   .slope .fn-wire .wire-path,
-  .slope .fn-wire .wire-head {
+  .slope .fn-wire .wire-head,
+  .slope .fn-mark,
+  .slope .fn-mark *,
+  .slope .fn-node,
+  .slope .fn-frame-group,
+  .slope .fn-owner-group,
+  .slope .fn-frame-name {
     transition: none;
   }
 }
@@ -1793,6 +1910,18 @@ details.fold:not([open]) > summary::after {
 .slope .fn-wire.is-hot,
 .slope .fn-wire.is-kin {
   opacity: 0.85;
+}
+/* A **boundary** selection is a different question from a mark's, and it lights
+   a different quantity of ink. One declaration lights a handful of wires and
+   every one of them is an answer; a module or a container lights everything
+   that crosses its line — sixty near-black diagonals over the glass, which is
+   the hairball the Selection's-Ink rule forbids. So a crossing keeps full ink
+   only where the reader asks for it: the room's wires read as a *field* at half
+   pressure, and the one under the pointer comes back to 0.85 on its own layer.
+   The class is written on the lit layer, in `views/func/map.rs`, where the
+   selection's own kind is known. */
+.slope .fn-wires-boundary .fn-wire.is-kin {
+  opacity: 0.5;
 }
 .slope .fn-wire.is-dim {
   opacity: 0.24;
@@ -1934,8 +2063,12 @@ details.fold:not([open]) > summary::after {
 .slope .fn-chart.is-far .fn-frame-name {
   opacity: 0.92;
 }
+/* A landmark may recede under a selection; it may not go out. At 0.14 a
+   selection took the whole register off the paper and left twenty lit ticks
+   scattered over anonymous rooms — wayfinding is what the far edition is for,
+   and a reader who has just chosen something needs to know where it stands. */
 .slope .fn-chart.is-far .fn-frame-name.is-dim {
-  opacity: 0.14;
+  opacity: 0.4;
 }
 .slope .fn-chart.is-far .fn-frame-name.is-sel {
   opacity: 1;
